@@ -1,0 +1,64 @@
+id: catalyst_calendar_cn
+version: 2
+name: A-share Catalyst Calendar
+description: Build a governed catalyst calendar from validated events, market context, and optional reader evidence.
+owner: research
+inputs:
+  required:
+    - as_of
+    - horizon_days
+  optional:
+    - events
+    - news_content
+    - news_source
+    - news_source_url
+    - symbols
+    - sectors
+    - source_refs
+    - run_id
+steps:
+  - id: read_news
+    type: tool
+    uses: tool:read_news
+    when:
+      input_present: news_content
+    with:
+      content: "{inputs.news_content}"
+      source: "{inputs.news_source}"
+      source_url: "{inputs.news_source_url}"
+      symbols: "{inputs.symbols}"
+    persist_artifact: false
+  - id: catalysts
+    type: tool
+    uses: tool:build_catalyst_calendar
+    depends_on:
+      - read_news
+    with:
+      as_of: "{inputs.as_of}"
+      horizon_days: "{inputs.horizon_days}"
+      events: "{inputs.events}"
+      reader_results:
+        - "{steps.read_news.output}"
+      symbols: "{inputs.symbols}"
+      sectors: "{inputs.sectors}"
+      source_refs: "{inputs.source_refs}"
+      warnings: "{inputs.warnings}"
+    primary_output: true
+    persist_artifact: false
+output_schema: schemas/workflows/catalyst_calendar_cn.schema.json
+persistence:
+  kind: jsonl
+  path_template: data/catalysts/{date}.jsonl
+  retention_days: 3650
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+timeout_seconds: 600
+retry_policy:
+  max_retries: 1
+  backoff_seconds: 0
+degradation_policy:
+  on_failure: emit_degraded_artifact
+  on_partial_data: emit_with_warnings
+evaluation_hooks:
+  - catalyst_follow_through

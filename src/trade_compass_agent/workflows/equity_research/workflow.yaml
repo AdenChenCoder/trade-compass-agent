@@ -1,0 +1,36 @@
+id: equity_research
+version: 2
+name: Equity Research Workflow
+description: Run the equity research specialist as a workflow DAG step and wrap its report as a governed workflow output.
+owner: research
+inputs:
+  required:
+    - as_of
+    - task
+  optional:
+    - symbol
+    - source_refs
+steps:
+  - id: research
+    type: specialist
+    uses: specialist:equity_research
+    with:
+      task: "{inputs.task}"
+    persist_artifact: false
+output_schema: schemas/output.schema.json
+persistence:
+  kind: jsonl
+  path_template: data/workflows/{workflow_id}/{date}.jsonl
+  retention_days: 3650
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+timeout_seconds: 600
+retry_policy:
+  max_retries: 1
+  backoff_seconds: 0
+degradation_policy:
+  on_failure: emit_degraded_artifact
+  on_partial_data: emit_with_warnings
+evaluation_hooks:
+  - research_follow_through

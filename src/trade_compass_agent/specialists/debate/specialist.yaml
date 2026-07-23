@@ -1,0 +1,47 @@
+id: debate
+version: 1
+name: Bull Bear Debate
+description: Multi-agent debate specialist for a single symbol, using research, bull/bear debate, PM synthesis, and risk review.
+kind: specialist
+execution_model:
+  type: debate_team
+  plan: debate_v2
+  max_rounds: 3
+capabilities:
+  tools:
+    - get_bars
+    - compute_ma
+    - compute_macd
+    - compute_rsi
+    - compute_bollinger
+    - compute_volume_ratio
+    - chart_pattern
+    - get_fundamentals
+    - get_events
+    - search_research_reports
+    - search_institute_recommend
+    - search_announcements
+    - search_stock_news
+    - search_market_flash
+    - search_industry_boards
+    - search_x
+    - search_x_kol
+    - web_search
+    - analyze_portfolio
+    - check_exit_signals
+  skills: []
+  mcps: []
+prompts:
+  system: prompts/system.md
+output:
+  mode: structured_signal
+  schema: schemas/report.schema.json
+  required_sections:
+    - research
+    - debate
+    - pm_verdict
+    - risk
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+  disclaimer_required: true

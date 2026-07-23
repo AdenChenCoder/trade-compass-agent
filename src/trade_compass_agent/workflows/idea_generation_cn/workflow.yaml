@@ -1,0 +1,47 @@
+id: idea_generation_cn
+version: 2
+name: A-share Idea Generation
+description: Build governed A-share idea candidates from market pulse, hot stocks, and supplied candidates.
+owner: research
+inputs:
+  required:
+    - as_of
+    - mode
+  optional:
+    - candidates
+    - catalysts
+    - market_pulse
+    - source_refs
+    - run_id
+steps:
+  - id: ideas
+    type: tool
+    uses: tool:build_idea_generation
+    with:
+      as_of: "{inputs.as_of}"
+      mode: "{inputs.mode}"
+      candidates: "{inputs.candidates}"
+      catalysts: "{inputs.catalysts}"
+      market_pulse: "{inputs.market_pulse}"
+      context: "{inputs.context}"
+      risk_constraints: "{inputs.risk_constraints}"
+      source_refs: "{inputs.source_refs}"
+      warnings: "{inputs.warnings}"
+    persist_artifact: false
+output_schema: schemas/workflows/idea_generation_cn.schema.json
+persistence:
+  kind: jsonl
+  path_template: data/ideas/{date}-{mode}.jsonl
+  retention_days: 3650
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+timeout_seconds: 900
+retry_policy:
+  max_retries: 1
+  backoff_seconds: 0
+degradation_policy:
+  on_failure: emit_degraded_artifact
+  on_partial_data: emit_with_warnings
+evaluation_hooks:
+  - idea_follow_through

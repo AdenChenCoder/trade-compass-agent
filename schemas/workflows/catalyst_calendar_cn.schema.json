@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trade-compass/catalyst_calendar_cn",
+  "type": "object",
+  "required": ["workflow_id", "workflow_version", "run_id", "artifact_id", "created_at", "as_of", "schema_version", "inputs_hash", "source_refs", "events", "warnings", "evaluation_status", "no_trade_disclaimer"],
+  "additionalProperties": false,
+  "properties": {
+    "workflow_id": {"type": "string", "enum": ["catalyst_calendar_cn"]},
+    "workflow_version": {"type": "integer", "minimum": 1},
+    "run_id": {"type": "string", "maxLength": 128},
+    "artifact_id": {"type": "string", "maxLength": 128},
+    "created_at": {"type": "string", "minLength": 1, "maxLength": 64},
+    "schema_version": {"type": "integer", "minimum": 1},
+    "inputs_hash": {"type": "string", "minLength": 1, "maxLength": 128},
+    "source_refs": {"type": "array", "items": {"type": "string", "maxLength": 1000}},
+    "evaluation_status": {"type": "string", "minLength": 1, "maxLength": 64},
+    "as_of": {"type": "string", "minLength": 1, "maxLength": 32},
+    "primary_step_id": {"type": "string", "maxLength": 80},
+    "horizon_days": {"type": "integer", "minimum": 1, "maximum": 365},
+    "symbols": {"type": "array", "items": {"type": "string", "maxLength": 16}},
+    "sectors": {"type": "array", "items": {"type": "string", "maxLength": 80}},
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event_id", "event_type", "summary", "confidence", "source_refs", "no_trade_disclaimer"],
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {"type": "string", "minLength": 1, "maxLength": 80},
+          "symbol": {"type": "string", "maxLength": 16},
+          "name": {"type": "string", "maxLength": 80},
+          "sector": {"type": "string", "maxLength": 80},
+          "event_date": {"type": "string", "maxLength": 32},
+          "event_type": {"type": "string", "minLength": 1, "maxLength": 64},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 800},
+          "expected_impact": {"type": "string", "enum": ["low", "medium", "high", "unknown"]},
+          "uncertainty": {"type": "string", "maxLength": 300},
+          "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+          "related_symbols": {"type": "array", "items": {"type": "string", "maxLength": 16}},
+          "related_holdings": {"type": "array", "items": {"type": "string", "maxLength": 16}},
+          "related_idea_ids": {"type": "array", "items": {"type": "string", "maxLength": 80}},
+          "source_refs": {"type": "array", "minItems": 1, "items": {"type": "string", "maxLength": 256}},
+          "stale_status": {"type": "string", "enum": ["active", "stale", "archived"]},
+          "suggested_workflow_action": {"type": "string", "enum": ["watch", "risk_check", "research", "archive"]},
+          "no_trade_disclaimer": {"type": "boolean"}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string", "maxLength": 300}},
+    "no_trade_disclaimer": {"const": true},
+    "degraded": {"type": "boolean"}
+  }
+}

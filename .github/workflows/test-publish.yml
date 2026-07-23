@@ -1,0 +1,65 @@
+name: TestPyPI Publish
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan complete Git history
+        run: scripts/secret_scan.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+      - name: Install workspace and project dependencies
+        run: |
+          pnpm install --frozen-lockfile
+          pip install -e ".[dev]"
+          pip install uv
+      - name: Verify project
+        run: |
+          scripts/ci_check.sh
+          pnpm --dir apps/web test
+          pnpm --dir apps/web typecheck
+        env:
+          PYTHONPATH: src
+      - name: Build distributions
+        run: |
+          uv build
+          python scripts/check_dist.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-python-distributions
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: verify-and-build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/trade-compass-agent
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-python-distributions
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@v1.14.0
+        with:
+          repository-url: https://test.pypi.org/legacy/

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trade-compass/source_reference",
+  "type": "object",
+  "required": ["source", "retrieved_at"],
+  "additionalProperties": false,
+  "properties": {
+    "source": {"type": "string", "minLength": 1, "maxLength": 256},
+    "source_url": {"type": "string", "maxLength": 1000},
+    "source_title": {"type": "string", "maxLength": 300},
+    "published_at": {"type": "string", "maxLength": 64},
+    "retrieved_at": {"type": "string", "minLength": 1, "maxLength": 64}
+  }
+}

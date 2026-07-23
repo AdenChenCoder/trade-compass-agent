@@ -1,0 +1,110 @@
+id: debate_v2
+version: 1
+strategy: debate_team
+description: Multi-agent equity research strategy with research analysts, bull/bear debate, PM synthesis, and optional risk challenge.
+defaults:
+  max_debate_rounds: 3
+  enable_research_phase: true
+  enable_risk_crossexam: false
+  analyst_max_tool_rounds: 4
+  debater_max_tool_rounds: 3
+stages:
+  research:
+    enabled: true
+    agents:
+      - technical_analyst
+      - fundamental_analyst
+      - sentiment_analyst
+      - supply_chain_analyst
+  debate:
+    enabled: true
+    agents:
+      - bull_debater
+      - bear_debater
+  synthesis:
+    enabled: true
+    agents:
+      - pm_judge
+  risk_crossexam:
+    enabled: false
+    agents:
+      - risk_challenger
+      - pm_defense
+agents:
+  technical_analyst:
+    role: technical_analyst
+    prompt: prompts/technical_analyst.md
+    tools:
+      - get_bars
+      - compute_ma
+      - compute_macd
+      - compute_rsi
+      - compute_bollinger
+      - compute_volume_ratio
+      - chart_pattern
+  fundamental_analyst:
+    role: fundamental_analyst
+    prompt: prompts/fundamental_analyst.md
+    tools:
+      - get_fundamentals
+      - get_events
+      - search_research_reports
+      - search_institute_recommend
+      - search_announcements
+  sentiment_analyst:
+    role: sentiment_analyst
+    prompt: prompts/sentiment_analyst.md
+    tools:
+      - search_stock_news
+      - search_market_flash
+      - search_industry_boards
+      - search_x
+      - web_search
+  supply_chain_analyst:
+    role: supply_chain_analyst
+    prompt: prompts/supply_chain_analyst.md
+    tools:
+      - search_x_kol
+      - search_x
+      - web_search
+      - search_research_reports
+      - search_announcements
+      - search_industry_boards
+  bull_debater:
+    role: bull_debater
+    prompt: prompts/bull_debater.md
+    tools:
+      - get_bars
+      - compute_ma
+      - compute_macd
+      - compute_rsi
+      - compute_bollinger
+      - compute_volume_ratio
+      - search_stock_news
+      - web_search
+  bear_debater:
+    role: bear_debater
+    prompt: prompts/bear_debater.md
+    tools:
+      - get_bars
+      - compute_ma
+      - compute_macd
+      - compute_rsi
+      - compute_bollinger
+      - compute_volume_ratio
+      - search_stock_news
+      - web_search
+  pm_judge:
+    role: pm_judge
+    prompt: prompts/pm_judge.md
+    tools: []
+  risk_challenger:
+    role: risk_challenger
+    prompt: prompts/risk_challenger.md
+    tools:
+      - analyze_portfolio
+      - check_exit_signals
+  pm_defense:
+    role: pm_defense
+    prompt: prompts/pm_defense.md
+    tools: []

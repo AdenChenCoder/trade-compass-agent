@@ -1,0 +1,13 @@
+# External skills configuration
+# Controls project-level skills from .trade-compass/skills/.
+# Agent self-evolved skills (memory_vault/skills/) are NOT controlled here.
+
+enabled_skills:
+  - intraday-tech
+  - investment-masters
+
+default_summaries:
+  intraday-tech: "A股日内结构、动量、量价确认和失效条件分析。"
+  investment-masters: "五大投资大师理念参考: 巴菲特/芒格/林奇/马克斯/达利欧. 支持 reference 参数加载深度研究."
+
+pinned: []

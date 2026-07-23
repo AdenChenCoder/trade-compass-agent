@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trade-compass/announcement_events",
+  "type": "object",
+  "required": ["reader_type", "as_of", "source", "events", "confidence", "warnings"],
+  "additionalProperties": true,
+  "properties": {
+    "reader_type": {"type": "string", "enum": ["announcement_reader"]},
+    "as_of": {"type": "string", "minLength": 1},
+    "source": {"type": "object"},
+    "symbols": {"type": "array", "items": {"type": "string"}},
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event_type", "summary", "source", "confidence"],
+        "additionalProperties": true,
+        "properties": {
+          "event_type": {"type": "string", "minLength": 1, "maxLength": 64},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+          "event_date": {"type": "string", "maxLength": 32},
+          "source": {"type": "object"},
+          "symbols": {"type": "array", "items": {"type": "string"}},
+          "confidence": {"type": "string", "enum": ["low", "medium", "high"]}
+        }
+      }
+    },
+    "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  }
+}

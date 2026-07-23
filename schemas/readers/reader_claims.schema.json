@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trade-compass/reader_claims",
+  "type": "object",
+  "required": ["reader_type", "schema_version", "as_of", "source", "claims", "confidence", "warnings", "validation_status"],
+  "additionalProperties": false,
+  "properties": {
+    "reader_type": {
+      "type": "string",
+      "enum": [
+        "announcement_reader",
+        "news_reader",
+        "research_report_reader",
+        "kol_signal_reader",
+        "webpage_reader"
+      ]
+    },
+    "schema_version": {"type": "integer", "minimum": 1},
+    "as_of": {"type": "string", "minLength": 1, "maxLength": 64},
+    "source": {
+      "type": "object",
+      "required": ["source", "retrieved_at"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {"type": "string", "minLength": 1, "maxLength": 256},
+        "source_url": {"type": "string", "maxLength": 1000},
+        "source_title": {"type": "string", "maxLength": 300},
+        "published_at": {"type": "string", "maxLength": 64},
+        "retrieved_at": {"type": "string", "minLength": 1, "maxLength": 64}
+      }
+    },
+    "source_refs": {"type": "array", "items": {"type": "string", "maxLength": 1000}},
+    "symbols": {"type": "array", "items": {"type": "string", "maxLength": 16}},
+    "entities": {"type": "array", "items": {"type": "string", "maxLength": 80}},
+    "claims": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": ["claim", "source", "confidence"],
+        "additionalProperties": false,
+        "properties": {
+          "claim": {"type": "string", "minLength": 1, "maxLength": 600},
+          "source": {
+            "type": "object",
+            "required": ["source", "retrieved_at"],
+            "additionalProperties": false,
+            "properties": {
+              "source": {"type": "string", "minLength": 1, "maxLength": 256},
+              "source_url": {"type": "string", "maxLength": 1000},
+              "source_title": {"type": "string", "maxLength": 300},
+              "published_at": {"type": "string", "maxLength": 64},
+              "retrieved_at": {"type": "string", "minLength": 1, "maxLength": 64}
+            }
+          },
+          "symbols": {"type": "array", "items": {"type": "string", "maxLength": 16}},
+          "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+          "raw_excerpt_ref": {"type": "string", "maxLength": 128}
+        }
+      }
+    },
+    "events": {"type": "array"},
+    "risks": {"type": "array", "items": {"type": "string", "maxLength": 500}},
+    "unsupported_claims": {"type": "array", "items": {"type": "string", "maxLength": 500}},
+    "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+    "warnings": {"type": "array", "items": {"type": "string", "maxLength": 300}},
+    "validation_status": {"type": "string", "enum": ["validated", "degraded"]},
+    "trace_events": {"type": "array", "items": {"type": "object"}}
+  }
+}

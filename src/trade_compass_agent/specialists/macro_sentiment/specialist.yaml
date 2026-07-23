@@ -1,0 +1,30 @@
+id: macro_sentiment
+version: 1
+name: Macro Sentiment
+description: Macro, market sentiment, and fund-flow context specialist.
+kind: specialist
+execution_model:
+  type: single_agent_react
+  max_rounds: 5
+capabilities:
+  tools:
+    - get_market_pulse
+    - get_fund_flow
+    - search_market_flash
+    - web_search
+  skills: []
+  mcps: []
+prompts:
+  system: prompts/system.md
+output:
+  mode: structured_markdown
+  schema: schemas/report.schema.json
+  required_sections:
+    - market_temperature
+    - macro_signals
+    - fund_flow
+    - risks
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+  disclaimer_required: true

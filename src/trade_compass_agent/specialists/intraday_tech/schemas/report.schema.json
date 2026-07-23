@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trade-compass-agent.specialists.intraday_tech.report.v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "report_markdown",
+    "source_refs",
+    "warnings",
+    "metadata"
+  ],
+  "properties": {
+    "report_markdown": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "specialist_id",
+        "execution_model"
+      ],
+      "properties": {
+        "specialist_id": {
+          "const": "intraday_tech"
+        },
+        "execution_model": {
+          "const": "single_agent_react"
+        }
+      }
+    }
+  }
+}

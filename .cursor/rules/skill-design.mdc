@@ -1,0 +1,72 @@
+---
+description: Skill 设计规范 — 编写/修改 memory_vault/skills/ 下的 SKILL.md 时遵循此格式
+globs:
+  - memory_vault/skills/**/SKILL.md
+---
+
+# Skill 文件规范
+
+## 文件位置
+`memory_vault/skills/<skill-name>/SKILL.md`
+
+## Frontmatter（必填）
+
+```yaml
+---
+name: <skill-name>          # 与目录名一致，kebab-case
+description: <一句话描述>    # 中文，20字以内核心功能 + 关键词
+category: <分类>             # 见下方分类列表
+---
+```
+
+### 分类（category）
+
+| 值 | 含义 |
+|---|---|
+| `screening` | 选股/扫描类 |
+| `execution` | 交易执行/事件驱动 |
+| `analysis` | 分析/研判类 |
+| `risk` | 风控/合规类 |
+| `compliance` | 市场规则/合规约束 |
+
+## 正文结构（按顺序）
+
+### 1. `## 适用场景`
+一段话描述何时应加载/使用此 Skill。
+
+### 2. `## 触发条件` 或 `## 规则`（按需）
+列出使用此 Skill 的前置条件或核心知识点。
+
+### 3. `## 执行流程`
+有序步骤，每步标注要调用的工具名（反引号），如：
+```
+1. `get_bars(symbol, timeframe="1d", limit=60)` → 获取K线
+2. `get_market_pulse` → 确认大盘环境
+3. 满足全部条件 → `emit_signal(rating="buy")`
+```
+
+### 4. `## 参数`（可选）
+关键阈值/配置参数，便于后续调优。
+
+### 5. `## 排除条件`（可选）
+不适用的场景或应跳过的标的。
+
+## 编写原则
+
+1. **中文优先**：描述和规则用中文，工具名/代码保持英文
+2. **可执行**：每个 Skill 应能直接指导 Agent 行动，不是泛泛而谈
+3. **无重复**：新建 Skill 前检查是否已有覆盖相同领域的 Skill
+4. **短小精悍**：控制在 50 行以内；超出则考虑拆分
+5. **注册**：新 Skill 需在 `config/agent_skills.yaml` 中添加描述
+
+## 现有 Skills 列表
+
+| 目录名 | category | 核心职责 |
+|--------|----------|---------|
+| compliance | compliance | A股结构性规则(T+1/涨跌幅/手数/停牌/费用) |
+| risk-veto | risk | 信号否决 + 用户对话风控建议 |
+| momentum-scan | screening | 量价共振筛选 |
+| fund-flow-analysis | analysis | 资金流向分析 |
+| earnings-play | execution | 财报事件驱动 |
+| equity-research | analysis | 个股深度研究 |
+| intraday-tech | analysis | 日内技术分析 |

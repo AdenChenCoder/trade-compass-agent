@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package with dev extras
+        run: pip install -e ".[dev]"
+      - name: Run Python governance checks
+        run: scripts/ci_check.sh
+        env:
+          PYTHONPATH: src
+
+  web-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install
+      - name: Build Vite web app
+        run: pnpm --dir apps/web build
+      - name: Typecheck web app
+        run: pnpm --dir apps/web typecheck
+      - name: Test web app
+        run: pnpm --dir apps/web test
+
+  wheel-smoke:
+    runs-on: ubuntu-latest
+    needs: [web-build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install
+      - name: Build distributions and verify installed quickstart
+        run: |
+          pip install uv
+          uv build
+          python scripts/check_dist.py
+          pip install dist/*.whl
+          export TRADE_COMPASS_HOME="$RUNNER_TEMP/trade-compass-home"
+          export DEEPSEEK_API_KEY="ci-placeholder"
+          cd "$RUNNER_TEMP"
+          trade-compass --version
+          trade-compass setup
+          trade-compass doctor
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import trade_compass_agent.web.dist as dist
+          from trade_compass_agent.config import (
+              PACKAGE_ROOT,
+              load_app_config,
+              resolve_config_path,
+              resolve_schema_path,
+          )
+
+          path = dist.resolve_web_dist()
+          assert path is not None, "web_dist missing from installed wheel"
+          assert (path / "index.html").is_file()
+          print(f"web_dist ok: {path}")
+          assert (PACKAGE_ROOT / "workflows" / "catalyst_calendar_cn" / "workflow.yaml").is_file()
+          assert (PACKAGE_ROOT / "specialists" / "equity_research" / "specialist.yaml").is_file()
+          assert resolve_schema_path("readers/reader_claims.schema.json").is_file()
+          config = load_app_config()
+          home = Path(os.environ["TRADE_COMPASS_HOME"])
+          assert resolve_config_path().resolve() == (home / "config.yaml").resolve()
+          assert config.data_dir.resolve() == (home / "data").resolve()
+          assert config.memory_dir.resolve() == (home / "memory_vault").resolve()
+          assert config.llm.provider == "deepseek"
+          assert not str(config.data_dir).startswith(str(PACKAGE_ROOT))
+          print("installed config, runtime paths, and package assets ok")
+          PY

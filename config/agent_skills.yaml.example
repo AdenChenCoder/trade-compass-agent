@@ -1,0 +1,21 @@
+# Agent skills configuration
+#
+# Copy to config/agent_skills.yaml to customize skill filtering.
+# If this file is absent, or enabled_skills is unset, ALL discovered skills
+# under memory_vault/skills/*/SKILL.md are enabled (current behavior).
+#
+# enabled_skills: optional allow-list of skill folder names
+# default_summaries: optional map of skill name → short summary override for bootstrap
+# pinned: optional list always injected first in context (subset of enabled)
+
+# enabled_skills:
+#   - intraday-tech
+#   - equity-research
+#   - a-share-compliance
+
+# default_summaries:
+#   intraday-tech: "Short-term TA workflow for A-share intraday structure."
+#   equity-research: "Mid-term bull/bear research and trade thesis."
+
+# pinned:
+#   - a-share-compliance

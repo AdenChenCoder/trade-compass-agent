@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trade-compass/research_workflow",
+  "type": "object",
+  "required": [
+    "workflow_id",
+    "workflow_version",
+    "run_id",
+    "created_at",
+    "as_of",
+    "schema_version",
+    "inputs_hash",
+    "source_refs",
+    "summary",
+    "sections",
+    "warnings",
+    "evaluation_status",
+    "no_trade_disclaimer"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "workflow_id": {"type": "string", "minLength": 1, "maxLength": 80},
+    "workflow_version": {"type": "integer", "minimum": 1},
+    "run_id": {"type": "string", "maxLength": 128},
+    "artifact_id": {"type": "string", "maxLength": 128},
+    "created_at": {"type": "string", "minLength": 1, "maxLength": 64},
+    "as_of": {"type": "string", "minLength": 1, "maxLength": 32},
+    "schema_version": {"type": "integer", "minimum": 1},
+    "inputs_hash": {"type": "string", "minLength": 1, "maxLength": 128},
+    "source_refs": {"type": "array", "items": {"type": "string", "maxLength": 1000}},
+    "primary_step_id": {"type": "string", "maxLength": 80},
+    "summary": {"type": "string", "maxLength": 2000},
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "content"],
+        "additionalProperties": false,
+        "properties": {
+          "title": {"type": "string", "minLength": 1, "maxLength": 120},
+          "content": {"type": "string", "maxLength": 8000},
+          "kind": {"type": "string", "maxLength": 80},
+          "symbols": {"type": "array", "items": {"type": "string", "maxLength": 16}},
+          "source_refs": {"type": "array", "items": {"type": "string", "maxLength": 1000}}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string", "maxLength": 500}},
+    "evaluation_status": {"type": "string", "minLength": 1, "maxLength": 64},
+    "no_trade_disclaimer": {"type": "boolean"}
+  }
+}

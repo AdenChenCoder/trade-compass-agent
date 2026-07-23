@@ -1,0 +1,36 @@
+id: chokepoint_analyst
+version: 1
+name: Chokepoint Analyst
+description: Supply-chain bottleneck specialist using Shiso Leaf Theory to identify irreplaceable upstream nodes.
+kind: specialist
+execution_model:
+  type: single_agent_react
+  max_rounds: 12
+capabilities:
+  tools:
+    - search_x_kol
+    - search_x
+    - web_search
+    - get_fundamentals
+    - get_bars
+    - search_announcements
+    - search_industry_boards
+    - search_research_reports
+    - search_stock_news
+  skills: []
+  mcps: []
+prompts:
+  system: prompts/system.md
+output:
+  mode: structured_markdown
+  schema: schemas/report.schema.json
+  required_sections:
+    - demand_wave
+    - supply_chain_layers
+    - chokepoints
+    - catalysts
+    - risks
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+  disclaimer_required: true

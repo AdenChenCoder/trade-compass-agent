@@ -1,0 +1,108 @@
+id: morning_plan
+version: 2
+name: Morning Plan
+description: Run the complete morning plan workflow from screening through agent trading plan.
+owner: research
+inputs:
+  required:
+    - as_of
+  optional:
+    - source_refs
+    - run_id
+steps:
+  - id: screening
+    type: tool
+    uses: tool:builtin.run_screening_engine
+    with:
+      job_id: morning_plan
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: screener_ai
+    type: tool
+    uses: tool:builtin.run_l5_screener
+    depends_on:
+      - screening
+    with:
+      job_id: morning_plan
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        screening: "{steps.screening.output}"
+  - id: portfolio_check
+    type: tool
+    uses: tool:builtin.check_positions
+    with:
+      job_id: morning_plan
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: sector_flow
+    type: tool
+    uses: tool:builtin.scan_sector_capital_flow
+    with:
+      job_id: morning_plan
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: idea_generation
+    type: workflow
+    uses: workflow:idea_generation_cn
+    depends_on:
+      - screening
+    with:
+      as_of: "{inputs.as_of}"
+      mode: morning
+      candidates: "{steps.screening.output.data.candidates}"
+      source_refs: "{inputs.source_refs}"
+  - id: risk_review
+    type: workflow
+    uses: workflow:risk_advisor
+    depends_on:
+      - idea_generation
+      - portfolio_check
+    with:
+      as_of: "{inputs.as_of}"
+      task: "Review morning plan risk using ideas: {steps.idea_generation.output}"
+      source_refs: "{inputs.source_refs}"
+  - id: agent_plan
+    type: tool
+    uses: tool:builtin.agent_morning_plan
+    timeout_seconds: 900
+    depends_on:
+      - screening
+      - screener_ai
+      - portfolio_check
+      - sector_flow
+      - idea_generation
+      - risk_review
+    with:
+      job_id: morning_plan
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        screening: "{steps.screening.output}"
+        screener_ai: "{steps.screener_ai.output}"
+        portfolio_check: "{steps.portfolio_check.output}"
+        sector_flow: "{steps.sector_flow.output}"
+        idea_generation:
+          message: idea generation
+          data: "{steps.idea_generation.output}"
+        risk_review:
+          message: risk review
+          data: "{steps.risk_review.output}"
+    primary_output: true
+output_schema: src/trade_compass_agent/workflows/schemas/workflow_output.schema.json
+persistence:
+  kind: jsonl
+  path_template: data/workflows/{workflow_id}/{date}.jsonl
+  retention_days: 3650
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+timeout_seconds: 1800
+retry_policy:
+  max_retries: 0
+  backoff_seconds: 0
+degradation_policy:
+  on_failure: emit_degraded_artifact
+  on_partial_data: emit_with_warnings
+evaluation_hooks:
+  - plan_follow_through

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trade-compass-agent.specialists.debate.report.v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "signal",
+    "warnings",
+    "metadata"
+  ],
+  "properties": {
+    "signal": {
+      "type": "object"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "specialist_id",
+        "execution_model"
+      ],
+      "properties": {
+        "specialist_id": {
+          "const": "debate"
+        },
+        "execution_model": {
+          "const": "debate_team"
+        },
+        "plan": {
+          "const": "debate_v2"
+        }
+      }
+    }
+  }
+}

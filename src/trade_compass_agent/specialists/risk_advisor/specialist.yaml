@@ -1,0 +1,34 @@
+id: risk_advisor
+version: 1
+name: Risk Advisor
+description: Portfolio risk assessment specialist for concentration, drawdown, exposure, and trade veto analysis.
+kind: specialist
+execution_model:
+  type: single_agent_react
+  max_rounds: 5
+capabilities:
+  tools:
+    - analyze_portfolio
+    - get_risk_status
+    - get_market_constraints
+    - check_exit_signals
+    - search_memory
+    - get_bars
+    - compute_ma
+    - compute_rsi
+  skills: []
+  mcps: []
+prompts:
+  system: prompts/system.md
+output:
+  mode: structured_markdown
+  schema: schemas/report.schema.json
+  required_sections:
+    - exposure
+    - constraints
+    - vetoes
+    - risk_actions
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+  disclaimer_required: true

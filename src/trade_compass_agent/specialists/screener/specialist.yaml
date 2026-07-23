@@ -1,0 +1,35 @@
+id: screener
+version: 1
+name: Screener
+description: L5 AI judgment specialist for screening candidates from the L1-L4 screening engine.
+kind: specialist
+execution_model:
+  type: single_agent_react
+  max_rounds: 8
+capabilities:
+  tools:
+    - get_bars
+    - get_fundamentals
+    - get_market_pulse
+    - compute_ma
+    - compute_macd
+    - compute_rsi
+    - compute_bollinger
+    - compute_volume_ratio
+    - search_stock_news
+    - web_search
+  skills: []
+  mcps: []
+prompts:
+  system: prompts/system.md
+output:
+  mode: structured_json
+  schema: schemas/report.schema.json
+  required_sections:
+    - signals
+    - risks
+    - rationale
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+  disclaimer_required: true

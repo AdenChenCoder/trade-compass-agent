@@ -1,0 +1,44 @@
+id: equity_research
+version: 1
+name: Equity Research
+description: Mid-term equity research using analyst research, bull/bear debate, and PM synthesis.
+kind: specialist
+execution_model:
+  type: debate_team
+  plan: debate_v2
+  max_rounds: 3
+capabilities:
+  tools:
+    - get_bars
+    - compute_ma
+    - compute_macd
+    - compute_rsi
+    - compute_bollinger
+    - compute_volume_ratio
+    - chart_pattern
+    - get_fundamentals
+    - get_events
+    - search_research_reports
+    - search_institute_recommend
+    - search_announcements
+    - search_stock_news
+    - search_x
+    - search_x_kol
+    - web_search
+    - analyze_portfolio
+    - check_exit_signals
+  skills: []
+  mcps: []
+prompts:
+  system: prompts/system.md
+output:
+  mode: structured_markdown
+  schema: schemas/report.schema.json
+  required_sections:
+    - research
+    - bull_bear_debate
+    - pm_verdict
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+  disclaimer_required: true

@@ -1,0 +1,98 @@
+id: eod_review
+version: 2
+name: End-of-day Review
+description: Run the complete end-of-day review workflow.
+owner: research
+inputs:
+  required:
+    - as_of
+  optional:
+    - source_refs
+    - run_id
+steps:
+  - id: pnl_review
+    type: tool
+    uses: tool:builtin.review_pnl
+    with:
+      job_id: eod_review
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: signal_tracking
+    type: tool
+    uses: tool:builtin.update_signal_tracker
+    with:
+      job_id: eod_review
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: instrument_pages
+    type: tool
+    uses: tool:builtin.sync_instrument_pages
+    with:
+      job_id: eod_review
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: research_artifacts
+    type: tool
+    uses: tool:builtin.update_research_artifacts
+    with:
+      job_id: eod_review
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: decision_reflection
+    type: tool
+    uses: tool:builtin.reflect_decisions
+    depends_on:
+      - pnl_review
+    with:
+      job_id: eod_review
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        pnl_review: "{steps.pnl_review.output}"
+  - id: stock_profiles
+    type: tool
+    uses: tool:builtin.update_stock_profiles
+    depends_on:
+      - pnl_review
+    with:
+      job_id: eod_review
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        pnl_review: "{steps.pnl_review.output}"
+  - id: agent_reflection
+    type: tool
+    uses: tool:builtin.agent_eod_reflection
+    timeout_seconds: 600
+    depends_on:
+      - pnl_review
+      - signal_tracking
+      - research_artifacts
+      - decision_reflection
+    with:
+      job_id: eod_review
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        pnl_review: "{steps.pnl_review.output}"
+        signal_tracking: "{steps.signal_tracking.output}"
+        research_artifacts: "{steps.research_artifacts.output}"
+        decision_reflection: "{steps.decision_reflection.output}"
+    primary_output: true
+output_schema: src/trade_compass_agent/workflows/schemas/workflow_output.schema.json
+persistence:
+  kind: jsonl
+  path_template: data/workflows/{workflow_id}/{date}.jsonl
+  retention_days: 3650
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+timeout_seconds: 1200
+retry_policy:
+  max_retries: 0
+  backoff_seconds: 0
+degradation_policy:
+  on_failure: emit_degraded_artifact
+  on_partial_data: emit_with_warnings
+evaluation_hooks:
+  - review_quality

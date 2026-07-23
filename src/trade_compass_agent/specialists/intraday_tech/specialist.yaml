@@ -1,0 +1,38 @@
+id: intraday_tech
+version: 1
+name: Intraday Technical
+description: Short-horizon A-share market structure and technical analysis specialist.
+kind: specialist
+execution_model:
+  type: single_agent_react
+  max_rounds: 6
+capabilities:
+  tools:
+    - get_bars
+    - get_market_pulse
+    - compute_ma
+    - compute_macd
+    - compute_rsi
+    - compute_bollinger
+    - compute_volume_ratio
+    - chart_pattern
+    - search_stock_news
+    - search_hot_stocks
+    - search_market_activity
+  skills:
+    - intraday-tech
+  mcps: []
+prompts:
+  system: prompts/system.md
+output:
+  mode: structured_markdown
+  schema: schemas/report.schema.json
+  required_sections:
+    - structure
+    - momentum
+    - risk
+    - action_hint
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+  disclaimer_required: true

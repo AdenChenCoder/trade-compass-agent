@@ -1,0 +1,62 @@
+id: close_check
+version: 2
+name: Close Check
+description: Run the close-time mark-to-market and exit-check workflow.
+owner: research
+inputs:
+  required:
+    - as_of
+  optional:
+    - source_refs
+    - run_id
+steps:
+  - id: mark_to_market
+    type: tool
+    uses: tool:builtin.refresh_market_prices
+    with:
+      job_id: close
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: exit_check
+    type: tool
+    uses: tool:builtin.check_exit_signals
+    depends_on:
+      - mark_to_market
+    with:
+      job_id: close
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        mark_to_market: "{steps.mark_to_market.output}"
+  - id: agent_close_analysis
+    type: tool
+    uses: tool:builtin.agent_close_analysis
+    timeout_seconds: 600
+    depends_on:
+      - mark_to_market
+      - exit_check
+    with:
+      job_id: close
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        mark_to_market: "{steps.mark_to_market.output}"
+        exit_check: "{steps.exit_check.output}"
+    primary_output: true
+output_schema: src/trade_compass_agent/workflows/schemas/workflow_output.schema.json
+persistence:
+  kind: jsonl
+  path_template: data/workflows/{workflow_id}/{date}.jsonl
+  retention_days: 3650
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+timeout_seconds: 900
+retry_policy:
+  max_retries: 0
+  backoff_seconds: 0
+degradation_policy:
+  on_failure: emit_degraded_artifact
+  on_partial_data: emit_with_warnings
+evaluation_hooks:
+  - close_check_quality

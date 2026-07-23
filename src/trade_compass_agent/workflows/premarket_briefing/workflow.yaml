@@ -1,0 +1,96 @@
+id: premarket_briefing
+version: 2
+name: Premarket Briefing
+description: Run the complete premarket workflow from portfolio scan through agent briefing.
+owner: research
+inputs:
+  required:
+    - as_of
+  optional:
+    - source_refs
+    - run_id
+steps:
+  - id: portfolio_scan
+    type: tool
+    uses: tool:builtin.scan_portfolio_exits
+    with:
+      job_id: premarket
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: portfolio_reconcile
+    type: tool
+    uses: tool:builtin.reconcile_portfolio_memory
+    depends_on:
+      - portfolio_scan
+    with:
+      job_id: premarket
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        portfolio_scan: "{steps.portfolio_scan.output}"
+  - id: overnight_news
+    type: tool
+    uses: tool:builtin.scan_overnight_news
+    timeout_seconds: 600
+    with:
+      job_id: premarket
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: catalyst_calendar
+    type: workflow
+    uses: workflow:catalyst_calendar_cn
+    depends_on:
+      - overnight_news
+    with:
+      as_of: "{inputs.as_of}"
+      horizon_days: 14
+      news_content: "{steps.overnight_news.output.data.analysis}"
+      source_refs: "{inputs.source_refs}"
+  - id: global_market
+    type: tool
+    uses: tool:builtin.check_global_markets
+    timeout_seconds: 600
+    with:
+      job_id: premarket
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: agent_briefing
+    type: tool
+    uses: tool:builtin.agent_premarket_briefing
+    timeout_seconds: 600
+    depends_on:
+      - portfolio_scan
+      - portfolio_reconcile
+      - overnight_news
+      - catalyst_calendar
+      - global_market
+    with:
+      job_id: premarket
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        portfolio_scan: "{steps.portfolio_scan.output}"
+        portfolio_reconcile: "{steps.portfolio_reconcile.output}"
+        overnight_news: "{steps.overnight_news.output}"
+        catalyst_calendar:
+          message: catalyst calendar
+          data: "{steps.catalyst_calendar.output}"
+        global_market: "{steps.global_market.output}"
+    primary_output: true
+output_schema: src/trade_compass_agent/workflows/schemas/workflow_output.schema.json
+persistence:
+  kind: jsonl
+  path_template: data/workflows/{workflow_id}/{date}.jsonl
+  retention_days: 3650
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+timeout_seconds: 1200
+retry_policy:
+  max_retries: 0
+  backoff_seconds: 0
+degradation_policy:
+  on_failure: emit_degraded_artifact
+  on_partial_data: emit_with_warnings
+evaluation_hooks:
+  - briefing_quality_review

@@ -1,0 +1,37 @@
+id: risk_advisor
+version: 2
+name: Risk Advisor Workflow
+description: Run the risk advisor specialist as a governed workflow DAG.
+owner: risk
+inputs:
+  required:
+    - as_of
+    - task
+  optional:
+    - symbol
+    - portfolio
+    - source_refs
+steps:
+  - id: risk
+    type: specialist
+    uses: specialist:risk_advisor
+    with:
+      task: "{inputs.task}"
+    persist_artifact: false
+output_schema: schemas/output.schema.json
+persistence:
+  kind: jsonl
+  path_template: data/workflows/{workflow_id}/{date}.jsonl
+  retention_days: 3650
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+timeout_seconds: 300
+retry_policy:
+  max_retries: 1
+  backoff_seconds: 0
+degradation_policy:
+  on_failure: emit_degraded_artifact
+  on_partial_data: emit_with_warnings
+evaluation_hooks:
+  - risk_outcome_review

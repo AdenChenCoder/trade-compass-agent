@@ -1,0 +1,108 @@
+id: weekend_review
+version: 2
+name: Weekend Review
+description: Run the complete weekly review workflow.
+owner: research
+inputs:
+  required:
+    - as_of
+  optional:
+    - source_refs
+    - run_id
+steps:
+  - id: weekly_summary
+    type: tool
+    uses: tool:builtin.write_weekly_summary
+    with:
+      job_id: weekly
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: weekly_research_artifacts
+    type: tool
+    uses: tool:builtin.update_research_artifacts
+    depends_on:
+      - weekly_summary
+    with:
+      job_id: weekly
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        weekly_summary: "{steps.weekly_summary.output}"
+  - id: catalysts
+    type: workflow
+    uses: workflow:catalyst_calendar_cn
+    depends_on:
+      - weekly_summary
+    with:
+      as_of: "{inputs.as_of}"
+      horizon_days: 14
+      source_refs: "{inputs.source_refs}"
+  - id: ideas
+    type: workflow
+    uses: workflow:idea_generation_cn
+    depends_on:
+      - catalysts
+    with:
+      as_of: "{inputs.as_of}"
+      mode: weekend
+      catalysts: "{steps.catalysts.output.events}"
+      source_refs: "{inputs.source_refs}"
+  - id: agent_strategy_review
+    type: tool
+    uses: tool:builtin.agent_strategy_review
+    depends_on:
+      - weekly_summary
+      - weekly_research_artifacts
+      - ideas
+    with:
+      job_id: weekly
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        weekly_summary: "{steps.weekly_summary.output}"
+        weekly_research_artifacts: "{steps.weekly_research_artifacts.output}"
+        ideas:
+          message: weekend ideas
+          data: "{steps.ideas.output}"
+    primary_output: true
+  - id: weekly_curator
+    type: tool
+    uses: tool:builtin.curate_knowledge
+    depends_on:
+      - weekly_summary
+    with:
+      job_id: weekly
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        weekly_summary: "{steps.weekly_summary.output}"
+  - id: weekly_dreaming
+    type: tool
+    uses: tool:builtin.run_weekly_dreaming
+    depends_on:
+      - weekly_summary
+      - weekly_curator
+    with:
+      job_id: weekly
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        weekly_summary: "{steps.weekly_summary.output}"
+        weekly_curator: "{steps.weekly_curator.output}"
+output_schema: src/trade_compass_agent/workflows/schemas/workflow_output.schema.json
+persistence:
+  kind: jsonl
+  path_template: data/workflows/{workflow_id}/{date}.jsonl
+  retention_days: 3650
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+timeout_seconds: 1800
+retry_policy:
+  max_retries: 0
+  backoff_seconds: 0
+degradation_policy:
+  on_failure: emit_degraded_artifact
+  on_partial_data: emit_with_warnings
+evaluation_hooks:
+  - weekly_review_quality

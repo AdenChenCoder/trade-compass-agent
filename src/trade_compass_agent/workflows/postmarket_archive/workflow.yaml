@@ -1,0 +1,105 @@
+id: postmarket_archive
+version: 2
+name: Postmarket Archive
+description: Run the postmarket archive, reflection, journal, and dreaming workflow.
+owner: operations
+inputs:
+  required:
+    - as_of
+  optional:
+    - source_refs
+    - run_id
+steps:
+  - id: audit_summary
+    type: tool
+    uses: tool:builtin.write_audit_summary
+    with:
+      job_id: postmarket
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: memory_compact
+    type: tool
+    uses: tool:builtin.compact_memory
+    with:
+      job_id: postmarket
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: reflection
+    type: tool
+    uses: tool:builtin.resolve_reflections
+    with:
+      job_id: postmarket
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+  - id: knowledge_curator
+    type: tool
+    uses: tool:builtin.curate_knowledge
+    depends_on:
+      - memory_compact
+    with:
+      job_id: postmarket
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        memory_compact: "{steps.memory_compact.output}"
+  - id: research_artifacts
+    type: tool
+    uses: tool:builtin.update_research_artifacts
+    depends_on:
+      - audit_summary
+      - reflection
+    with:
+      job_id: postmarket
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        audit_summary: "{steps.audit_summary.output}"
+        reflection: "{steps.reflection.output}"
+  - id: agent_daily_journal
+    type: tool
+    uses: tool:builtin.agent_daily_journal
+    depends_on:
+      - audit_summary
+      - memory_compact
+      - reflection
+      - research_artifacts
+    with:
+      job_id: postmarket
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        audit_summary: "{steps.audit_summary.output}"
+        memory_compact: "{steps.memory_compact.output}"
+        reflection: "{steps.reflection.output}"
+        research_artifacts: "{steps.research_artifacts.output}"
+  - id: dreaming
+    type: tool
+    uses: tool:builtin.run_dreaming
+    depends_on:
+      - memory_compact
+      - knowledge_curator
+    with:
+      job_id: postmarket
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      upstream:
+        memory_compact: "{steps.memory_compact.output}"
+        knowledge_curator: "{steps.knowledge_curator.output}"
+    primary_output: true
+output_schema: src/trade_compass_agent/workflows/schemas/workflow_output.schema.json
+persistence:
+  kind: jsonl
+  path_template: data/workflows/{workflow_id}/{date}.jsonl
+  retention_days: 3650
+risk_policy:
+  may_recommend_trade: false
+  produces_broker_order: false
+timeout_seconds: 1800
+retry_policy:
+  max_retries: 0
+  backoff_seconds: 0
+degradation_policy:
+  on_failure: emit_degraded_artifact
+  on_partial_data: emit_with_warnings
+evaluation_hooks:
+  - archive_quality

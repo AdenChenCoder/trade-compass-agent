@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed"]
+    },
+    "remote-http": {
+      "url": "https://api.example.com/mcp/",
+      "transport": "http",
+      "headers": {
+        "Authorization": "Bearer ${EXAMPLE_API_TOKEN}"
+      }
+    },
+    "remote-sse": {
+      "url": "https://api.example.com/mcp/sse?token=${EXAMPLE_API_TOKEN}",
+      "transport": "sse"
+    },
+    "remote-auto": {
+      "url": "https://api.example.com/mcp"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trade-compass/kol_signal_extract",
+  "type": "object",
+  "required": ["reader_type", "as_of", "source", "claims", "confidence", "warnings"],
+  "additionalProperties": true,
+  "properties": {
+    "reader_type": {"type": "string", "enum": ["kol_signal_reader"]},
+    "as_of": {"type": "string", "minLength": 1},
+    "source": {"type": "object"},
+    "symbols": {"type": "array", "items": {"type": "string"}},
+    "claims": {"type": "array"},
+    "risks": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  }
+}
