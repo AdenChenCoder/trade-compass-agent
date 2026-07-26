@@ -4,6 +4,41 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+### Added
+
+- Goal-oriented documentation for installation, configuration, CLI usage,
+  Skills, architecture, and release operations.
+- Canonical resource/action CLI groups, a machine-readable command catalog, and
+  the `/api/agent/commands` integration endpoint.
+- Community support and conduct policies plus categorized GitHub release notes.
+- Installed-wheel and post-publish acceptance checks for packaged Web, schema,
+  workflow, specialist, configuration, and Skill assets.
+
+### Changed
+
+- Existing flat CLI commands remain available as compatibility aliases while
+  documentation uses grouped commands such as `data check`, `jobs run`, and
+  `memory reindex`.
+- Skill discovery now parses YAML frontmatter correctly, blocks reference path
+  traversal, and gives a same-named writable runtime Skill precedence over its
+  built-in default.
+- Repository agent instructions now document product contracts, extension
+  boundaries, package/runtime state ownership, and installed-wheel validation.
+- Logging now suppresses verbose Lark SDK connection messages and redacts URL
+  query strings, credential-shaped key/value pairs, and bearer tokens.
+
+## [0.2.0rc2] - 2026-07-26
+
+### Changed
+
+- Removed the unused DuckDB runtime dependency, reducing a clean installation by
+  roughly 44 MiB while preserving the default Web, market-data, search, and LLM
+  feature set.
+- Added compatible major-version bounds to base dependencies so fresh installs
+  do not silently adopt untested breaking releases.
+- Corrected the OpenAI-compatible provider error message: the OpenAI SDK is a
+  required base dependency because it powers the default DeepSeek provider.
+
 ## [0.2.0rc1] - 2026-07-22
 
 ### Added

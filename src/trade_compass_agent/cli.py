@@ -10,6 +10,11 @@ import webbrowser
 from pathlib import Path
 
 from trade_compass_agent import __version__
+from trade_compass_agent.command_catalog import (
+    command_catalog,
+    command_help,
+    render_command_catalog,
+)
 from trade_compass_agent.config import (
     ensure_runtime_dirs,
     initialize_runtime_files,
@@ -135,7 +140,9 @@ def run_compress(session_id: str | None = None, *, focus: str | None = None) -> 
         protect_recent_tokens=ss.protect_recent_tokens,
     )
     if summarized:
-        print(f"  Phase 2 summary: {summarized} messages → {len(summary)} chars (~{saved} chars saved)")
+        print(
+            f"  Phase 2 summary: {summarized} messages → {len(summary)} chars (~{saved} chars saved)"
+        )
         if focus:
             print(f"  Focus: {focus}")
     else:
@@ -250,12 +257,21 @@ def run_scheduler_list() -> None:
         print("\nNo custom prompt jobs.")
 
 
-def run_scheduler_add(name: str, prompt: str, schedule: str, *, trading_day_only: bool = False) -> None:
+def run_scheduler_add(
+    name: str, prompt: str, schedule: str, *, trading_day_only: bool = False
+) -> None:
     config = load_app_config()
     from trade_compass_agent.ops.prompt_jobs import PromptJobStore
     from trade_compass_agent.ops.tick_scheduler import reload_active_scheduler
+
     store = PromptJobStore(config.data_dir / "scheduler.db")
-    job = store.create(name=name, prompt=prompt, schedule=schedule, trading_day_only=trading_day_only, created_by="cli")
+    job = store.create(
+        name=name,
+        prompt=prompt,
+        schedule=schedule,
+        trading_day_only=trading_day_only,
+        created_by="cli",
+    )
     reload_active_scheduler()
     print(f"Created: {job.id} — {job.name} ({job.schedule})")
 
@@ -263,6 +279,7 @@ def run_scheduler_add(name: str, prompt: str, schedule: str, *, trading_day_only
 def run_scheduler_pause(job_id: str) -> None:
     config = load_app_config()
     from trade_compass_agent.ops.prompt_jobs import PromptJobStore
+
     store = PromptJobStore(config.data_dir / "scheduler.db")
     if store.set_enabled(job_id, False):
         print(f"Paused: {job_id}")
@@ -273,6 +290,7 @@ def run_scheduler_pause(job_id: str) -> None:
 def run_scheduler_resume(job_id: str) -> None:
     config = load_app_config()
     from trade_compass_agent.ops.prompt_jobs import PromptJobStore
+
     store = PromptJobStore(config.data_dir / "scheduler.db")
     if store.set_enabled(job_id, True):
         print(f"Resumed: {job_id}")
@@ -283,6 +301,7 @@ def run_scheduler_resume(job_id: str) -> None:
 def run_scheduler_remove(job_id: str) -> None:
     config = load_app_config()
     from trade_compass_agent.ops.prompt_jobs import PromptJobStore
+
     store = PromptJobStore(config.data_dir / "scheduler.db")
     if store.delete(job_id):
         print(f"Removed: {job_id}")
@@ -293,6 +312,7 @@ def run_scheduler_remove(job_id: str) -> None:
 def run_scheduler_runs(limit: int = 20) -> None:
     config = load_app_config()
     from trade_compass_agent.ops.run_store import SqliteRunStore
+
     store = SqliteRunStore(config.data_dir / "scheduler.db")
     runs = store.recent_runs(limit)
     for run in runs:
@@ -358,7 +378,9 @@ def run_rules_show() -> None:
 
 def run_rules_add(text: str) -> None:
     config = load_app_config()
-    result = RulesStore(config.memory_dir, char_limit=config.rules.char_limit).add(text, actor="cli")
+    result = RulesStore(config.memory_dir, char_limit=config.rules.char_limit).add(
+        text, actor="cli"
+    )
     if not result.get("ok"):
         print(result.get("error", "Failed to add rule"), file=sys.stderr)
         raise SystemExit(1)
@@ -367,7 +389,9 @@ def run_rules_add(text: str) -> None:
 
 def run_rules_edit(entry_id: str, text: str) -> None:
     config = load_app_config()
-    result = RulesStore(config.memory_dir, char_limit=config.rules.char_limit).replace(entry_id, text, actor="cli")
+    result = RulesStore(config.memory_dir, char_limit=config.rules.char_limit).replace(
+        entry_id, text, actor="cli"
+    )
     if not result.get("ok"):
         print(result.get("error", "Failed to edit rule"), file=sys.stderr)
         raise SystemExit(1)
@@ -376,7 +400,9 @@ def run_rules_edit(entry_id: str, text: str) -> None:
 
 def run_rules_remove(entry_id: str) -> None:
     config = load_app_config()
-    result = RulesStore(config.memory_dir, char_limit=config.rules.char_limit).remove(entry_id, actor="cli")
+    result = RulesStore(config.memory_dir, char_limit=config.rules.char_limit).remove(
+        entry_id, actor="cli"
+    )
     if not result.get("ok"):
         print(result.get("error", "Failed to remove rule"), file=sys.stderr)
         raise SystemExit(1)
@@ -428,7 +454,9 @@ def run_memory_bootstrap(dry_run: bool = False, max_promote: int = 5) -> None:
         print("No observations to bootstrap from.")
         return
 
-    candidates = rank_promotion_candidates(obs_store, bootstrap=True, limit=100, skill_store=skill_store)
+    candidates = rank_promotion_candidates(
+        obs_store, bootstrap=True, limit=100, skill_store=skill_store
+    )
     if not candidates:
         print("No promotion candidates found.")
         return
@@ -436,14 +464,19 @@ def run_memory_bootstrap(dry_run: bool = False, max_promote: int = 5) -> None:
     print(f"\nTop {min(max_promote, len(candidates))} candidates:")
     for i, c in enumerate(candidates[:max_promote]):
         obs = c.observation
-        print(f"  {i+1}. [score={c.score:.3f} signal={obs.total_signal}] {obs.summary[:80]}")
+        print(f"  {i + 1}. [score={c.score:.3f} signal={obs.total_signal}] {obs.summary[:80]}")
 
     if dry_run:
-        print(f"\n(dry-run) Would promote up to {max_promote} entries. Run without --dry-run to apply.")
+        print(
+            f"\n(dry-run) Would promote up to {max_promote} entries. Run without --dry-run to apply."
+        )
         return
 
     from trade_compass_agent.memory.promotion import BOOTSTRAP_THRESHOLD
-    promoted = apply_promotions(candidates, mem_store, obs_store, max_promote=max_promote, threshold=BOOTSTRAP_THRESHOLD)
+
+    promoted = apply_promotions(
+        candidates, mem_store, obs_store, max_promote=max_promote, threshold=BOOTSTRAP_THRESHOLD
+    )
     print(f"\nPromoted {len(promoted)} entries to KNOWLEDGE.md")
     for c in promoted:
         print(f"  ✓ [{c.verdict}] {c.refined_text[:80]}")
@@ -453,7 +486,10 @@ def run_contradiction_scan(apply: bool = False) -> None:
     """Scan active KNOWLEDGE for conflicts; optionally apply SUPERSEDE/ARCHIVE."""
     config = load_app_config()
     from trade_compass_agent.llm.providers import ChatMessage, create_chat_client
-    from trade_compass_agent.memory.contradiction import apply_conflict_reports, scan_active_conflicts
+    from trade_compass_agent.memory.contradiction import (
+        apply_conflict_reports,
+        scan_active_conflicts,
+    )
     from trade_compass_agent.memory.memory_store import MemoryStore
     from trade_compass_agent.memory.skill_store import SkillStore
     from trade_compass_agent.memory.write_gate import SemanticWriteGate
@@ -474,11 +510,16 @@ def run_contradiction_scan(apply: bool = False) -> None:
 
     def _llm_call(system_prompt: str, user_content: str) -> str:
         client = create_chat_client(config)
-        msgs = [ChatMessage(role="system", content=system_prompt), ChatMessage(role="user", content=user_content)]
+        msgs = [
+            ChatMessage(role="system", content=system_prompt),
+            ChatMessage(role="user", content=user_content),
+        ]
         return client.complete(msgs).content or ""
 
     skills = skill_store.list_skills(include_stale=False)
-    skills_summary = "\n".join(f"- {s.name}: {s.description or ''}" for s in skills[:20]) if skills else ""
+    skills_summary = (
+        "\n".join(f"- {s.name}: {s.description or ''}" for s in skills[:20]) if skills else ""
+    )
     reports = scan_active_conflicts(active, GROUNDING_RULES, skills_summary, _llm_call)
 
     if not reports:
@@ -514,7 +555,10 @@ def run_memory_merge() -> None:
 
     def _llm_call(system_prompt: str, user_content: str) -> str:
         client = create_chat_client(config)
-        msgs = [ChatMessage(role="system", content=system_prompt), ChatMessage(role="user", content=user_content)]
+        msgs = [
+            ChatMessage(role="system", content=system_prompt),
+            ChatMessage(role="user", content=user_content),
+        ]
         return client.complete(msgs).content or ""
 
     print(f"KNOWLEDGE.md: {len(mem_store.memory_entries)} entries")
@@ -613,7 +657,15 @@ def run_audit_show(event_id: str) -> None:
     print(f"Type: {event.event_type}")
     print(f"Summary: {event.summary}")
     payload = event.payload
-    for key in ["provider", "symbol", "grade_in", "grade_out", "horizon", "confidence", "position_limit_pct"]:
+    for key in [
+        "provider",
+        "symbol",
+        "grade_in",
+        "grade_out",
+        "horizon",
+        "confidence",
+        "position_limit_pct",
+    ]:
         if key in payload:
             print(f"{key}: {payload[key]}")
     for section in ["source_rules", "evidence", "risks"]:
@@ -881,52 +933,112 @@ def run_import(path: str, *, force: bool = False) -> None:
     print("Existing files absent from the archive and local .env/MCP credentials were preserved.")
 
 
-def main() -> None:
-    load_project_dotenv()
-    parser = argparse.ArgumentParser(prog="trade-compass")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    sub.add_parser("market-pulse", help="Show sector strength and limit-up summary")
-
-    p_agent = sub.add_parser("agent", help="Run one agent turn (ReAct + tools)")
-    p_agent.add_argument("message")
-
-    p_ask = sub.add_parser("ask", help="Alias for agent")
-    p_ask.add_argument("message")
-
-    p_data = sub.add_parser("data-check", help="Diagnose akshare/baostock/auto market data access")
-    p_data.add_argument("symbols", nargs="*", default=[])
-    p_data.add_argument("--timeframe", default="1d", choices=["1d", "1m", "5m", "15m", "30m", "60m"])
-    p_data.add_argument(
+def _configure_data_check_parser(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("symbols", nargs="*", default=[])
+    parser.add_argument(
+        "--timeframe",
+        default="1d",
+        choices=["1d", "1m", "5m", "15m", "30m", "60m"],
+    )
+    parser.add_argument(
         "--provider",
         default=None,
         choices=["tushare", "akshare", "sina", "baostock", "auto"],
         help="Test a single provider (default: all including tushare when token set)",
     )
 
-    p_job = sub.add_parser("run-job", help="Run a scheduled job (close, postmarket, weekly)")
+
+def _configure_jobs_parser(parser: argparse.ArgumentParser) -> None:
+    job_sub = parser.add_subparsers(dest="scheduler_command")
+    job_sub.add_parser("start", help=command_help("jobs", "start"))
+    job_sub.add_parser("list", help=command_help("jobs", "list"))
+    runs = job_sub.add_parser("runs", help=command_help("jobs", "runs"))
+    runs.add_argument("--limit", type=int, default=20)
+    run = job_sub.add_parser("run", aliases=["run-once"], help=command_help("jobs", "run"))
+    run.add_argument("job_id")
+    add = job_sub.add_parser("add", help=command_help("jobs", "add"))
+    add.add_argument("--name", required=True)
+    add.add_argument("--prompt", required=True)
+    add.add_argument("--schedule", required=True)
+    add.add_argument("--trading-day-only", action="store_true")
+    pause = job_sub.add_parser("pause", help=command_help("jobs", "pause"))
+    pause.add_argument("job_id")
+    resume = job_sub.add_parser("resume", help=command_help("jobs", "resume"))
+    resume.add_argument("job_id")
+    remove = job_sub.add_parser("remove", help=command_help("jobs", "remove"))
+    remove.add_argument("job_id")
+
+
+def _configure_memory_parser(parser: argparse.ArgumentParser) -> None:
+    memory_sub = parser.add_subparsers(dest="memory_command", required=True)
+    memory_sub.add_parser("merge", help=command_help("memory", "merge"))
+    pin = memory_sub.add_parser("pin", help=command_help("memory", "pin"))
+    pin.add_argument("text")
+    pin.add_argument("--target", default="memory", choices=["memory", "user"])
+    forget = memory_sub.add_parser("forget", help=command_help("memory", "forget"))
+    forget.add_argument("text")
+    forget.add_argument("--target", default="memory", choices=["memory", "user"])
+    contradictions = memory_sub.add_parser(
+        "contradictions",
+        help=command_help("memory", "contradictions"),
+    )
+    contradictions.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply SUPERSEDE/ARCHIVE actions",
+    )
+    memory_sub.add_parser("reindex", help=command_help("memory", "reindex"))
+    bootstrap = memory_sub.add_parser(
+        "bootstrap",
+        help=command_help("memory", "bootstrap"),
+    )
+    bootstrap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show candidates without writing",
+    )
+    bootstrap.add_argument(
+        "--max",
+        type=int,
+        default=5,
+        help="Max entries to promote (default: 5)",
+    )
+
+
+def run_commands(*, as_json: bool = False) -> None:
+    if as_json:
+        print(json.dumps({"commands": command_catalog()}, ensure_ascii=False, indent=2))
+    else:
+        print(render_command_catalog())
+
+
+def main() -> None:
+    load_project_dotenv()
+    parser = argparse.ArgumentParser(prog="trade-compass")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("market-pulse", help=command_help("market-pulse"))
+
+    p_agent = sub.add_parser("agent", help=command_help("agent"))
+    p_agent.add_argument("message")
+
+    p_ask = sub.add_parser("ask", help="Alias for `agent`")
+    p_ask.add_argument("message")
+
+    p_data = sub.add_parser("data-check", help="Legacy alias for `data check`")
+    _configure_data_check_parser(p_data)
+    p_data_group = sub.add_parser("data", help="Inspect market-data providers")
+    p_data_sub = p_data_group.add_subparsers(dest="data_command", required=True)
+    _configure_data_check_parser(p_data_sub.add_parser("check", help=command_help("data", "check")))
+
+    p_job = sub.add_parser("run-job", help="Legacy alias for `jobs run`")
     p_job.add_argument("job_id")
 
-    p_scheduler = sub.add_parser("scheduler", help="Manage scheduled jobs")
-    p_scheduler_sub = p_scheduler.add_subparsers(dest="scheduler_command")
-    p_scheduler_sub.add_parser("start")
-    p_scheduler_sub.add_parser("list")
-    p_scheduler_runs = p_scheduler_sub.add_parser("runs")
-    p_scheduler_runs.add_argument("--limit", type=int, default=20)
-    p_scheduler_once = p_scheduler_sub.add_parser("run-once")
-    p_scheduler_once.add_argument("job_id")
-    p_scheduler_add = p_scheduler_sub.add_parser("add", help="Create a custom prompt job")
-    p_scheduler_add.add_argument("--name", required=True)
-    p_scheduler_add.add_argument("--prompt", required=True)
-    p_scheduler_add.add_argument("--schedule", required=True)
-    p_scheduler_add.add_argument("--trading-day-only", action="store_true")
-    p_scheduler_pause = p_scheduler_sub.add_parser("pause", help="Pause a custom job")
-    p_scheduler_pause.add_argument("job_id")
-    p_scheduler_resume = p_scheduler_sub.add_parser("resume", help="Resume a paused job")
-    p_scheduler_resume.add_argument("job_id")
-    p_scheduler_rm = p_scheduler_sub.add_parser("remove", help="Delete a custom job")
-    p_scheduler_rm.add_argument("job_id")
+    p_scheduler = sub.add_parser("scheduler", help="Legacy alias for `jobs`")
+    _configure_jobs_parser(p_scheduler)
+    p_jobs = sub.add_parser("jobs", help="Manage scheduled jobs")
+    _configure_jobs_parser(p_jobs)
 
     p_notify = sub.add_parser("notifications", help="Inspect/send local notifications")
     p_notify_sub = p_notify.add_subparsers(dest="notify_command")
@@ -956,31 +1068,49 @@ def main() -> None:
     p_audit_show = p_audit_sub.add_parser("show")
     p_audit_show.add_argument("event_id")
 
-    sub.add_parser("memory-merge", help="Merge similar KNOWLEDGE.md entries via LLM")
-    p_mem_pin = sub.add_parser("memory-pin", help="User-pin a high-trust KNOWLEDGE/USER entry")
+    p_memory = sub.add_parser("memory", help="Manage reusable memory")
+    _configure_memory_parser(p_memory)
+
+    sub.add_parser("memory-merge", help="Legacy alias for `memory merge`")
+    p_mem_pin = sub.add_parser("memory-pin", help="Legacy alias for `memory pin`")
     p_mem_pin.add_argument("text")
     p_mem_pin.add_argument("--target", default="memory", choices=["memory", "user"])
-    p_mem_forget = sub.add_parser("memory-forget", help="User-forget a KNOWLEDGE/USER entry by text prefix")
+    p_mem_forget = sub.add_parser("memory-forget", help="Legacy alias for `memory forget`")
     p_mem_forget.add_argument("text")
     p_mem_forget.add_argument("--target", default="memory", choices=["memory", "user"])
     p_contradiction = sub.add_parser(
         "contradiction-scan",
-        help="Scan KNOWLEDGE.md for conflicts with GROUNDING and suggest SUPERSEDE",
+        help="Legacy alias for `memory contradictions`",
     )
-    p_contradiction.add_argument("--apply", action="store_true", help="Apply SUPERSEDE/ARCHIVE actions")
-    sub.add_parser("memory-reindex", help="Rebuild FTS index (tree, reflections, KNOWLEDGE, DREAM_DIARY)")
+    p_contradiction.add_argument(
+        "--apply", action="store_true", help="Apply SUPERSEDE/ARCHIVE actions"
+    )
+    sub.add_parser("memory-reindex", help="Legacy alias for `memory reindex`")
 
-    p_bootstrap = sub.add_parser("memory-bootstrap", help="Cold-start: promote top observations to KNOWLEDGE.md")
-    p_bootstrap.add_argument("--dry-run", action="store_true", help="Show candidates without writing")
-    p_bootstrap.add_argument("--max", type=int, default=5, help="Max entries to promote (default: 5)")
+    p_bootstrap = sub.add_parser("memory-bootstrap", help="Legacy alias for `memory bootstrap`")
+    p_bootstrap.add_argument(
+        "--dry-run", action="store_true", help="Show candidates without writing"
+    )
+    p_bootstrap.add_argument(
+        "--max", type=int, default=5, help="Max entries to promote (default: 5)"
+    )
 
-    p_setup = sub.add_parser("setup", help="Create local config, env, and runtime directories")
+    p_setup = sub.add_parser("setup", help=command_help("setup"))
     p_setup.add_argument("--force", action="store_true", help="Replace the config template")
-    sub.add_parser("doctor", help="Check config, storage, web UI, LLM, and service readiness")
+    sub.add_parser("doctor", help=command_help("doctor"))
 
     p_backup = sub.add_parser("backup", help="Create or inspect a local recovery archive")
-    p_backup.add_argument("--output", default=None, help="Backup ZIP path (default: user backup dir)")
+    p_backup.add_argument(
+        "--output", default=None, help="Backup ZIP path (default: user backup dir)"
+    )
     p_backup_sub = p_backup.add_subparsers(dest="backup_command")
+    p_backup_create = p_backup_sub.add_parser("create", help=command_help("backup", "create"))
+    p_backup_create.add_argument(
+        "--output",
+        dest="create_output",
+        default=None,
+        help="Backup ZIP path (default: user backup dir)",
+    )
     p_backup_inspect = p_backup_sub.add_parser("inspect", help="Validate manifest and checksums")
     p_backup_inspect.add_argument("archive")
 
@@ -993,8 +1123,17 @@ def main() -> None:
     )
 
     p_export = sub.add_parser("export", help="Create or inspect a private migration archive")
-    p_export.add_argument("--output", default=None, help="Portable ZIP path (default: user export dir)")
+    p_export.add_argument(
+        "--output", default=None, help="Portable ZIP path (default: user export dir)"
+    )
     p_export_sub = p_export.add_subparsers(dest="export_command")
+    p_export_create = p_export_sub.add_parser("create", help=command_help("export", "create"))
+    p_export_create.add_argument(
+        "--output",
+        dest="create_output",
+        default=None,
+        help="Portable ZIP path (default: user export dir)",
+    )
     p_export_inspect = p_export_sub.add_parser("inspect", help="Validate a portable archive")
     p_export_inspect.add_argument("archive")
 
@@ -1006,7 +1145,7 @@ def main() -> None:
         help="Apply merge import after automatically backing up current state",
     )
 
-    p_serve = sub.add_parser("serve")
+    p_serve = sub.add_parser("serve", help=command_help("serve"))
     p_serve.add_argument("--host", default="127.0.0.1", help="Loopback host only")
     p_serve.add_argument("--port", type=int, default=None)
     p_serve.add_argument("--dev", action="store_true", help="Dev mode: CORS for :3000 + hot reload")
@@ -1017,7 +1156,9 @@ def main() -> None:
         help="Do not start the scheduler (default: on when config.scheduler.enabled)",
     )
 
-    p_compress = sub.add_parser("compress", help="Manually compress a session's context (Phase 1+2)")
+    p_compress = sub.add_parser(
+        "compress", help="Manually compress a session's context (Phase 1+2)"
+    )
     p_compress.add_argument("session_id", nargs="?", help="Session ID (default: most recent)")
     p_compress.add_argument("--focus", default=None, help="Focus topic for guided summarization")
 
@@ -1060,6 +1201,8 @@ def main() -> None:
         action="store_true",
         help="Emit JSON for status/verify (also accepted after the subcommand)",
     )
+    p_commands = sub.add_parser("commands", help=command_help("commands"))
+    p_commands.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
     args = parser.parse_args()
     load_project_dotenv()
@@ -1071,19 +1214,21 @@ def main() -> None:
         run_agent(args.message)
     elif args.command == "ask":
         run_ask(args.message)
-    elif args.command == "data-check":
+    elif args.command in {"data-check", "data"}:
         run_data_check(args.symbols, timeframe=args.timeframe, provider=args.provider)
     elif args.command == "run-job":
         run_job(args.job_id)
-    elif args.command == "scheduler":
+    elif args.command in {"scheduler", "jobs"}:
         if args.scheduler_command == "start":
             run_scheduler_start()
         elif args.scheduler_command == "runs":
             run_scheduler_runs(limit=args.limit)
-        elif args.scheduler_command == "run-once":
+        elif args.scheduler_command in {"run", "run-once"}:
             run_job(args.job_id)
         elif args.scheduler_command == "add":
-            run_scheduler_add(args.name, args.prompt, args.schedule, trading_day_only=args.trading_day_only)
+            run_scheduler_add(
+                args.name, args.prompt, args.schedule, trading_day_only=args.trading_day_only
+            )
         elif args.scheduler_command == "pause":
             run_scheduler_pause(args.job_id)
         elif args.scheduler_command == "resume":
@@ -1127,6 +1272,19 @@ def main() -> None:
         run_memory_reindex()
     elif args.command == "memory-bootstrap":
         run_memory_bootstrap(dry_run=args.dry_run, max_promote=args.max)
+    elif args.command == "memory":
+        if args.memory_command == "merge":
+            run_memory_merge()
+        elif args.memory_command == "pin":
+            run_memory_pin(args.text, target=args.target)
+        elif args.memory_command == "forget":
+            run_memory_forget(args.text, target=args.target)
+        elif args.memory_command == "contradictions":
+            run_contradiction_scan(apply=args.apply)
+        elif args.memory_command == "reindex":
+            run_memory_reindex()
+        elif args.memory_command == "bootstrap":
+            run_memory_bootstrap(dry_run=args.dry_run, max_promote=args.max)
     elif args.command == "setup":
         run_setup(force=args.force)
     elif args.command == "doctor":
@@ -1135,14 +1293,14 @@ def main() -> None:
         if args.backup_command == "inspect":
             run_backup_inspect(args.archive)
         else:
-            run_backup(output=args.output)
+            run_backup(output=getattr(args, "create_output", None) or args.output)
     elif args.command == "restore":
         run_restore(args.archive, force=args.force)
     elif args.command == "export":
         if args.export_command == "inspect":
             run_export_inspect(args.archive)
         else:
-            run_export(output=args.output)
+            run_export(output=getattr(args, "create_output", None) or args.output)
     elif args.command == "import":
         run_import(args.archive, force=args.force)
     elif args.command == "serve":
@@ -1165,6 +1323,8 @@ def main() -> None:
             force=args.force,
             as_json=args.service_json or getattr(args, "command_json", False),
         )
+    elif args.command == "commands":
+        run_commands(as_json=args.json)
 
 
 if __name__ == "__main__":

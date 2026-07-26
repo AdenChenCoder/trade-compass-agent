@@ -1,0 +1,8 @@
+# Default ownership
+* @AdenChenCoder
+
+# Release and security-sensitive surfaces
+/.github/workflows/ @AdenChenCoder
+/pyproject.toml @AdenChenCoder
+/scripts/check_dist.py @AdenChenCoder
+/SECURITY.md @AdenChenCoder

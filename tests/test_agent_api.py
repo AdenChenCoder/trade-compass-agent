@@ -57,6 +57,16 @@ def test_agent_skills_returns_only_external(
     assert "memory_vault" not in sources
 
 
+def test_agent_commands_uses_canonical_catalog(client: TestClient) -> None:
+    response = client.get("/api/agent/commands")
+
+    assert response.status_code == 200
+    commands = {item["command"]: item for item in response.json()["commands"]}
+    assert "trade-compass data check" in commands
+    assert ["data-check"] in commands["trade-compass data check"]["aliases"]
+    assert commands["trade-compass service verify"]["supports_json"] is True
+
+
 def _collect_sse_event_names(client: TestClient, session_id: str) -> list[str]:
     names: list[str] = []
     deadline = time.monotonic() + 5.0

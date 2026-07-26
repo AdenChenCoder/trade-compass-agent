@@ -75,6 +75,15 @@ jobs:
           if tag != f"v{version}":
               raise SystemExit(f"tag {tag!r} does not match package version {version!r}")
           PY
+      - name: Verify the exact wheel as an installed consumer
+        run: |
+          python -m venv "$RUNNER_TEMP/release-smoke"
+          "$RUNNER_TEMP/release-smoke/bin/python" -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          export TRADE_COMPASS_HOME="$RUNNER_TEMP/trade-compass-home"
+          "$RUNNER_TEMP/release-smoke/bin/trade-compass" --version
+          "$RUNNER_TEMP/release-smoke/bin/trade-compass" commands --json
+          "$RUNNER_TEMP/release-smoke/bin/python" -m trade_compass_agent.release_smoke
       - uses: actions/upload-artifact@v4
         with:
           name: python-distributions
@@ -96,8 +105,35 @@ jobs:
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
 
-  github-release:
+  postpublish:
     needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install and accept the published package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          python -m venv "$RUNNER_TEMP/postpublish"
+          for attempt in 1 2 3 4 5; do
+            if "$RUNNER_TEMP/postpublish/bin/python" -m pip install \
+              "trade-compass-agent==$VERSION"; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then
+              exit 1
+            fi
+            sleep 15
+          done
+          cd "$RUNNER_TEMP"
+          export TRADE_COMPASS_HOME="$RUNNER_TEMP/trade-compass-home"
+          "$RUNNER_TEMP/postpublish/bin/trade-compass" --version
+          "$RUNNER_TEMP/postpublish/bin/trade-compass" commands --json
+          "$RUNNER_TEMP/postpublish/bin/python" -m trade_compass_agent.release_smoke
+
+  github-release:
+    needs: postpublish
     runs-on: ubuntu-latest
     permissions:
       contents: write

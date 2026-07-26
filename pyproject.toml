@@ -1,6 +1,6 @@
 [project]
 name = "trade-compass-agent"
-version = "0.2.0rc1"
+version = "0.2.0rc2"
 description = "交易罗盘: local-first A-share trading agent workbench for short-term trading, ETF rotation, simulation, review, and memory-driven improvement."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -19,20 +19,27 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Topic :: Office/Business :: Financial :: Investment",
 ]
+
 dependencies = [
-  "fastapi>=0.115",
-  "pydantic>=2.0",
-  "PyYAML>=6.0",
-  "uvicorn[standard]>=0.30",
-  "pandas>=2.2",
-  "numpy>=2.0",
-  "duckdb>=1.0",
-  "akshare>=1.15",
-  "baostock>=0.8",
-  "python-dotenv>=1.0",
-  "duckduckgo-search>=7.0",
-  "openai>=1.0",
+  "fastapi>=0.115,<1",
+  "pydantic>=2.0,<3",
+  "PyYAML>=6.0,<7",
+  "uvicorn[standard]>=0.30,<1",
+  "pandas>=2.2,<4",
+  "numpy>=2.0,<3",
+  "akshare>=1.15,<2",
+  "baostock>=0.8,<1",
+  "python-dotenv>=1.0,<2",
+  "duckduckgo-search>=7.0,<9",
+  "openai>=1.0,<3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/AdenChenCoder/trade-compass-agent"
+Documentation = "https://github.com/AdenChenCoder/trade-compass-agent/tree/main/docs"
+Repository = "https://github.com/AdenChenCoder/trade-compass-agent"
+Issues = "https://github.com/AdenChenCoder/trade-compass-agent/issues"
+Changelog = "https://github.com/AdenChenCoder/trade-compass-agent/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 tushare = [

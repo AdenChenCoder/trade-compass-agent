@@ -28,10 +28,8 @@ body:
     id: alternatives
     attributes:
       label: Alternatives considered
-  - type: checkboxes
-    id: scope
+  - type: textarea
+    id: contracts
     attributes:
-      label: Product boundary
-      options:
-        - label: This request does not assume real broker order execution.
-          required: true
+      label: Compatibility and product contracts
+      description: Note any data, workflow, permission, or automation behavior that must remain unchanged.

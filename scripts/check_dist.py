@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+from email.parser import BytesParser
+from email.policy import default
+import re
 import sys
 import tarfile
 import tomllib
@@ -24,6 +27,8 @@ FORBIDDEN_PARTS = {
 FORBIDDEN_SUFFIXES = {".pyc", ".pyo", ".tsbuildinfo"}
 REQUIRED_WHEEL_FILES = {
     "trade_compass_agent/agent_skills.yaml",
+    "trade_compass_agent/builtin_skills/investment-masters/references/buffett.md",
+    "trade_compass_agent/builtin_skills/investment-masters/SKILL.md",
     "trade_compass_agent/builtin_skills/intraday-tech/SKILL.md",
     "trade_compass_agent/default.yaml",
     "trade_compass_agent/diagnostics.py",
@@ -37,6 +42,22 @@ REQUIRED_WHEEL_FILES = {
     "trade_compass_agent/web_dist/index.html",
     "trade_compass_agent/workflows/catalyst_calendar_cn/workflow.yaml",
 }
+REQUIRED_BASE_DEPENDENCIES = {
+    "akshare",
+    "baostock",
+    "duckduckgo-search",
+    "fastapi",
+    "numpy",
+    "openai",
+    "pandas",
+    "pydantic",
+    "python-dotenv",
+    "pyyaml",
+    "uvicorn",
+}
+FORBIDDEN_BASE_DEPENDENCIES = {"duckdb"}
+REQUIRED_PROJECT_URLS = {"Changelog", "Documentation", "Homepage", "Issues", "Repository"}
+MAX_WHEEL_SIZE_BYTES = 5 * 1024 * 1024
 
 
 def _project_version() -> str:
@@ -60,6 +81,31 @@ def _validate_names(archive: Path, names: set[str]) -> None:
         raise ValueError(f"{archive.name}:\n  " + "\n  ".join(errors))
 
 
+def _requirement_name(requirement: str) -> str:
+    name = re.split(r"[\s\[<>=!~;(]", requirement, maxsplit=1)[0]
+    return name.lower().replace("_", "-")
+
+
+def _base_dependency_names(metadata: bytes) -> set[str]:
+    message = BytesParser(policy=default).parsebytes(metadata)
+    requirements = message.get_all("Requires-Dist", [])
+    return {
+        _requirement_name(requirement)
+        for requirement in requirements
+        if "extra ==" not in requirement
+    }
+
+
+def _project_url_names(metadata: bytes) -> set[str]:
+    message = BytesParser(policy=default).parsebytes(metadata)
+    names: set[str] = set()
+    for value in message.get_all("Project-URL", []):
+        name, separator, _ = value.partition(",")
+        if separator and name.strip():
+            names.add(name.strip())
+    return names
+
+
 def main() -> int:
     version = _project_version()
     wheel_matches = sorted(DIST.glob(f"trade_compass_agent-{version}-*.whl"))
@@ -71,6 +117,15 @@ def main() -> int:
     wheel = wheel_matches[0]
     with zipfile.ZipFile(wheel) as archive:
         wheel_names = set(archive.namelist())
+        metadata_names = [
+            name for name in wheel_names if name.endswith(".dist-info/METADATA")
+        ]
+        if len(metadata_names) != 1:
+            print(f"{wheel.name}: expected exactly one METADATA file", file=sys.stderr)
+            return 1
+        metadata = archive.read(metadata_names[0])
+        base_dependencies = _base_dependency_names(metadata)
+        project_urls = _project_url_names(metadata)
     with tarfile.open(sdist, "r:gz") as archive:
         sdist_names = set(archive.getnames())
 
@@ -84,6 +139,34 @@ def main() -> int:
     missing = sorted(REQUIRED_WHEEL_FILES - wheel_names)
     if missing:
         print(f"{wheel.name}: missing required files: {', '.join(missing)}", file=sys.stderr)
+        return 1
+
+    missing_dependencies = sorted(REQUIRED_BASE_DEPENDENCIES - base_dependencies)
+    forbidden_dependencies = sorted(FORBIDDEN_BASE_DEPENDENCIES & base_dependencies)
+    if missing_dependencies or forbidden_dependencies:
+        details = []
+        if missing_dependencies:
+            details.append(f"missing base dependencies: {', '.join(missing_dependencies)}")
+        if forbidden_dependencies:
+            details.append(
+                f"forbidden base dependencies: {', '.join(forbidden_dependencies)}"
+            )
+        print(f"{wheel.name}: {'; '.join(details)}", file=sys.stderr)
+        return 1
+
+    missing_project_urls = sorted(REQUIRED_PROJECT_URLS - project_urls)
+    if missing_project_urls:
+        print(
+            f"{wheel.name}: missing Project-URL metadata: {', '.join(missing_project_urls)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if wheel.stat().st_size > MAX_WHEEL_SIZE_BYTES:
+        print(
+            f"{wheel.name}: wheel exceeds {MAX_WHEEL_SIZE_BYTES // (1024 * 1024)} MiB budget",
+            file=sys.stderr,
+        )
         return 1
 
     sdist_prefix = f"trade_compass_agent-{version}/"

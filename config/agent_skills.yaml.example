@@ -1,8 +1,9 @@
 # Agent skills configuration
 #
-# Copy to config/agent_skills.yaml to customize skill filtering.
-# If this file is absent, or enabled_skills is unset, ALL discovered skills
-# under memory_vault/skills/*/SKILL.md are enabled (current behavior).
+# Copy to config/agent_skills.yaml to customize built-in skill filtering.
+# If this file is absent, or enabled_skills is unset, all built-in skills are
+# enabled. Runtime-created memory_vault/skills/*/SKILL.md entries are always
+# discoverable and override a same-named built-in skill.
 #
 # enabled_skills: optional allow-list of skill folder names
 # default_summaries: optional map of skill name → short summary override for bootstrap

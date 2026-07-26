@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
+from trade_compass_agent.command_catalog import command_catalog
 from trade_compass_agent.config import AppConfig, load_app_config
 from trade_compass_agent.ops.audit import JsonAuditLog
 from trade_compass_agent.ops.session_cleanup import SCHEDULER_SESSION_PREFIX
@@ -124,6 +125,20 @@ class SkillsResponse(BaseModel):
     skills: list[SkillPayload]
 
 
+class CommandPayload(BaseModel):
+    path: list[str]
+    command: str
+    summary: str
+    category: str
+    aliases: list[list[str]] = Field(default_factory=list)
+    mutates_state: bool = False
+    supports_json: bool = False
+
+
+class CommandsResponse(BaseModel):
+    commands: list[CommandPayload]
+
+
 class McpServerPayload(BaseModel):
     name: str
     status: str
@@ -208,7 +223,11 @@ def _get_cached_stack() -> tuple[AppConfig, MarketStack]:
     global _cached_stack, _cached_config
     config = load_app_config()
     with _stack_lock:
-        if _cached_stack is None or _cached_config is None or _cached_config.data_dir != config.data_dir:
+        if (
+            _cached_stack is None
+            or _cached_config is None
+            or _cached_config.data_dir != config.data_dir
+        ):
             _cached_config = config
             _cached_stack = MarketStack.from_config(config)
         return _cached_config, _cached_stack
@@ -471,7 +490,9 @@ def _session_message_payload(message) -> SessionMessagePayload:
         tool_calls = [
             ToolCallPayload(
                 name=tc.get("function", {}).get("name", "") if isinstance(tc, dict) else "",
-                arguments=tc.get("function", {}).get("arguments", "") if isinstance(tc, dict) else "",
+                arguments=tc.get("function", {}).get("arguments", "")
+                if isinstance(tc, dict)
+                else "",
             )
             for tc in message.tool_calls
             if isinstance(tc, dict)
@@ -577,6 +598,14 @@ def agent_skills() -> SkillsResponse:
     )
 
 
+@router.get("/commands", response_model=CommandsResponse)
+def agent_commands() -> CommandsResponse:
+    """Return the shared shell-command catalog for help and integrations."""
+    return CommandsResponse(
+        commands=[CommandPayload.model_validate(item) for item in command_catalog()]
+    )
+
+
 @router.get("/mcp", response_model=McpResponse)
 def agent_mcp() -> McpResponse:
     servers = load_mcp_config()
@@ -617,14 +646,16 @@ def list_agent_runs(
             continue
         if session_id and raw.get("session_id") != session_id:
             continue
-        cards.append({
-            "turn_id": raw.get("turn_id"),
-            "session_id": raw.get("session_id"),
-            "started_at": raw.get("started_at"),
-            "finished_at": raw.get("finished_at"),
-            "interrupted": raw.get("interrupted", False),
-            "summary": (raw.get("summary") or "")[:200],
-            "section_count": raw.get("section_count", 0),
-            "event_count": raw.get("event_count", 0),
-        })
+        cards.append(
+            {
+                "turn_id": raw.get("turn_id"),
+                "session_id": raw.get("session_id"),
+                "started_at": raw.get("started_at"),
+                "finished_at": raw.get("finished_at"),
+                "interrupted": raw.get("interrupted", False),
+                "summary": (raw.get("summary") or "")[:200],
+                "section_count": raw.get("section_count", 0),
+                "event_count": raw.get("event_count", 0),
+            }
+        )
     return {"runs": cards}

@@ -111,7 +111,7 @@ _PROVIDER_KEY_ENVS: dict[str, str] = {
 
 
 class OpenAIProvider:
-    """OpenAI-compatible chat completion backend (requires optional ``openai`` package)."""
+    """OpenAI-compatible chat completion backend."""
 
     def __init__(
         self,
@@ -123,9 +123,10 @@ class OpenAIProvider:
     ) -> None:
         try:
             from openai import OpenAI
-        except ImportError as exc:  # pragma: no cover - optional dep
+        except ImportError as exc:  # pragma: no cover - installation integrity guard
             raise RuntimeError(
-                "openai package not installed; install with: pip install -e '.[llm]'"
+                "openai package is required by the default LLM providers; "
+                "reinstall trade-compass-agent"
             ) from exc
         client_kwargs: dict[str, str] = {"api_key": api_key}
         if base_url:
@@ -217,7 +218,8 @@ class OpenAIChatClient:
             from openai import OpenAI
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError(
-                "openai package not installed; install with: pip install -e '.[llm]'"
+                "openai package is required by the default LLM providers; "
+                "reinstall trade-compass-agent"
             ) from exc
         client_kwargs: dict[str, Any] = {
             "api_key": api_key,

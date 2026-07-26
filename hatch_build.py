@@ -17,6 +17,9 @@ class CustomBuildHook(BuildHookInterface):
     PLUGIN_NAME = "custom"
 
     def initialize(self, version: str, build_data: dict) -> None:
+        if version == "editable":
+            return
+
         if _frontend_dependencies_available():
             _build_frontend()
         elif not (WEB_DIST / "index.html").is_file():

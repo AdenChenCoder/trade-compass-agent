@@ -4,6 +4,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?logo=fastapi)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111)](https://react.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/AdenChenCoder/trade-compass-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AdenChenCoder/trade-compass-agent/actions/workflows/ci.yml)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -11,35 +12,58 @@
 
 Trade Compass Agent（交易罗盘）将行情数据、技术面与基本面分析、专业 Agent、模拟组合、自动化工作流和长期记忆整合在一个 Web 与 CLI 应用中。你可以用它研究股票、制定交易计划、跟踪信号、复盘决策，并将自己的投研方法沉淀为一套可重复执行的工作流。
 
+![交易罗盘 Web 工作台](docs/assets/trade-compass-workbench.png)
+
 ## 快速开始
 
 ### 环境要求
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
-- Node.js 20 和 pnpm 9+
 - 一个可用的 LLM 服务密钥；默认使用 DeepSeek
 
-### 安装并启动
+### 安装已发布应用
 
-在仓库根目录执行：
+包发布到正式 PyPI 后执行：
 
 ```bash
-uv sync
-pnpm install --frozen-lockfile
-pnpm --dir apps/web build
-
-cp .env.example .env
-chmod 600 .env
+uv tool install trade-compass-agent
+trade-compass setup
 ```
 
-在 `.env` 中填写模型 API Key：
+在 `~/.trade-compass/.env` 中填写模型 API Key：
 
 ```dotenv
 DEEPSEEK_API_KEY=your-deepseek-key
 ```
 
 启动交易罗盘：
+
+```bash
+trade-compass doctor
+trade-compass serve --open
+```
+
+发布的 wheel 已经包含生产 Web UI。只有从源码开发时才需要 Node.js
+和 pnpm。
+
+### 从源码运行
+
+源码开发需要 Node.js 20 和 pnpm 9+。
+
+```bash
+uv sync
+pnpm install --frozen-lockfile
+pnpm --dir apps/web build
+cp .env.example .env
+chmod 600 .env
+```
+
+在仓库 `.env` 中填写模型 API Key，然后启动源码工作区：
+
+```dotenv
+DEEPSEEK_API_KEY=your-deepseek-key
+```
 
 ```bash
 uv run trade-compass doctor
@@ -92,6 +116,12 @@ Agent 可以获取行情、计算技术指标、检查基本面与公司公告�
 - 催化日历与收盘检查
 - 日终复盘与周度复盘
 
+### 打包与运行时 Skills
+
+内置 Skills 在开发期随源码编写，并打入发布 wheel。应用运行时，每个 Agent
+回合会重新发现 Skill 摘要；只有选中后才加载完整 `SKILL.md`，同时允许
+`memory_vault/skills/` 中的可写版本扩展或覆盖内置 Skill。
+
 ### 记忆、规则与复盘
 
 交易罗盘会在本地保存会话、研究笔记、用户规则、历史决策和复盘记录。记忆搜索、反思、矛盾检测和决策调和可以将有效上下文带入后续研究。
@@ -116,10 +146,12 @@ flowchart LR
 
 ## 使用方式
 
+以下命令假定应用已经安装；从源码运行时，请在命令前添加 `uv run`。
+
 ### Web 工作台
 
 ```bash
-uv run trade-compass serve
+trade-compass serve
 ```
 
 Web UI 集中提供 Agent 对话、历史会话、模拟组合、记忆、审计记录、用户规则、Skills、定时任务和设置。交互式 API 文档位于 `http://127.0.0.1:19704/docs`。
@@ -127,53 +159,66 @@ Web UI 集中提供 Agent 对话、历史会话、模拟组合、记忆、审计
 不启动后台定时任务：
 
 ```bash
-uv run trade-compass serve --no-scheduler
+trade-compass serve --no-scheduler
 ```
 
 ### CLI
 
 ```bash
 # 向 Agent 提问
-uv run trade-compass agent "今天 A 股市场怎么样？"
+trade-compass agent "今天 A 股市场怎么样？"
 
 # 检查市场数据
-uv run trade-compass market-pulse
-uv run trade-compass data-check 600519 510300
+trade-compass market-pulse
+trade-compass data check 600519 510300
 
 # 查看定时任务、规则和研究记录
-uv run trade-compass scheduler list
-uv run trade-compass rules list
-uv run trade-compass audit recent --limit 20
-uv run trade-compass evaluate --limit 100
+trade-compass jobs list
+trade-compass rules list
+trade-compass audit recent --limit 20
+trade-compass evaluate --limit 100
 ```
 
-运行 `uv run trade-compass --help` 可以查看全部命令。
+运行 `trade-compass --help` 可以查看全部命令。
 
 ### 作为本地服务运行
 
 ```bash
-uv run trade-compass service install
-uv run trade-compass service status
-uv run trade-compass service verify
+trade-compass service install
+trade-compass service status
+trade-compass service verify
 ```
 
 ## 配置
 
-应用配置位于 `config/default.yaml`，API Key 和本地环境覆盖项位于 `.env`。
+安装版配置位于 `~/.trade-compass/config.yaml`，API Key 位于
+`~/.trade-compass/.env`。源码工作区使用 `config/default.yaml` 和仓库
+根目录的 `.env`。
 
 支持的 LLM 提供商包括 DeepSeek、OpenAI、Anthropic、OpenRouter、DashScope、Ollama 和 LM Studio。可选依赖还可以增加 Tushare、MCP 客户端、消息通道、图表渲染、行情预测和增强搜索能力。
 
 例如，启用 Tushare 数据：
 
 ```bash
-uv sync --extra tushare
+uv tool install "trade-compass-agent[tushare]"
 ```
 
 ```dotenv
 TUSHARE_TOKEN=your-tushare-token
 ```
 
-随后在 `config/default.yaml` 中设置 `data.tushare_enabled: true`。
+随后在 `~/.trade-compass/config.yaml` 中设置 `data.tushare_enabled: true`。
+
+## 文档导航
+
+| 目标 | 文档 |
+| --- | --- |
+| 安装并完成首次运行 | [快速上手](docs/getting-started.md) |
+| 配置模型、存储、数据源和可选功能 | [配置](docs/configuration.md) |
+| 使用和自动化命令行 | [CLI 参考](docs/cli.md) |
+| 创建并打包运行时 Skills | [Skills](docs/skills.md) |
+| 理解仓库和状态边界 | [架构](docs/architecture.md) |
+| 构建、验证和发布版本 | [发布](docs/releasing.md) |
 
 ## 开发与贡献
 
@@ -195,7 +240,13 @@ pnpm --dir apps/web build
 git diff --check
 ```
 
-贡献说明请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)，版本记录请参阅 [CHANGELOG.md](CHANGELOG.md)。
+## 社区
+
+- 提议较大改动前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- 通过 [SUPPORT.md](SUPPORT.md) 选择正确的支持入口。
+- 安全漏洞按 [SECURITY.md](SECURITY.md) 私下报告，不要创建公开 Issue。
+- 社区参与遵循 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
+- 版本记录维护在 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 许可证
 

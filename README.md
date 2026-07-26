@@ -3,13 +3,17 @@
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?logo=fastapi)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111)](https://react.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/LICENSE)
+[![CI](https://github.com/AdenChenCoder/trade-compass-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AdenChenCoder/trade-compass-agent/actions/workflows/ci.yml)
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+[English](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/README.md) |
+[简体中文](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/README.zh-CN.md)
 
 **A local-first AI research workbench built for the A-share market.**
 
 Trade Compass Agent combines market data, technical and fundamental analysis, specialist agents, paper portfolios, scheduled workflows, and long-term memory in one Web and CLI application. Use it to research stocks, build trading plans, track signals, review decisions, and turn your own research process into a repeatable workflow.
+
+![Trade Compass Web workbench](https://raw.githubusercontent.com/AdenChenCoder/trade-compass-agent/main/docs/assets/trade-compass-workbench.png)
 
 ## Quick start
 
@@ -17,29 +21,50 @@ Trade Compass Agent combines market data, technical and fundamental analysis, sp
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
-- Node.js 20 and pnpm 9+
 - An API key for your LLM provider; DeepSeek is the default
 
-### Install and run
+### Install the released application
 
-From the repository root:
+After the package is available on production PyPI:
 
 ```bash
-uv sync
-pnpm install --frozen-lockfile
-pnpm --dir apps/web build
-
-cp .env.example .env
-chmod 600 .env
+uv tool install trade-compass-agent
+trade-compass setup
 ```
 
-Add your model API key to `.env`:
+Add your model API key to `~/.trade-compass/.env`:
 
 ```dotenv
 DEEPSEEK_API_KEY=your-deepseek-key
 ```
 
 Start Trade Compass:
+
+```bash
+trade-compass doctor
+trade-compass serve --open
+```
+
+The wheel already contains the production Web UI. Node.js and pnpm are only
+required when developing from source.
+
+### Run from source
+
+Node.js 20 and pnpm 9+ are required for source development.
+
+```bash
+uv sync
+pnpm install --frozen-lockfile
+pnpm --dir apps/web build
+cp .env.example .env
+chmod 600 .env
+```
+
+Add your model API key to the repository `.env`, then start the source checkout:
+
+```dotenv
+DEEPSEEK_API_KEY=your-deepseek-key
+```
 
 ```bash
 uv run trade-compass doctor
@@ -92,6 +117,13 @@ Run complete research workflows on demand or on a schedule:
 - Catalyst calendar and close check
 - End-of-day and weekly review
 
+### Packaged and runtime Skills
+
+Built-in Skills are authored with the source code and packaged into the wheel.
+At application time, every agent turn discovers Skill summaries, loads the full
+`SKILL.md` only when selected, and can use writable `memory_vault/skills/`
+versions to extend or override built-ins.
+
 ### Memory, rules, and review
 
 Trade Compass stores sessions, research notes, user rules, decisions, and reviews locally. Memory search, reflection, contradiction detection, and decision reconciliation help carry useful context into future research.
@@ -116,10 +148,13 @@ flowchart LR
 
 ## Usage
 
+The commands below assume an installed application. When running from a source
+checkout, prefix them with `uv run`.
+
 ### Web workbench
 
 ```bash
-uv run trade-compass serve
+trade-compass serve
 ```
 
 The Web UI includes agent chat, session history, paper portfolios, memory, audit records, user rules, skills, scheduled jobs, and settings. The interactive API reference is available at `http://127.0.0.1:19704/docs`.
@@ -127,53 +162,66 @@ The Web UI includes agent chat, session history, paper portfolios, memory, audit
 Start without scheduled background jobs:
 
 ```bash
-uv run trade-compass serve --no-scheduler
+trade-compass serve --no-scheduler
 ```
 
 ### CLI
 
 ```bash
 # Ask the agent
-uv run trade-compass agent "How is the A-share market today?"
+trade-compass agent "How is the A-share market today?"
 
 # Inspect market data
-uv run trade-compass market-pulse
-uv run trade-compass data-check 600519 510300
+trade-compass market-pulse
+trade-compass data check 600519 510300
 
 # Work with schedules, rules, and research history
-uv run trade-compass scheduler list
-uv run trade-compass rules list
-uv run trade-compass audit recent --limit 20
-uv run trade-compass evaluate --limit 100
+trade-compass jobs list
+trade-compass rules list
+trade-compass audit recent --limit 20
+trade-compass evaluate --limit 100
 ```
 
-Run `uv run trade-compass --help` to see all commands.
+Run `trade-compass --help` to see all commands.
 
 ### Run as a local service
 
 ```bash
-uv run trade-compass service install
-uv run trade-compass service status
-uv run trade-compass service verify
+trade-compass service install
+trade-compass service status
+trade-compass service verify
 ```
 
 ## Configuration
 
-Application settings live in `config/default.yaml`; API keys and local overrides live in `.env`.
+Installed application settings live in `~/.trade-compass/config.yaml`; API keys
+live in `~/.trade-compass/.env`. Source checkouts use `config/default.yaml` and
+the repository `.env`.
 
 Supported LLM providers include DeepSeek, OpenAI, Anthropic, OpenRouter, DashScope, Ollama, and LM Studio. Optional extras add Tushare, MCP clients, messaging channels, chart rendering, forecasting, and enhanced search.
 
 Example: enable Tushare data.
 
 ```bash
-uv sync --extra tushare
+uv tool install "trade-compass-agent[tushare]"
 ```
 
 ```dotenv
 TUSHARE_TOKEN=your-tushare-token
 ```
 
-Then set `data.tushare_enabled: true` in `config/default.yaml`.
+Then set `data.tushare_enabled: true` in `~/.trade-compass/config.yaml`.
+
+## Documentation
+
+| Goal | Guide |
+| --- | --- |
+| Install and complete the first run | [Getting started](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/docs/getting-started.md) |
+| Configure providers, storage, and optional features | [Configuration](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/docs/configuration.md) |
+| Use and automate the command line | [CLI reference](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/docs/cli.md) |
+| Create and package runtime Skills | [Skills](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/docs/skills.md) |
+| Understand repository and state boundaries | [Architecture](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/docs/architecture.md) |
+| Build, verify, and publish a release | [Releasing](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/docs/releasing.md) |
 
 ## Development
 
@@ -195,8 +243,14 @@ pnpm --dir apps/web build
 git diff --check
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [CHANGELOG.md](CHANGELOG.md) for release history.
+## Community
+
+- Read [CONTRIBUTING.md](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/CONTRIBUTING.md) before proposing a substantial change.
+- Use [SUPPORT.md](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/SUPPORT.md) to choose the right support channel.
+- Report vulnerabilities through [SECURITY.md](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/SECURITY.md), not a public issue.
+- Participation is governed by [CODE_OF_CONDUCT.md](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/CODE_OF_CONDUCT.md).
+- Release history is maintained in [CHANGELOG.md](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/CHANGELOG.md).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/LICENSE)

@@ -41,6 +41,14 @@ jobs:
         run: |
           uv build
           python scripts/check_dist.py
+      - name: Verify the exact wheel as an installed consumer
+        run: |
+          python -m venv "$RUNNER_TEMP/release-smoke"
+          "$RUNNER_TEMP/release-smoke/bin/python" -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          export TRADE_COMPASS_HOME="$RUNNER_TEMP/trade-compass-home"
+          "$RUNNER_TEMP/release-smoke/bin/trade-compass" --version
+          "$RUNNER_TEMP/release-smoke/bin/python" -m trade_compass_agent.release_smoke
       - uses: actions/upload-artifact@v4
         with:
           name: test-python-distributions
@@ -63,3 +71,37 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@v1.14.0
         with:
           repository-url: https://test.pypi.org/legacy/
+
+  postpublish:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download the TestPyPI wheel and resolve dependencies from PyPI
+        run: |
+          VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          mkdir -p "$RUNNER_TEMP/testpypi-wheel"
+          for attempt in 1 2 3 4 5; do
+            if python -m pip download \
+              --index-url https://test.pypi.org/simple/ \
+              --no-deps \
+              --only-binary=:all: \
+              --dest "$RUNNER_TEMP/testpypi-wheel" \
+              "trade-compass-agent==$VERSION"; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then
+              exit 1
+            fi
+            sleep 15
+          done
+          python -m venv "$RUNNER_TEMP/testpypi-smoke"
+          "$RUNNER_TEMP/testpypi-smoke/bin/python" -m pip install \
+            "$RUNNER_TEMP"/testpypi-wheel/*.whl
+          cd "$RUNNER_TEMP"
+          export TRADE_COMPASS_HOME="$RUNNER_TEMP/trade-compass-home"
+          "$RUNNER_TEMP/testpypi-smoke/bin/trade-compass" --version
+          "$RUNNER_TEMP/testpypi-smoke/bin/python" -m trade_compass_agent.release_smoke

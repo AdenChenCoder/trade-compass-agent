@@ -14,4 +14,7 @@ If private vulnerability reporting has not yet been enabled for the repository, 
 
 Trade Compass Agent is a local-first, single-user application. The current release accepts only loopback bind targets such as `127.0.0.1` and `::1`; remote listening is intentionally unsupported. The legacy HTTP callback route fails closed until platform-specific signature and replay verification are implemented. Bidirectional messaging uses authenticated platform gateway connections.
 
-The project performs paper trading and analysis only. It does not place orders with a real broker. API keys and webhook secrets belong in the local `.env` file and must never be committed.
+API keys, broker credentials, and webhook secrets belong in the local `.env`
+file and must never be committed. Any capability that can create an external
+order or message must define authentication, authorization, confirmation,
+idempotency, audit, and recovery behavior before it is enabled.

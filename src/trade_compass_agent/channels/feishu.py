@@ -96,9 +96,7 @@ class FeishuWebhookAdapter(ChannelAdapter):
     def _gen_sign(self, timestamp: str) -> str:
         """Generate HMAC-SHA256 signature for webhook."""
         string_to_sign = f"{timestamp}\n{self.secret}"
-        hmac_code = hmac.new(
-            string_to_sign.encode("utf-8"), digestmod=hashlib.sha256
-        ).digest()
+        hmac_code = hmac.new(string_to_sign.encode("utf-8"), digestmod=hashlib.sha256).digest()
         return b64encode(hmac_code).decode("utf-8")
 
     @staticmethod
@@ -162,25 +160,27 @@ class FeishuBotAdapter(ChannelAdapter):
             content = json.dumps({"text": text}, ensure_ascii=False)
 
             if reply_to:
-                body = ReplyMessageRequestBody.builder() \
-                    .msg_type("text") \
-                    .content(content) \
-                    .build()
-                request = ReplyMessageRequest.builder() \
-                    .message_id(reply_to) \
-                    .request_body(body) \
-                    .build()
+                body = ReplyMessageRequestBody.builder().msg_type("text").content(content).build()
+                request = (
+                    ReplyMessageRequest.builder().message_id(reply_to).request_body(body).build()
+                )
                 response = client.im.v1.message.reply(request)
                 if not response.success():
-                    logger.warning("Feishu bot reply failed: code=%s msg=%s", response.code, response.msg)
+                    logger.warning(
+                        "Feishu bot reply failed: code=%s msg=%s", response.code, response.msg
+                    )
                     return False
                 return True
             elif chat_id:
-                return self._send_to_chat(client, CreateMessageRequest, CreateMessageRequestBody, chat_id, content)
+                return self._send_to_chat(
+                    client, CreateMessageRequest, CreateMessageRequestBody, chat_id, content
+                )
             elif self._subscriber_chats:
                 ok = False
                 for cid in list(self._subscriber_chats):
-                    if self._send_to_chat(client, CreateMessageRequest, CreateMessageRequestBody, cid, content):
+                    if self._send_to_chat(
+                        client, CreateMessageRequest, CreateMessageRequestBody, cid, content
+                    ):
                         ok = True
                 return ok
             else:
@@ -197,30 +197,37 @@ class FeishuBotAdapter(ChannelAdapter):
             return False
 
     @staticmethod
-    def _send_to_chat(client: Any, CreateMessageRequest: Any, CreateMessageRequestBody: Any, chat_id: str, content: str) -> bool:
-        body = CreateMessageRequestBody.builder() \
-            .receive_id(chat_id) \
-            .msg_type("text") \
-            .content(content) \
+    def _send_to_chat(
+        client: Any,
+        CreateMessageRequest: Any,
+        CreateMessageRequestBody: Any,
+        chat_id: str,
+        content: str,
+    ) -> bool:
+        body = (
+            CreateMessageRequestBody.builder()
+            .receive_id(chat_id)
+            .msg_type("text")
+            .content(content)
             .build()
-        request = CreateMessageRequest.builder() \
-            .receive_id_type("chat_id") \
-            .request_body(body) \
-            .build()
+        )
+        request = (
+            CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
+        )
         response = client.im.v1.message.create(request)
         if not response.success():
-            logger.warning("Feishu bot send to %s failed: code=%s msg=%s", chat_id, response.code, response.msg)
+            logger.warning(
+                "Feishu bot send to %s failed: code=%s msg=%s", chat_id, response.code, response.msg
+            )
             return False
         return True
 
     def _get_lark_client(self) -> Any:
         if self._client is None:
             import lark_oapi as lark
+
             self._client = (
-                lark.Client.builder()
-                .app_id(self.app_id)
-                .app_secret(self.app_secret)
-                .build()
+                lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).build()
             )
         return self._client
 
@@ -235,6 +242,7 @@ class FeishuBotAdapter(ChannelAdapter):
         self._started_at = time.time()
 
         try:
+            from lark_oapi.core.enum import LogLevel
             from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
             from lark_oapi.ws import Client as FeishuWSClient
         except ImportError:
@@ -254,6 +262,7 @@ class FeishuBotAdapter(ChannelAdapter):
         self._ws_client = FeishuWSClient(
             self.app_id,
             self.app_secret,
+            log_level=LogLevel.WARNING,
             event_handler=handler,
         )
 
@@ -270,6 +279,7 @@ class FeishuBotAdapter(ChannelAdapter):
             # thread's uvloop. We must replace it with a fresh loop so
             # `start()` can call `loop.run_until_complete()`.
             import lark_oapi.ws.client as _lark_ws_mod
+
             fresh_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(fresh_loop)
             _lark_ws_mod.loop = fresh_loop

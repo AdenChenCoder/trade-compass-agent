@@ -4,6 +4,76 @@ Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-s
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
+## Product contract
+
+Trade Compass Agent is a local-first A-share research and trading workbench
+delivered as one Python package with a bundled Web UI.
+
+Preserve these load-bearing contracts unless the task explicitly changes them:
+
+- Source checkouts and installed wheels expose the same user journeys.
+- Installed package assets are read-only; writable state belongs under the
+  configured data and memory roots.
+- Human-owned rules and pinned memory outrank agent-created memory.
+- Built-in Skills are versioned package assets; runtime-created Skills remain
+  in the writable memory vault.
+- Persistent restore/import operations preview by default and preserve a
+  recovery path.
+- Web, CLI, API, scheduled jobs, and services must not invent separate business
+  semantics for the same operation.
+
+## Repository map
+
+| Path | Responsibility |
+| --- | --- |
+| `src/trade_compass_agent/runtime/` | Agent loop, tools, context, Skills, specialists |
+| `src/trade_compass_agent/web/` | FastAPI routes and HTTP contracts |
+| `apps/web/` | React workbench |
+| `.trade-compass/skills/` | Source for packaged built-in Skills |
+| `src/trade_compass_agent/workflows/` | Packaged workflow assets |
+| `config/` | Source and installed defaults |
+| `schemas/` | Reader and workflow data contracts |
+| `scripts/` | CI, security, build, and release verification |
+| `tests/` | Unit, integration, and consumer-facing checks |
+
+## Where capabilities belong
+
+- Repeatable instructions and output contracts belong in a Skill.
+- Deterministic data access, calculation, or mutation belongs in a runtime tool.
+- A focused reasoning role belongs in a specialist asset.
+- A scheduled multi-step product flow belongs in a workflow.
+- Shell command metadata belongs in `command_catalog.py`; keep compatibility
+  aliases when moving commands into resource/action groups.
+- UI code may present backend behavior but must not duplicate authoritative
+  rules or persistence logic.
+
+## Common commands
+
+```bash
+uv sync --extra dev
+scripts/ci_check.sh
+uv run pytest tests/test_runtime_skills.py tests/test_command_catalog.py
+pnpm --dir apps/web test
+pnpm --dir apps/web typecheck
+pnpm --dir apps/web build
+uv build
+python scripts/check_dist.py
+```
+
+Run installed-wheel checks outside the repository so Python cannot accidentally
+import `src/` instead of the built package.
+
+## Known pitfalls
+
+- Editable builds and release builds have different frontend behavior.
+- `.trade-compass/skills/` becomes
+  `trade_compass_agent/builtin_skills/` inside a wheel.
+- Source and packaged configuration defaults are separate files.
+- TestPyPI must not be used as a dependency index; download only this project's
+  wheel there, then resolve dependencies from production PyPI.
+- A successful upload is not release acceptance. Install the published version
+  and exercise its entry point and packaged assets.
+
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**

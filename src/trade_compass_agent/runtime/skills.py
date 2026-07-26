@@ -6,14 +6,12 @@ from pathlib import Path
 import yaml
 
 from trade_compass_agent.config import PACKAGE_ROOT, PROJECT_ROOT, is_source_checkout
-from trade_compass_agent.memory.skill_quality import read_quality_file
+from trade_compass_agent.memory.skill_quality import parse_skill_frontmatter, read_quality_file
 
 SOURCE_AGENT_SKILLS_CONFIG_PATH = PROJECT_ROOT / "config" / "agent_skills.yaml"
 PACKAGED_AGENT_SKILLS_CONFIG_PATH = PACKAGE_ROOT / "agent_skills.yaml"
 AGENT_SKILLS_CONFIG_PATH = (
-    SOURCE_AGENT_SKILLS_CONFIG_PATH
-    if is_source_checkout()
-    else PACKAGED_AGENT_SKILLS_CONFIG_PATH
+    SOURCE_AGENT_SKILLS_CONFIG_PATH if is_source_checkout() else PACKAGED_AGENT_SKILLS_CONFIG_PATH
 )
 BUILTIN_SKILLS_ROOT = PACKAGE_ROOT / "builtin_skills"
 
@@ -67,8 +65,7 @@ def apply_skills_config(
     if config.enabled_skills is not None:
         enabled = set(config.enabled_skills)
         filtered = [
-            skill for skill in skills
-            if skill.source == "memory_vault" or skill.name in enabled
+            skill for skill in skills if skill.source == "memory_vault" or skill.name in enabled
         ]
     if not config.pinned:
         return filtered
@@ -93,7 +90,9 @@ def discover_external_skills(
     if root.is_dir():
         for skill_md in sorted(root.glob("*/SKILL.md")):
             name, description = _parse_skill_md(skill_md)
-            found.append(SkillInfo(name=name, description=description, path=skill_md, source="project"))
+            found.append(
+                SkillInfo(name=name, description=description, path=skill_md, source="project")
+            )
     config = skills_config or load_agent_skills_config()
     if config.enabled_skills is not None:
         enabled = set(config.enabled_skills)
@@ -104,19 +103,9 @@ def discover_external_skills(
 def _parse_skill_md(path: Path) -> tuple[str, str]:
     text = path.read_text(encoding="utf-8")
     name = path.parent.name
-    description = ""
-    if text.startswith("---"):
-        end = text.find("---", 3)
-        if end != -1:
-            front = text[3:end]
-            for line in front.splitlines():
-                if line.strip().lower().startswith("description:"):
-                    description = line.split(":", 1)[1].strip()
-            body = text[end + 3 :].lstrip()
-        else:
-            body = text
-    else:
-        body = text
+    metadata, body, _ = parse_skill_frontmatter(text)
+    raw_description = metadata.get("description")
+    description = str(raw_description).strip() if raw_description is not None else ""
     if not description:
         first = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
         description = first.lstrip("#").strip()[:200]
@@ -129,9 +118,11 @@ def discover_skills(
     project_root: Path = PROJECT_ROOT,
     skills_config: AgentSkillsConfig | None = None,
 ) -> list[SkillInfo]:
+    # Built-ins establish defaults; writable runtime Skills intentionally
+    # override a built-in with the same directory/name.
     roots: list[tuple[str, Path]] = [
-        ("memory_vault", memory_dir / "skills"),
         ("project", _external_skills_root(project_root)),
+        ("memory_vault", memory_dir / "skills"),
     ]
     found: dict[str, SkillInfo] = {}
     for source, root in roots:
@@ -139,8 +130,7 @@ def discover_skills(
             continue
         for skill_md in sorted(root.glob("*/SKILL.md")):
             name, description = _parse_skill_md(skill_md)
-            key = f"{source}:{name}"
-            found[key] = SkillInfo(
+            found[name] = SkillInfo(
                 name=name,
                 description=description,
                 path=skill_md,
@@ -172,6 +162,19 @@ def load_skill_reference(skill: SkillInfo, reference: str) -> str:
     if not ref_dir.is_dir():
         return _json.dumps(
             {"error": f"skill '{skill.name}' has no references/ directory"},
+            ensure_ascii=False,
+        )
+    if (
+        not reference
+        or Path(reference).name != reference
+        or reference in {".", ".."}
+        or reference.endswith(".md")
+    ):
+        return _json.dumps(
+            {
+                "error": "reference must be a file name without path separators or .md",
+                "available": [p.stem for p in sorted(ref_dir.glob("*.md"))],
+            },
             ensure_ascii=False,
         )
     ref_path = ref_dir / f"{reference}.md"

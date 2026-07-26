@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches-ignore:
+      - "dependabot/**"
   pull_request:
 
 jobs:
@@ -31,7 +33,7 @@ jobs:
           node-version: "20"
           cache: pnpm
       - name: Install workspace dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
       - name: Build Vite web app
         run: pnpm --dir apps/web build
       - name: Typecheck web app
@@ -55,7 +57,7 @@ jobs:
           node-version: "20"
           cache: pnpm
       - name: Install workspace dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
       - name: Build distributions and verify installed quickstart
         run: |
           pip install uv
@@ -66,8 +68,10 @@ jobs:
           export DEEPSEEK_API_KEY="ci-placeholder"
           cd "$RUNNER_TEMP"
           trade-compass --version
+          trade-compass commands --json
           trade-compass setup
           trade-compass doctor
+          python -m trade_compass_agent.release_smoke
           python - <<'PY'
           import os
           from pathlib import Path
