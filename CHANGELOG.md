@@ -4,6 +4,8 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.2.0rc3] - 2026-07-27
+
 ### Added
 
 - Goal-oriented documentation for installation, configuration, CLI usage,
@@ -26,6 +28,8 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
   boundaries, package/runtime state ownership, and installed-wheel validation.
 - Logging now suppresses verbose Lark SDK connection messages and redacts URL
   query strings, credential-shaped key/value pairs, and bearer tokens.
+- CI now declares a stable Ruff rule contract and uses Node 24-compatible
+  GitHub Actions across verification and release workflows.
 
 ## [0.2.0rc2] - 2026-07-26
 

@@ -55,7 +55,7 @@ Download only the project wheel from TestPyPI, then install that local wheel
 with dependencies resolved exclusively from production PyPI:
 
 ```bash
-VERSION=0.2.0rc2
+VERSION=0.2.0rc3
 DOWNLOAD_DIR="$(mktemp -d)"
 
 python3.12 -m venv .venv-release
