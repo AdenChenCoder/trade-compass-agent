@@ -1,56 +1,53 @@
-# Trade Compass Agent
+# Trade Compass Agent（交易罗盘）
 
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?logo=fastapi)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111)](https://react.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/AdenChenCoder/trade-compass-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AdenChenCoder/trade-compass-agent/actions/workflows/ci.yml)
 
-[English](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/README.md) |
-[简体中文](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/README.zh-CN.md)
+[简体中文](README.md) | [English](README.en.md)
 
-**A local-first AI research workbench built for the A-share market.**
+**一个专为 A 股市场打造的本地优先 AI 投研工作台。**
 
-Trade Compass Agent combines market data, technical and fundamental analysis, specialist agents, paper portfolios, scheduled workflows, and long-term memory in one Web and CLI application. Use it to research stocks, build trading plans, track signals, review decisions, and turn your own research process into a repeatable workflow.
+Trade Compass Agent（交易罗盘）将行情数据、技术面与基本面分析、专业 Agent、模拟组合、自动化工作流和长期记忆整合在一个 Web 与 CLI 应用中。你可以用它研究股票、制定交易计划、跟踪信号、复盘决策，并将自己的投研方法沉淀为一套可重复执行的工作流。
 
-![Trade Compass Web workbench](https://raw.githubusercontent.com/AdenChenCoder/trade-compass-agent/main/docs/assets/trade-compass-workbench.png)
+![交易罗盘 Web 工作台](docs/assets/trade-compass-workbench.png)
 
-## Quick start
+## 快速开始
 
-### Requirements
+### 环境要求
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
-- An API key for your LLM provider; DeepSeek is the default
+- 一个可用的 LLM 服务密钥；默认使用 DeepSeek
 
-### Install the released application
+### 安装已发布应用
 
-After the package is available on production PyPI:
+包发布到正式 PyPI 后执行：
 
 ```bash
 uv tool install trade-compass-agent
 trade-compass setup
 ```
 
-Add your model API key to `~/.trade-compass/.env`:
+终端向导会依次完成模型与 API Key、存储目录、行情数据、定时自动化、
+消息渠道、增强搜索和隐私设置。之后可再次运行 `trade-compass configure`
+修改配置，不需要直接编辑配置文件。
 
-```dotenv
-DEEPSEEK_API_KEY=your-deepseek-key
-```
-
-Start Trade Compass:
+启动交易罗盘：
 
 ```bash
 trade-compass doctor
 trade-compass serve --open
 ```
 
-The wheel already contains the production Web UI. Node.js and pnpm are only
-required when developing from source.
+发布的 wheel 已经包含生产 Web UI。只有从源码开发时才需要 Node.js
+和 pnpm。
 
-### Run from source
+### 从源码运行
 
-Node.js 20 and pnpm 9+ are required for source development.
+源码开发需要 Node.js 20 和 pnpm 9+。
 
 ```bash
 uv sync
@@ -60,7 +57,7 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Add your model API key to the repository `.env`, then start the source checkout:
+在仓库 `.env` 中填写模型 API Key，然后启动源码工作区：
 
 ```dotenv
 DEEPSEEK_API_KEY=your-deepseek-key
@@ -71,95 +68,93 @@ uv run trade-compass doctor
 uv run trade-compass serve --open
 ```
 
-Open `http://127.0.0.1:19704/agent` and start a conversation.
+打开 `http://127.0.0.1:19704/agent`，即可开始对话。
 
 ```text
-Analyze 600519 using price action, fundamentals, recent disclosures,
-and market context. Give me the key drivers, risks, and a trading plan.
+结合价格结构、基本面、近期公告和市场环境分析 600519，
+给出核心驱动因素、主要风险和交易计划。
 ```
 
-## Features
+## 产品特性
 
-### AI-powered market research
+### AI 驱动的市场研究
 
-The agent can retrieve market data, calculate technical indicators, inspect fundamentals and company disclosures, search news and research sources, analyze fund flows, and combine the results into one response.
+Agent 可以获取行情、计算技术指标、检查基本面与公司公告、搜索资讯和研究资料、分析资金流，并将不同来源的信息汇总为一份完整结论。
 
-### Specialist agent team
+### 专业 Agent 团队
 
-Dispatch focused research to built-in specialists:
+将不同研究任务交给内置的专业角色：
 
-- **Intraday Technical** — short-horizon price structure and technical signals
-- **Equity Research** — fundamentals, research, bull/bear debate, and PM synthesis
-- **Macro Sentiment** — macro conditions, market sentiment, and fund flows
-- **Screener** — AI review of quantitative screening candidates
-- **Chokepoint Analyst** — supply-chain bottlenecks and critical upstream companies
-- **Risk Advisor** — exposure, concentration, drawdown, and portfolio risk
+- **日内技术分析** — 短周期价格结构与技术信号
+- **个股研究** — 基本面、研究资料、多空辩论与投资经理综合判断
+- **宏观情绪** — 宏观环境、市场情绪与资金流
+- **智能筛选** — 对量化筛选候选进行 AI 复核
+- **产业链卡点分析** — 识别供应链瓶颈与关键上游公司
+- **组合风控** — 分析敞口、集中度、回撤与组合风险
 
-### A-share market toolkit
+### A 股市场工具箱
 
-- Daily and intraday bars with pluggable data providers
-- Technical indicators including MA, MACD, RSI, Bollinger Bands, and ATR
-- Market pulse, sector strength, fund flow, fundamentals, announcements, and news
-- A-share lot sizes, T+0/T+1 rules, board-specific price limits, fees, and slippage
-- AkShare and Baostock included; optional Tushare and CNInfo support
+- 日线与分钟线行情，并支持可替换的数据源
+- MA、MACD、RSI、布林带、ATR 等技术指标
+- 市场脉搏、板块强度、资金流、基本面、公司公告和资讯
+- A 股交易单位、T+0/T+1、不同板块涨跌停、费用与滑点
+- 内置 AkShare 与 Baostock，可选接入 Tushare 和巨潮资讯
 
-### Paper portfolio and signal tracking
+### 模拟组合与信号跟踪
 
-Create multiple paper accounts, record simulated trades, analyze positions and P&L, check portfolio concentration, and evaluate signal follow-through after 1, 3, and 5 trading days.
+创建多个模拟账户，记录模拟交易，分析持仓和盈亏，检查组合集中度，并在 1、3、5 个交易日后评估信号表现。
 
-### Automated research workflows
+### 自动化研究工作流
 
-Run complete research workflows on demand or on a schedule:
+按需运行或定时执行完整投研流程：
 
-- Premarket briefing and morning plan
-- Stock screening and idea generation
-- Intraday technical and equity research
-- Catalyst calendar and close check
-- End-of-day and weekly review
+- 盘前简报与早盘计划
+- 股票筛选与想法生成
+- 日内技术与个股研究
+- 催化日历与收盘检查
+- 日终复盘与周度复盘
 
-### Packaged and runtime Skills
+### 打包与运行时 Skills
 
-Built-in Skills are authored with the source code and packaged into the wheel.
-At application time, every agent turn discovers Skill summaries, loads the full
-`SKILL.md` only when selected, and can use writable `memory_vault/skills/`
-versions to extend or override built-ins.
+内置 Skills 在开发期随源码编写，并打入发布 wheel。应用运行时，每个 Agent
+回合会重新发现 Skill 摘要；只有选中后才加载完整 `SKILL.md`，同时允许
+`memory_vault/skills/` 中的可写版本扩展或覆盖内置 Skill。
 
-### Memory, rules, and review
+### 记忆、规则与复盘
 
-Trade Compass stores sessions, research notes, user rules, decisions, and reviews locally. Memory search, reflection, contradiction detection, and decision reconciliation help carry useful context into future research.
+交易罗盘会在本地保存会话、研究笔记、用户规则、历史决策和复盘记录。记忆搜索、反思、矛盾检测和决策调和可以将有效上下文带入后续研究。
 
-### Web, CLI, API, and integrations
+### Web、CLI、API 与外部集成
 
-Use the React workbench, automate with the CLI, build on the FastAPI API, connect MCP tools, and deliver notifications through Feishu, WeCom, Weixin, or generic Webhooks.
+通过 React 工作台交互，使用 CLI 自动化任务，基于 FastAPI API 扩展应用，连接 MCP 工具，并通过飞书、企业微信、微信或通用 Webhook 接收通知。
 
-## How it works
+## 工作方式
 
 ```mermaid
 flowchart LR
-    U["Web / CLI / API"] --> A["Trade Compass Agent"]
-    A --> T["Market & research tools"]
-    A --> S["Specialist agents"]
-    T --> P["Trading plan & signals"]
+    U["Web / CLI / API"] --> A["交易罗盘 Agent"]
+    A --> T["行情与研究工具"]
+    A --> S["专业 Agent"]
+    T --> P["交易计划与信号"]
     S --> P
-    P --> F["Paper portfolio"]
-    F --> R["Review & memory"]
-    J["Scheduled workflows"] --> A
+    P --> F["模拟组合"]
+    F --> R["复盘与记忆"]
+    J["定时工作流"] --> A
 ```
 
-## Usage
+## 使用方式
 
-The commands below assume an installed application. When running from a source
-checkout, prefix them with `uv run`.
+以下命令假定应用已经安装；从源码运行时，请在命令前添加 `uv run`。
 
-### Web workbench
+### Web 工作台
 
 ```bash
 trade-compass serve
 ```
 
-The Web UI includes agent chat, session history, paper portfolios, memory, audit records, user rules, skills, scheduled jobs, and settings. The interactive API reference is available at `http://127.0.0.1:19704/docs`.
+Web UI 集中提供 Agent 对话、历史会话、模拟组合、记忆、审计记录、用户规则、Skills、定时任务和设置。交互式 API 文档位于 `http://127.0.0.1:19704/docs`。
 
-Start without scheduled background jobs:
+不启动后台定时任务：
 
 ```bash
 trade-compass serve --no-scheduler
@@ -168,23 +163,23 @@ trade-compass serve --no-scheduler
 ### CLI
 
 ```bash
-# Ask the agent
-trade-compass agent "How is the A-share market today?"
+# 向 Agent 提问
+trade-compass agent "今天 A 股市场怎么样？"
 
-# Inspect market data
+# 检查市场数据
 trade-compass market-pulse
 trade-compass data check 600519 510300
 
-# Work with schedules, rules, and research history
+# 查看定时任务、规则和研究记录
 trade-compass jobs list
 trade-compass rules list
 trade-compass audit recent --limit 20
 trade-compass evaluate --limit 100
 ```
 
-Run `trade-compass --help` to see all commands.
+运行 `trade-compass --help` 可以查看全部命令。
 
-### Run as a local service
+### 作为本地服务运行
 
 ```bash
 trade-compass service install
@@ -192,48 +187,45 @@ trade-compass service status
 trade-compass service verify
 ```
 
-## Configuration
+## 配置
 
-Installed application settings live in `~/.trade-compass/config.yaml`; API keys
-live in `~/.trade-compass/.env`. Source checkouts use `config/default.yaml` and
-the repository `.env`.
+安装版配置位于 `~/.trade-compass/config.yaml`，API Key 位于
+`~/.trade-compass/.env`。源码工作区使用 `config/default.yaml` 和仓库
+根目录的 `.env`。
 
-Supported LLM providers include DeepSeek, OpenAI, Anthropic, OpenRouter, DashScope, Ollama, and LM Studio. Optional extras add Tushare, MCP clients, messaging channels, chart rendering, forecasting, and enhanced search.
+支持的 LLM 提供商包括 DeepSeek、OpenAI、Anthropic、OpenRouter、DashScope、Ollama 和 LM Studio。可选依赖还可以增加 Tushare、MCP 客户端、消息通道、图表渲染、行情预测和增强搜索能力。
 
-Example: enable Tushare data.
+例如，启用 Tushare 数据：
 
 ```bash
 uv tool install "trade-compass-agent[tushare]"
 ```
 
-```dotenv
-TUSHARE_TOKEN=your-tushare-token
-```
+再次运行 `trade-compass configure`，选择自动或 Tushare 数据源，并在
+隐藏输入框中填写 Token。
 
-Then set `data.tushare_enabled: true` in `~/.trade-compass/config.yaml`.
+## 文档导航
 
-## Documentation
-
-| Goal | Guide |
+| 目标 | 文档 |
 | --- | --- |
-| Install and complete the first run | [Getting started](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/docs/getting-started.md) |
-| Configure providers, storage, and optional features | [Configuration](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/docs/configuration.md) |
-| Use and automate the command line | [CLI reference](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/docs/cli.md) |
-| Create and package runtime Skills | [Skills](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/docs/skills.md) |
-| Understand repository and state boundaries | [Architecture](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/docs/architecture.md) |
-| Build, verify, and publish a release | [Releasing](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/docs/releasing.md) |
+| 安装并完成首次运行 | [快速上手](docs/getting-started.md) |
+| 配置模型、存储、数据源和可选功能 | [配置](docs/configuration.md) |
+| 使用和自动化命令行 | [CLI 参考](docs/cli.md) |
+| 创建并打包运行时 Skills | [Skills](docs/skills.md) |
+| 理解仓库和状态边界 | [架构](docs/architecture.md) |
+| 构建、验证和发布版本 | [发布](docs/releasing.md) |
 
-## Development
+## 开发与贡献
 
 ```bash
 uv sync --extra dev
 pnpm install --frozen-lockfile
 
-uv run trade-compass serve --dev  # API on :19704
-pnpm --dir apps/web dev            # Web UI on :3000
+uv run trade-compass serve --dev  # API: :19704
+pnpm --dir apps/web dev            # Web UI: :3000
 ```
 
-Run the project checks before opening a pull request:
+提交 Pull Request 前运行：
 
 ```bash
 scripts/ci_check.sh
@@ -243,14 +235,14 @@ pnpm --dir apps/web build
 git diff --check
 ```
 
-## Community
+## 社区
 
-- Read [CONTRIBUTING.md](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/CONTRIBUTING.md) before proposing a substantial change.
-- Use [SUPPORT.md](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/SUPPORT.md) to choose the right support channel.
-- Report vulnerabilities through [SECURITY.md](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/SECURITY.md), not a public issue.
-- Participation is governed by [CODE_OF_CONDUCT.md](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/CODE_OF_CONDUCT.md).
-- Release history is maintained in [CHANGELOG.md](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/CHANGELOG.md).
+- 提议较大改动前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- 通过 [SUPPORT.md](SUPPORT.md) 选择正确的支持入口。
+- 安全漏洞按 [SECURITY.md](SECURITY.md) 私下报告，不要创建公开 Issue。
+- 社区参与遵循 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
+- 版本记录维护在 [CHANGELOG.md](CHANGELOG.md)。
 
-## License
+## 许可证
 
-[MIT](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/LICENSE)
+[MIT](LICENSE)

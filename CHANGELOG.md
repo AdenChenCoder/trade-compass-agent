@@ -4,6 +4,16 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.2.0rc4] - 2026-07-28
+
+### Added
+
+- Guided `trade-compass setup` / `trade-compass configure` onboarding for LLM
+  credentials, storage, market data, schedules, messaging, search, and privacy,
+  with masked secrets, rerun-safe defaults, and local recovery copies.
+- Explicit `--non-interactive` setup for automation and `--wizard` opt-in for
+  source checkouts.
+
 ## [0.2.0rc3] - 2026-07-27
 
 ### Added

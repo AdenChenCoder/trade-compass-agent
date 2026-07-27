@@ -121,6 +121,24 @@ def test_cli_import_is_preview_unless_forced() -> None:
 
 
 @pytest.mark.parametrize(
+    ("argv", "interactive"),
+    [
+        (["trade-compass", "setup", "--non-interactive"], False),
+        (["trade-compass", "setup", "--wizard"], True),
+        (["trade-compass", "configure"], None),
+    ],
+)
+def test_cli_setup_modes_dispatch(argv: list[str], interactive: bool | None) -> None:
+    with (
+        patch("sys.argv", argv),
+        patch("trade_compass_agent.cli.run_setup") as run_setup,
+    ):
+        main()
+
+    run_setup.assert_called_once_with(force=False, interactive=interactive)
+
+
+@pytest.mark.parametrize(
     "argv",
     [
         ["trade-compass", "service", "verify", "--json"],

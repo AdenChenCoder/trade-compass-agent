@@ -29,8 +29,9 @@ class CommandSpec:
 COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         ("setup",),
-        "Create local config, env, and runtime directories.",
+        "Run guided onboarding and create local runtime files.",
         "onboarding",
+        aliases=(("configure",),),
         mutates_state=True,
     ),
     CommandSpec(

@@ -10,9 +10,14 @@ Trade Compass keeps installed-application state separate from package files.
 └── memory_vault/
 ```
 
-Run `trade-compass setup` to create this layout. In a source checkout,
-`config/default.yaml`, `.env`, `data/`, and `memory_vault/` remain the
-development defaults.
+Run `trade-compass setup` to create this layout and complete the guided
+configuration. Run `trade-compass configure` to revisit the same wizard later.
+Existing secrets are retained when their masked prompts are left blank, and
+changed files receive a neighboring `*.setup.bak` recovery copy.
+
+In a source checkout, `config/default.yaml`, `.env`, `data/`, and
+`memory_vault/` remain the development defaults. Setup only initializes those
+files unless `--wizard` is passed explicitly.
 
 ## Resolution order
 
@@ -38,6 +43,10 @@ Anthropic, OpenRouter, DashScope, Ollama, and LM Studio.
 
 Keep credentials in `.env`; do not place them in `config.yaml`, Skills, issues,
 logs, or portable examples.
+
+Installed-app users should normally use the setup/configure wizard instead of
+editing either file directly. The files remain documented as an advanced and
+automation-compatible storage format.
 
 ## Optional package features
 

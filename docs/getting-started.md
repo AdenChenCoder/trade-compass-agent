@@ -11,17 +11,16 @@ trade-compass setup
 ```
 
 `setup` creates the installed-application home at `~/.trade-compass/` by
-default. To use another location, export `TRADE_COMPASS_HOME` before running
-setup.
+default and starts a guided terminal wizard. It configures the model credential,
+storage, market data, automation, optional channels and search, and privacy
+without asking installed-app users to edit files. To use another location,
+export `TRADE_COMPASS_HOME` before running setup.
 
 ## Configure an LLM
 
-Add the credential expected by your configured provider to
-`~/.trade-compass/.env`. DeepSeek is the packaged default:
-
-```dotenv
-DEEPSEEK_API_KEY=replace-me
-```
+Choose the provider and model in the setup wizard. Remote-provider credentials
+are entered through a masked prompt and saved to the protected local env file.
+Run `trade-compass configure` whenever you need to change the selection or key.
 
 Run the readiness check:
 
@@ -31,6 +30,10 @@ trade-compass doctor
 
 The command reports each configuration or runtime dependency that still needs
 attention.
+
+For scripts or image builds, `trade-compass setup --non-interactive` retains the
+template-only initialization behavior. Source checkouts also use that behavior
+by default; pass `--wizard` to opt into guided configuration there.
 
 ## Start the workbench
 

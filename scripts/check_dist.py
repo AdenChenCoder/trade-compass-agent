@@ -35,6 +35,7 @@ REQUIRED_WHEEL_FILES = {
     "trade_compass_agent/env.example",
     "trade_compass_agent/portability.py",
     "trade_compass_agent/recovery.py",
+    "trade_compass_agent/setup_wizard.py",
     "trade_compass_agent/daemon/systemd.py",
     "trade_compass_agent/schemas/readers/reader_claims.schema.json",
     "trade_compass_agent/specialists/equity_research/specialist.yaml",

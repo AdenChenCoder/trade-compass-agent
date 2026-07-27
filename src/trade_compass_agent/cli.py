@@ -19,6 +19,7 @@ from trade_compass_agent.config import (
     ensure_runtime_dirs,
     initialize_runtime_files,
     invalidate_config_cache,
+    is_source_checkout,
     load_app_config,
     load_project_dotenv,
     settings_from_config,
@@ -770,8 +771,26 @@ def run_serve(
     )
 
 
-def run_setup(*, force: bool = False) -> None:
+def run_setup(*, force: bool = False, interactive: bool | None = None) -> None:
+    from trade_compass_agent.setup_wizard import (
+        SetupCancelled,
+        run_setup_wizard,
+        terminal_is_interactive,
+    )
+
+    requested_interactive = interactive
     config_path, env_path = initialize_runtime_files(force=force)
+    if interactive is None:
+        interactive = not is_source_checkout() and terminal_is_interactive()
+
+    result = None
+    if interactive:
+        try:
+            result = run_setup_wizard(config_path, env_path)
+        except SetupCancelled:
+            print("\nSetup cancelled; no wizard changes were saved.")
+            return
+
     invalidate_config_cache()
     config = load_app_config(config_path)
     ensure_runtime_dirs(settings_from_config(config))
@@ -780,7 +799,20 @@ def run_setup(*, force: bool = False) -> None:
     print(f"  env:    {env_path}")
     print(f"  data:   {config.data_dir}")
     print(f"  memory: {config.memory_dir}")
-    print("Next: add your LLM API key to the env file, then run: trade-compass doctor")
+    if result and result.backup_paths:
+        print("  backup: " + ", ".join(str(path) for path in result.backup_paths))
+    if result is None:
+        if requested_interactive is False:
+            print("Non-interactive setup initialized templates and runtime directories.")
+        elif is_source_checkout():
+            print("Source checkout detected; templates were initialized without changing config.")
+            print("Run `trade-compass setup --wizard` to configure through the terminal.")
+        else:
+            print("Interactive wizard skipped because no terminal is attached.")
+            print("Run in a terminal, or use --non-interactive intentionally for automation.")
+    elif not result.configured_key:
+        print("LLM API key was not configured; rerun setup when you are ready to add it.")
+    print("Next: run `trade-compass doctor`, then `trade-compass serve --open`.")
 
 
 def run_doctor() -> None:
@@ -1005,6 +1037,24 @@ def _configure_memory_parser(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _configure_setup_parser(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--force", action="store_true", help="Replace the config template")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--wizard",
+        dest="interactive",
+        action="store_true",
+        help="Run the guided terminal wizard, including in a source checkout",
+    )
+    mode.add_argument(
+        "--non-interactive",
+        dest="interactive",
+        action="store_false",
+        help="Only initialize templates and runtime directories",
+    )
+    parser.set_defaults(interactive=None)
+
+
 def run_commands(*, as_json: bool = False) -> None:
     if as_json:
         print(json.dumps({"commands": command_catalog()}, ensure_ascii=False, indent=2))
@@ -1096,7 +1146,9 @@ def main() -> None:
     )
 
     p_setup = sub.add_parser("setup", help=command_help("setup"))
-    p_setup.add_argument("--force", action="store_true", help="Replace the config template")
+    _configure_setup_parser(p_setup)
+    p_configure = sub.add_parser("configure", help="Run the guided configuration wizard")
+    _configure_setup_parser(p_configure)
     sub.add_parser("doctor", help=command_help("doctor"))
 
     p_backup = sub.add_parser("backup", help="Create or inspect a local recovery archive")
@@ -1285,8 +1337,8 @@ def main() -> None:
             run_memory_reindex()
         elif args.memory_command == "bootstrap":
             run_memory_bootstrap(dry_run=args.dry_run, max_promote=args.max)
-    elif args.command == "setup":
-        run_setup(force=args.force)
+    elif args.command in {"setup", "configure"}:
+        run_setup(force=args.force, interactive=args.interactive)
     elif args.command == "doctor":
         run_doctor()
     elif args.command == "backup":

@@ -14,10 +14,15 @@ is available from `GET /api/agent/commands`.
 
 ```bash
 trade-compass setup
+trade-compass configure
 trade-compass doctor
 trade-compass serve --open
 trade-compass agent "今天 A 股市场怎么样？"
 ```
+
+`setup` launches the guided wizard for installed applications. `configure` is
+an alias for rerunning it. Use `setup --non-interactive` for template-only
+automation, or `setup --wizard` to opt into the wizard from a source checkout.
 
 ## Research and automation
 
