@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pandas as pd
+
 from trade_compass_agent import __version__
 from trade_compass_agent.command_catalog import command_catalog
 from trade_compass_agent.config import PACKAGE_ROOT, is_source_checkout, resolve_schema_path
+from trade_compass_agent.runtime.tools.chart_pattern import render_kline_chart
 from trade_compass_agent.runtime.skills import (
     AgentSkillsConfig,
     discover_external_skills,
@@ -63,12 +66,25 @@ def collect_release_smoke() -> dict[str, object]:
     if not any(item["command"] == "trade-compass data check" for item in commands):
         raise RuntimeError("canonical command catalog is incomplete")
 
+    chart_data = pd.DataFrame(
+        {
+            "open": [10.0] * 20,
+            "high": [10.5] * 20,
+            "low": [9.5] * 20,
+            "close": [10.2] * 20,
+            "volume": [1000] * 20,
+        }
+    )
+    if not render_kline_chart(chart_data, symbol="600519", bars=20):
+        raise RuntimeError("installed chart rendering dependencies are unavailable")
+
     return {
         "version": __version__,
         "package_root": str(PACKAGE_ROOT),
         "skills": sorted(by_name),
         "commands": len(commands),
         "assets": "ok",
+        "chart": "ok",
     }
 
 

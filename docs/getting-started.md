@@ -3,7 +3,8 @@
 ## Install
 
 Trade Compass requires Python 3.12 or newer. The released wheel contains the
-production Web UI, so Node.js is not required for normal use.
+production Web UI and the chart-rendering dependencies used by stock analysis,
+so Node.js or an additional chart package is not required for normal use.
 
 ```bash
 uv tool install trade-compass-agent

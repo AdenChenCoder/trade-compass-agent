@@ -48,6 +48,8 @@ REQUIRED_BASE_DEPENDENCIES = {
     "baostock",
     "duckduckgo-search",
     "fastapi",
+    "matplotlib",
+    "mplfinance",
     "numpy",
     "openai",
     "pandas",

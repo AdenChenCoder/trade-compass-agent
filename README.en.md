@@ -45,7 +45,8 @@ trade-compass serve --open
 ```
 
 The wheel already contains the production Web UI. Node.js and pnpm are only
-required when developing from source.
+required when developing from source. Candlestick chart rendering used by
+stock analysis is also included in the default installation.
 
 ### Run from source
 
@@ -197,7 +198,7 @@ Installed application settings live in `~/.trade-compass/config.yaml`; API keys
 live in `~/.trade-compass/.env`. Source checkouts use `config/default.yaml` and
 the repository `.env`.
 
-Supported LLM providers include DeepSeek, OpenAI, Anthropic, OpenRouter, DashScope, Ollama, and LM Studio. Optional extras add Tushare, MCP clients, messaging channels, chart rendering, forecasting, and enhanced search.
+Supported LLM providers include DeepSeek, OpenAI, Anthropic, OpenRouter, DashScope, Ollama, and LM Studio. The default installation includes chart rendering for stock analysis. Optional extras add Tushare, MCP clients, messaging channels, forecasting, and enhanced search.
 
 Example: enable Tushare data.
 

@@ -52,6 +52,10 @@ automation-compatible storage format.
 
 ## Optional package features
 
+Chart rendering used by the built-in stock-analysis agents is part of the
+default installation. Extras are only needed for additional integrations and
+heavier capabilities.
+
 Install extras with the application:
 
 ```bash

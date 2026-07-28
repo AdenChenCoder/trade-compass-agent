@@ -3616,13 +3616,15 @@ wheels = [
 
 [[package]]
 name = "trade-compass-agent"
-version = "0.2.0rc5"
+version = "0.2.0rc6"
 source = { editable = "." }
 dependencies = [
     { name = "akshare" },
     { name = "baostock" },
     { name = "duckduckgo-search" },
     { name = "fastapi" },
+    { name = "matplotlib" },
+    { name = "mplfinance" },
     { name = "numpy" },
     { name = "openai" },
     { name = "pandas" },
@@ -3638,10 +3640,6 @@ channels = [
     { name = "aiohttp" },
     { name = "lark-oapi" },
     { name = "websockets" },
-]
-chart = [
-    { name = "matplotlib" },
-    { name = "mplfinance" },
 ]
 dev = [
     { name = "httpx" },
@@ -3694,10 +3692,10 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'forecast'", specifier = ">=0.30" },
     { name = "jsonschema", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "lark-oapi", marker = "extra == 'channels'", specifier = ">=1.6" },
-    { name = "matplotlib", marker = "extra == 'chart'", specifier = ">=3.8" },
+    { name = "matplotlib", specifier = ">=3.8" },
     { name = "matplotlib", marker = "extra == 'dev'", specifier = ">=3.8" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
-    { name = "mplfinance", marker = "extra == 'chart'", specifier = ">=0.12" },
+    { name = "mplfinance", specifier = ">=0.12" },
     { name = "numpy", specifier = ">=2.0,<3" },
     { name = "openai", specifier = ">=1.0,<3" },
     { name = "pandas", specifier = ">=2.2,<4" },

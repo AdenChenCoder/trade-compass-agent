@@ -4,6 +4,16 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.2.0rc6] - 2026-07-28
+
+### Fixed
+
+- Included Matplotlib and mplfinance in the default installation so built-in
+  stock-analysis agents can render K-line charts without requiring users to
+  discover and install an additional package extra.
+- Extended installed-wheel smoke testing to render a real chart and prevent
+  chart dependencies from accidentally becoming optional again.
+
 ## [0.2.0rc5] - 2026-07-28
 
 ### Changed

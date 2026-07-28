@@ -44,7 +44,7 @@ trade-compass serve --open
 ```
 
 发布的 wheel 已经包含生产 Web UI。只有从源码开发时才需要 Node.js
-和 pnpm。
+和 pnpm。股票分析所需的 K 线图表渲染能力也包含在默认安装中。
 
 ### 从源码运行
 
@@ -194,7 +194,7 @@ trade-compass service verify
 `~/.trade-compass/.env`。源码工作区使用 `config/default.yaml` 和仓库
 根目录的 `.env`。
 
-支持的 LLM 提供商包括 DeepSeek、OpenAI、Anthropic、OpenRouter、DashScope、Ollama 和 LM Studio。可选依赖还可以增加 Tushare、MCP 客户端、消息通道、图表渲染、行情预测和增强搜索能力。
+支持的 LLM 提供商包括 DeepSeek、OpenAI、Anthropic、OpenRouter、DashScope、Ollama 和 LM Studio。默认安装已包含股票分析所需的图表渲染能力；可选依赖还可以增加 Tushare、MCP 客户端、消息通道、行情预测和增强搜索能力。
 
 例如，启用 Tushare 数据：
 
