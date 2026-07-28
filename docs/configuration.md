@@ -14,6 +14,8 @@ Run `trade-compass setup` to create this layout and complete the guided
 configuration. Run `trade-compass configure` to revisit the same wizard later.
 Existing secrets are retained when their masked prompts are left blank, and
 changed files receive a neighboring `*.setup.bak` recovery copy.
+The TUI uses `↑/↓` for navigation, `Space` for multi-select, and `Enter` to
+confirm the current item.
 
 In a source checkout, `config/default.yaml`, `.env`, `data/`, and
 `memory_vault/` remain the development defaults. Setup only initializes those

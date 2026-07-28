@@ -1,6 +1,6 @@
 [project]
 name = "trade-compass-agent"
-version = "0.2.0rc4"
+version = "0.2.0rc5"
 description = "交易罗盘: local-first A-share trading agent workbench for short-term trading, ETF rotation, simulation, review, and memory-driven improvement."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -30,6 +30,7 @@ dependencies = [
   "akshare>=1.15,<2",
   "baostock>=0.8,<1",
   "python-dotenv>=1.0,<2",
+  "questionary>=2.1,<3",
   "duckduckgo-search>=7.0,<9",
   "openai>=1.0,<3",
 ]

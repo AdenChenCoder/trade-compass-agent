@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import getpass
 import re
 import shutil
 import sys
@@ -8,8 +7,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import questionary
 import yaml
 from dotenv import dotenv_values
+from questionary import Choice, Style
 
 from trade_compass_agent.concurrency import atomic_write
 
@@ -63,6 +64,21 @@ _TIME_FIELDS = (
     ("weekly_time", "周度回顾"),
 )
 _TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+_PROMPT_STYLE = Style(
+    [
+        ("qmark", "fg:#00a6a6 bold"),
+        ("question", "bold"),
+        ("answer", "fg:#00a6a6 bold"),
+        ("pointer", "fg:#00a6a6 bold"),
+        ("highlighted", "fg:#00a6a6 bold"),
+        ("selected", "fg:#00a6a6"),
+        ("instruction", "fg:#6c7883"),
+        ("text", ""),
+        ("disabled", "fg:#858585 italic"),
+    ]
+)
+_SELECT_INSTRUCTION = "（↑/↓ 移动，Enter 确认）"
+_CHECKBOX_INSTRUCTION = "（↑/↓ 移动，Space 选择，Enter 确认）"
 
 
 class SetupCancelled(Exception):
@@ -83,20 +99,16 @@ class TerminalPrompter:
     def __init__(
         self,
         *,
-        input_fn: Callable[[str], str] = input,
-        secret_fn: Callable[[str], str] = getpass.getpass,
         output_fn: Callable[[str], None] = print,
     ) -> None:
-        self._input = input_fn
-        self._secret = secret_fn
         self._output = output_fn
 
     def write(self, text: str = "") -> None:
         self._output(text)
 
     def section(self, current: int, total: int, title: str) -> None:
-        self.write(f"\n[{current}/{total}] {title}")
-        self.write("─" * max(12, len(title) + 6))
+        progress = "●" * current + "○" * (total - current)
+        self.write(f"\n◆ {title}  {current}/{total}  {progress}")
 
     def text(
         self,
@@ -106,35 +118,49 @@ class TerminalPrompter:
         validator: Callable[[str], bool] | None = None,
         error: str = "输入无效，请重试。",
     ) -> str:
-        suffix = f" [{default}]" if default else ""
-        while True:
-            value = self._read(f"{label}{suffix}: ").strip()
-            value = value or default
-            if validator is None or validator(value):
-                return value
-            self.write(f"  ! {error}")
+        def validate(value: str) -> bool | str:
+            return True if validator is None or validator(value.strip()) else error
+
+        value = questionary.text(
+            label,
+            default=default,
+            validate=validate,
+            qmark="›",
+            style=_PROMPT_STYLE,
+        ).ask(kbi_msg="")
+        return self._required(value).strip()
 
     def secret(self, label: str, *, configured: bool) -> tuple[bool, str]:
-        suffix = "（已配置；回车保留，输入 - 清除）" if configured else "（输入时不会回显）"
-        try:
-            value = self._secret(f"{label} {suffix}: ").strip()
-        except (EOFError, KeyboardInterrupt) as exc:
-            raise SetupCancelled from exc
+        instruction = (
+            "（已配置；Enter 保留，输入 - 清除）" if configured else "（输入内容会被隐藏）"
+        )
+        value = questionary.password(
+            label,
+            instruction=instruction,
+            qmark="›",
+            style=_PROMPT_STYLE,
+        ).ask(kbi_msg="")
+        value = self._required(value).strip()
         if not value:
             return False, ""
         return True, "" if value == "-" else value
 
     def confirm(self, label: str, *, default: bool) -> bool:
-        suffix = "Y/n" if default else "y/N"
-        while True:
-            value = self._read(f"{label} [{suffix}]: ").strip().lower()
-            if not value:
-                return default
-            if value in {"y", "yes", "是"}:
-                return True
-            if value in {"n", "no", "否"}:
-                return False
-            self.write("  ! 请输入 y 或 n。")
+        options = (
+            [Choice("是", value=True), Choice("否", value=False)]
+            if default
+            else [Choice("否", value=False), Choice("是", value=True)]
+        )
+        value = questionary.select(
+            label,
+            choices=options,
+            default=default,
+            instruction=_SELECT_INSTRUCTION,
+            pointer="›",
+            qmark="?",
+            style=_PROMPT_STYLE,
+        ).ask(kbi_msg="")
+        return bool(self._required(value))
 
     def select(
         self,
@@ -143,20 +169,16 @@ class TerminalPrompter:
         *,
         current: str,
     ) -> str:
-        self.write(label)
-        current_index = 1
-        for index, (value, title) in enumerate(options, 1):
-            marker = " *" if value == current else ""
-            if value == current:
-                current_index = index
-            self.write(f"  {index}. {title}{marker}")
-        while True:
-            raw = self._read(f"选择 [{current_index}]: ").strip()
-            if not raw:
-                return options[current_index - 1][0]
-            if raw.isdigit() and 1 <= int(raw) <= len(options):
-                return options[int(raw) - 1][0]
-            self.write(f"  ! 请输入 1-{len(options)}。")
+        value = questionary.select(
+            label,
+            choices=[Choice(title, value=value) for value, title in options],
+            default=current,
+            instruction=_SELECT_INSTRUCTION,
+            pointer="›",
+            qmark="?",
+            style=_PROMPT_STYLE,
+        ).ask(kbi_msg="")
+        return str(self._required(value))
 
     def multi_select(
         self,
@@ -165,38 +187,24 @@ class TerminalPrompter:
         *,
         current: Sequence[str],
     ) -> list[str]:
-        self.write(label)
         current_set = set(current)
-        for index, (value, title) in enumerate(options, 1):
-            marker = " *" if value in current_set else ""
-            self.write(f"  {index}. {title}{marker}")
-        default = ",".join(
-            str(index)
-            for index, (value, _) in enumerate(options, 1)
-            if value in current_set
-        )
-        while True:
-            suffix = f" [{default}]" if default else " [无]"
-            raw = self._read(f"选择多个（逗号分隔，0 表示无）{suffix}: ").strip()
-            if not raw:
-                raw = default
-            if raw in {"", "0"}:
-                return []
-            parts = [item.strip() for item in raw.split(",")]
-            if all(item.isdigit() and 1 <= int(item) <= len(options) for item in parts):
-                selected = {int(item) for item in parts}
-                return [
-                    value
-                    for index, (value, _) in enumerate(options, 1)
-                    if index in selected
-                ]
-            self.write(f"  ! 请输入 1-{len(options)}，可用逗号分隔；输入 0 清空。")
+        value = questionary.checkbox(
+            label,
+            choices=[
+                Choice(title, value=value, checked=value in current_set) for value, title in options
+            ],
+            instruction=_CHECKBOX_INSTRUCTION,
+            pointer="›",
+            qmark="?",
+            style=_PROMPT_STYLE,
+        ).ask(kbi_msg="")
+        return [str(item) for item in self._required(value)]
 
-    def _read(self, prompt: str) -> str:
-        try:
-            return self._input(prompt)
-        except (EOFError, KeyboardInterrupt) as exc:
-            raise SetupCancelled from exc
+    @staticmethod
+    def _required(value):
+        if value is None:
+            raise SetupCancelled
+        return value
 
 
 def run_setup_wizard(

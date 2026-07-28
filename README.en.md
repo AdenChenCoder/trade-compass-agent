@@ -34,7 +34,8 @@ trade-compass setup
 The terminal wizard guides you through the model and API key, storage, market
 data, scheduled automation, messaging channels, search integrations, and
 privacy settings. Run `trade-compass configure` later to change them without
-editing configuration files.
+editing configuration files. Use `↑/↓` to move, `Space` to toggle multiple
+choices, and `Enter` to confirm; secret input stays masked.
 
 Start Trade Compass:
 

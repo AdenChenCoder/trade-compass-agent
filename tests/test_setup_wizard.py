@@ -6,6 +6,9 @@ from pathlib import Path
 import pytest
 import yaml
 from dotenv import dotenv_values
+from prompt_toolkit.application import create_app_session
+from prompt_toolkit.input.defaults import create_pipe_input
+from prompt_toolkit.output import DummyOutput
 
 from trade_compass_agent.config import invalidate_config_cache, load_app_config
 from trade_compass_agent.setup_wizard import (
@@ -54,6 +57,60 @@ class ScriptedPrompter(TerminalPrompter):
 
     def multi_select(self, label: str, options, *, current) -> list[str]:
         return list(current) if self.multi is None else self.multi
+
+
+def test_terminal_prompter_supports_arrow_key_selection() -> None:
+    ui = TerminalPrompter()
+
+    with create_pipe_input() as pipe_input:
+        with create_app_session(input=pipe_input, output=DummyOutput()):
+            pipe_input.send_text("\x1b[B\r")
+            selected = ui.select(
+                "选择",
+                (("first", "第一项"), ("second", "第二项")),
+                current="first",
+            )
+
+    assert selected == "second"
+
+
+def test_terminal_prompter_supports_space_toggled_multi_select() -> None:
+    ui = TerminalPrompter()
+
+    with create_pipe_input() as pipe_input:
+        with create_app_session(input=pipe_input, output=DummyOutput()):
+            pipe_input.send_text(" \x1b[B \r")
+            selected = ui.multi_select(
+                "多选",
+                (("first", "第一项"), ("second", "第二项")),
+                current=(),
+            )
+
+    assert selected == ["first", "second"]
+
+
+def test_terminal_prompter_uses_selection_for_confirmation_and_masks_secrets() -> None:
+    ui = TerminalPrompter()
+
+    with create_pipe_input() as pipe_input:
+        with create_app_session(input=pipe_input, output=DummyOutput()):
+            pipe_input.send_text("\x1b[B\r")
+            assert ui.confirm("确认", default=False) is True
+
+    with create_pipe_input() as pipe_input:
+        with create_app_session(input=pipe_input, output=DummyOutput()):
+            pipe_input.send_text("new-secret\r")
+            assert ui.secret("密钥", configured=False) == (True, "new-secret")
+
+
+def test_terminal_prompter_cancel_raises_setup_cancelled() -> None:
+    ui = TerminalPrompter()
+
+    with create_pipe_input() as pipe_input:
+        with create_app_session(input=pipe_input, output=DummyOutput()):
+            pipe_input.send_bytes(b"\x03")
+            with pytest.raises(SetupCancelled):
+                ui.text("名称")
 
 
 @pytest.fixture

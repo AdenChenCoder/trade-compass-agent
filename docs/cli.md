@@ -23,6 +23,8 @@ trade-compass agent "今天 A 股市场怎么样？"
 `setup` launches the guided wizard for installed applications. `configure` is
 an alias for rerunning it. Use `setup --non-interactive` for template-only
 automation, or `setup --wizard` to opt into the wizard from a source checkout.
+In the wizard, use `↑/↓` to navigate, `Space` to toggle multi-select choices,
+and `Enter` to confirm the current item.
 
 ## Research and automation
 

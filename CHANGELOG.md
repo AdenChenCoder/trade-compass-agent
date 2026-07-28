@@ -4,6 +4,14 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.2.0rc5] - 2026-07-28
+
+### Changed
+
+- Replaced the numbered setup questionnaire with a keyboard-driven TUI:
+  arrow-key navigation, Space-based multi-select, masked secret input, visible
+  progress, and one-step-at-a-time confirmation.
+
 ## [0.2.0rc4] - 2026-07-28
 
 ### Added

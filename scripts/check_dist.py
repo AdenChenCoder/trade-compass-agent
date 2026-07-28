@@ -53,6 +53,7 @@ REQUIRED_BASE_DEPENDENCIES = {
     "pandas",
     "pydantic",
     "python-dotenv",
+    "questionary",
     "pyyaml",
     "uvicorn",
 }

@@ -15,6 +15,9 @@ default and starts a guided terminal wizard. It configures the model credential,
 storage, market data, automation, optional channels and search, and privacy
 without asking installed-app users to edit files. To use another location,
 export `TRADE_COMPASS_HOME` before running setup.
+Use `↑/↓` to move between choices, `Space` to toggle multi-select items, and
+`Enter` to confirm. Secret values are masked while typing, and each answer
+advances to the next configuration item.
 
 ## Configure an LLM
 
