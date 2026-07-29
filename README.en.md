@@ -22,27 +22,23 @@ Trade Compass Agent combines market data, technical and fundamental analysis, sp
 - Manual install or source development: Python 3.12+ and [uv](https://docs.astral.sh/uv/)
 - An API key for your LLM provider; DeepSeek is the default
 
-### Install the released application
+### Install a release
 
-After a production release is available, macOS and Linux users can install it
-with one command:
+The first stable version will be distributed through GitHub Releases. Once it
+is available, macOS and Linux users can install it with one command:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
 ```
 
-The installer bootstraps `uv` when needed and installs Trade Compass in an
-isolated tool environment. It ends with a welcome and next steps; it does
-**not** start the setup wizard.
-
-You can also install manually with an existing `uv`:
+If `uv` is already available, you can also install directly:
 
 ```bash
 uv tool install trade-compass-agent
 ```
 
-Start configuration when you are ready:
+After installation, start the configuration wizard:
 
 ```bash
 trade-compass setup
@@ -52,18 +48,18 @@ The terminal wizard guides you through the model and API key, storage, market
 data, scheduled automation, messaging channels, search integrations, and
 privacy settings. Run `trade-compass configure` later to change them without
 editing configuration files. Use `↑/↓` to move, `Space` to toggle multiple
-choices, and `Enter` to confirm; secret input stays masked.
+choices, and `Enter` to confirm. Secret input stays masked.
 
-Start Trade Compass:
+Check the environment and start Trade Compass:
 
 ```bash
 trade-compass doctor
 trade-compass serve --open
 ```
 
-The wheel already contains the production Web UI. Node.js and pnpm are only
-required when developing from source. Candlestick chart rendering used by
-stock analysis is also included in the default installation.
+The installed application includes the Web UI and candlestick chart rendering
+used by stock analysis. Node.js and pnpm are only required for source
+development.
 
 ### Run from source
 
@@ -134,12 +130,11 @@ Run complete research workflows on demand or on a schedule:
 - Catalyst calendar and close check
 - End-of-day and weekly review
 
-### Packaged and runtime Skills
+### Extensible Skills
 
-Built-in Skills are authored with the source code and packaged into the wheel.
-At application time, every agent turn discovers Skill summaries, loads the full
-`SKILL.md` only when selected, and can use writable `memory_vault/skills/`
-versions to extend or override built-ins.
+Built-in Skills cover catalyst calendars, idea generation, intraday technical
+analysis, and investment-master methods. You can add your own Skills to make
+personal research processes and output standards repeatable.
 
 ### Memory, rules, and review
 
@@ -211,9 +206,15 @@ trade-compass service verify
 
 ## Configuration
 
-Installed application settings live in `~/.trade-compass/config.yaml`; API keys
-live in `~/.trade-compass/.env`. Source checkouts use `config/default.yaml` and
-the repository `.env`.
+Manage day-to-day settings with the configuration wizard:
+
+```bash
+trade-compass configure
+```
+
+Installed application settings and credentials stay locally under
+`~/.trade-compass/`. Source checkouts use `config/default.yaml` and the
+repository `.env`.
 
 Supported LLM providers include DeepSeek, OpenAI, Anthropic, OpenRouter, DashScope, Ollama, and LM Studio. The default installation includes chart rendering for stock analysis. Optional extras add Tushare, MCP clients, messaging channels, forecasting, and enhanced search.
 

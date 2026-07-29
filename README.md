@@ -22,25 +22,23 @@ Trade Compass Agent（交易罗盘）将行情数据、技术面与基本面分�
 - 手动安装或源码开发：Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)
 - 一个可用的 LLM 服务密钥；默认使用 DeepSeek
 
-### 安装已发布应用
+### 安装正式版本
 
-正式版本发布后，macOS 或 Linux 用户可以一条命令安装：
+首个正式版本将通过 GitHub Release 提供。发布后，macOS 或 Linux 用户可
+一键安装：
 
 ```bash
 curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
 ```
 
-安装器会在需要时安装 `uv`，然后将交易罗盘放入隔离的工具环境。安装完成后
-只显示欢迎语和后续指引，**不会自动运行配置向导**。
-
-也可以使用已经安装好的 `uv` 手动安装：
+如果本机已经安装 `uv`，也可以直接安装：
 
 ```bash
 uv tool install trade-compass-agent
 ```
 
-准备好后再开始配置：
+安装完成后，运行配置向导：
 
 ```bash
 trade-compass setup
@@ -48,18 +46,18 @@ trade-compass setup
 
 终端向导会依次完成模型与 API Key、存储目录、行情数据、定时自动化、
 消息渠道、增强搜索和隐私设置。之后可再次运行 `trade-compass configure`
-修改配置，不需要直接编辑配置文件。向导支持 `↑/↓` 移动、`Space` 多选、
-`Enter` 确认和隐藏式密钥输入，每一步完成后自动进入下一项。
+调整设置。使用 `↑/↓` 移动、`Space` 多选、`Enter` 确认；密钥输入会自动
+隐藏。
 
-启动交易罗盘：
+配置完成后，检查运行环境并启动交易罗盘：
 
 ```bash
 trade-compass doctor
 trade-compass serve --open
 ```
 
-发布的 wheel 已经包含生产 Web UI。只有从源码开发时才需要 Node.js
-和 pnpm。股票分析所需的 K 线图表渲染能力也包含在默认安装中。
+通过上述方式安装时无需准备 Node.js 或 pnpm，Web UI 和股票分析所需的
+K 线图表能力均已包含在应用中。
 
 ### 从源码运行
 
@@ -130,11 +128,10 @@ Agent 可以获取行情、计算技术指标、检查基本面与公司公告�
 - 催化日历与收盘检查
 - 日终复盘与周度复盘
 
-### 打包与运行时 Skills
+### 可扩展 Skills
 
-内置 Skills 在开发期随源码编写，并打入发布 wheel。应用运行时，每个 Agent
-回合会重新发现 Skill 摘要；只有选中后才加载完整 `SKILL.md`，同时允许
-`memory_vault/skills/` 中的可写版本扩展或覆盖内置 Skill。
+内置 Skills 提供催化日历、想法生成、日内技术和投资大师方法等研究能力。
+你也可以添加自己的 Skill，将个人投研流程和输出规范交给 Agent 重复执行。
 
 ### 记忆、规则与复盘
 
@@ -205,9 +202,14 @@ trade-compass service verify
 
 ## 配置
 
-安装版配置位于 `~/.trade-compass/config.yaml`，API Key 位于
-`~/.trade-compass/.env`。源码工作区使用 `config/default.yaml` 和仓库
-根目录的 `.env`。
+日常设置通过配置向导管理，无需手动修改配置文件：
+
+```bash
+trade-compass configure
+```
+
+安装版的设置和密钥保存在本机 `~/.trade-compass/` 下；源码工作区使用
+`config/default.yaml` 和仓库根目录的 `.env`。
 
 支持的 LLM 提供商包括 DeepSeek、OpenAI、Anthropic、OpenRouter、DashScope、Ollama 和 LM Studio。默认安装已包含股票分析所需的图表渲染能力；可选依赖还可以增加 Tushare、MCP 客户端、消息通道、行情预测和增强搜索能力。
 
