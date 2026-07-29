@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- 外圈 -->
+  <circle cx="100" cy="100" r="90" fill="none" stroke="#1a1a2e" stroke-width="3.5"/>
+  <circle cx="100" cy="100" r="80" fill="none" stroke="#1a1a2e" stroke-width="1" opacity="0.3"/>
+
+  <!-- 主刻度 -->
+  <g stroke="#1a1a2e" stroke-width="2.5" opacity="0.6">
+    <line x1="100" y1="10" x2="100" y2="22"/>
+    <line x1="100" y1="190" x2="100" y2="178"/>
+    <line x1="10" y1="100" x2="22" y2="100"/>
+    <line x1="190" y1="100" x2="178" y2="100"/>
+  </g>
+
+  <!-- 小刻度 -->
+  <g stroke="#1a1a2e" stroke-width="1.2" opacity="0.3">
+    <line x1="100" y1="14" x2="100" y2="20" transform="rotate(30 100 100)"/>
+    <line x1="100" y1="14" x2="100" y2="20" transform="rotate(60 100 100)"/>
+    <line x1="100" y1="14" x2="100" y2="20" transform="rotate(120 100 100)"/>
+    <line x1="100" y1="14" x2="100" y2="20" transform="rotate(150 100 100)"/>
+    <line x1="100" y1="14" x2="100" y2="20" transform="rotate(210 100 100)"/>
+    <line x1="100" y1="14" x2="100" y2="20" transform="rotate(240 100 100)"/>
+    <line x1="100" y1="14" x2="100" y2="20" transform="rotate(300 100 100)"/>
+    <line x1="100" y1="14" x2="100" y2="20" transform="rotate(330 100 100)"/>
+  </g>
+
+  <!-- 中心 -->
+  <circle cx="100" cy="100" r="10" fill="#1a1a2e"/>
+  <circle cx="100" cy="100" r="5" fill="#e63946"/>
+
+  <!-- 指针 - 北（红） -->
+  <polygon points="100,22 110,88 100,84 90,88" fill="#e63946"/>
+
+  <!-- 指针 - 南（绿） -->
+  <polygon points="100,178 110,112 100,116 90,112" fill="#2a9d8f"/>
+
+  <!-- 东西方向小指针 -->
+  <polygon points="178,100 112,110 116,100 112,90" fill="#1a1a2e" opacity="0.4"/>
+  <polygon points="22,100 88,110 84,100 88,90" fill="#1a1a2e" opacity="0.4"/>
+
+  <!-- 内圈虚线 -->
+  <circle cx="100" cy="100" r="62" fill="none" stroke="#1a1a2e" stroke-width="0.6" opacity="0.2" stroke-dasharray="5 5"/>
+</svg>

@@ -26,6 +26,11 @@ def static_bundle(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     (bundle / "404.html").write_text("<html><body>not found</body></html>", encoding="utf-8")
+    (bundle / "favicon.ico").write_bytes(b"test-icon")
+    (bundle / "favicon.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+        encoding="utf-8",
+    )
     return bundle
 
 
@@ -66,6 +71,14 @@ def test_serves_static_from_override(
     response = client.get("/")
     assert response.status_code == 200
     assert "Trade Compass UI" in response.text
+
+    favicon_response = client.get("/favicon.ico")
+    assert favicon_response.status_code == 200
+    assert favicon_response.content == b"test-icon"
+
+    svg_icon_response = client.get("/favicon.svg")
+    assert svg_icon_response.status_code == 200
+    assert svg_icon_response.headers["content-type"].startswith("image/svg+xml")
 
     spa_response = client.get("/agent")
     assert spa_response.status_code == 200

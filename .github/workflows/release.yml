@@ -89,6 +89,11 @@ jobs:
           name: python-distributions
           path: dist/
           if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-installer
+          path: install.sh
+          if-no-files-found: error
 
   publish:
     needs: build
@@ -109,6 +114,7 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -131,6 +137,19 @@ jobs:
           "$RUNNER_TEMP/postpublish/bin/trade-compass" --version
           "$RUNNER_TEMP/postpublish/bin/trade-compass" commands --json
           "$RUNNER_TEMP/postpublish/bin/python" -m trade_compass_agent.release_smoke
+      - name: Accept the published one-command installer
+        run: |
+          export HOME="$RUNNER_TEMP/installer-home"
+          export TRADE_COMPASS_PACKAGE="trade-compass-agent==${GITHUB_REF_NAME#v}"
+          sh install.sh
+          test ! -e "$HOME/.trade-compass/config.yaml"
+          if command -v uv >/dev/null 2>&1; then
+            uv_bin="$(command -v uv)"
+          else
+            uv_bin="$HOME/.local/bin/uv"
+          fi
+          tool_bin="$("$uv_bin" tool dir --bin)"
+          "$tool_bin/trade-compass" --version
 
   github-release:
     needs: postpublish
@@ -141,8 +160,12 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: python-distributions
-          path: dist
+          path: release-assets
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-installer
+          path: release-assets
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: release-assets/*
           generate_release_notes: true

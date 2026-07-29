@@ -2,12 +2,30 @@
 
 ## Install
 
-Trade Compass requires Python 3.12 or newer. The released wheel contains the
-production Web UI and the chart-rendering dependencies used by stock analysis,
-so Node.js or an additional chart package is not required for normal use.
+Trade Compass runs on Python 3.12 or newer; the one-command installer can
+provision that runtime through `uv`. The released wheel contains the production
+Web UI and the chart-rendering dependencies used by stock analysis, so Node.js
+or an additional chart package is not required for normal use.
+
+On macOS or Linux, install the latest production release with:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
+```
+
+The installer bootstraps `uv` when needed and prints the command path and next
+steps. It does not run `setup` or create application configuration.
+
+Alternatively, install manually with an existing `uv`:
 
 ```bash
 uv tool install trade-compass-agent
+```
+
+When you are ready to configure the application:
+
+```bash
 trade-compass setup
 ```
 

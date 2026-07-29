@@ -15,6 +15,7 @@ fi
   scripts/check_dist.py \
   tests/test_workflow_governance.py \
   tests/test_fetch_url_tool.py \
+  tests/test_install_script.py \
   tests/test_specialists.py \
   src/trade_compass_agent/runtime/workflows \
   src/trade_compass_agent/runtime/readers \

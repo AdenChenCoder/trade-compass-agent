@@ -29,14 +29,16 @@ Run the `TestPyPI Publish` workflow manually. It:
 Create and push a tag that exactly matches the package version:
 
 ```bash
-git tag v0.2.0rc6
-git push origin v0.2.0rc6
+git tag v0.2.0rc7
+git push origin v0.2.0rc7
 ```
 
 The release workflow verifies the tag, builds once, installs the wheel in an
 isolated environment, publishes through the protected `pypi` environment, and
-then installs the published version from PyPI. GitHub Release creation happens
-only after that consumer check succeeds.
+then installs the published version from PyPI. It also runs `install.sh` against
+that exact published version and verifies that configuration was not started.
+GitHub Release creation happens only after those consumer checks succeed, and
+attaches the audited installer alongside the Python distributions.
 
 ## Acceptance
 
@@ -47,6 +49,7 @@ The installed-package smoke test verifies:
 - YAML Skill metadata and bundled references;
 - writable runtime paths outside the package;
 - the console entry point and command catalog.
+- the one-command installer, including its no-automatic-setup contract.
 
 If publication succeeds but post-publish acceptance fails, do not reuse the
 version number. Diagnose the artifact, publish a new patch or release candidate,

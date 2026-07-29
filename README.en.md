@@ -18,16 +18,33 @@ Trade Compass Agent combines market data, technical and fundamental analysis, sp
 
 ### Requirements
 
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/)
+- One-command install: macOS or Linux with `curl`
+- Manual install or source development: Python 3.12+ and [uv](https://docs.astral.sh/uv/)
 - An API key for your LLM provider; DeepSeek is the default
 
 ### Install the released application
 
-After the package is available on production PyPI:
+After a production release is available, macOS and Linux users can install it
+with one command:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
+```
+
+The installer bootstraps `uv` when needed and installs Trade Compass in an
+isolated tool environment. It ends with a welcome and next steps; it does
+**not** start the setup wizard.
+
+You can also install manually with an existing `uv`:
 
 ```bash
 uv tool install trade-compass-agent
+```
+
+Start configuration when you are ready:
+
+```bash
 trade-compass setup
 ```
 

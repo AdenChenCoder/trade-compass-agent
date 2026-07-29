@@ -31,6 +31,8 @@ def collect_release_smoke() -> dict[str, object]:
         PACKAGE_ROOT / "env.example",
         PACKAGE_ROOT / "workflows" / "catalyst_calendar_cn" / "workflow.yaml",
         PACKAGE_ROOT / "specialists" / "equity_research" / "specialist.yaml",
+        PACKAGE_ROOT / "web_dist" / "favicon.ico",
+        PACKAGE_ROOT / "web_dist" / "favicon.svg",
         resolve_schema_path("readers/reader_claims.schema.json"),
     )
     missing = [str(path) for path in required if not path.is_file()]

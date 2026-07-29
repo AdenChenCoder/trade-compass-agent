@@ -40,6 +40,8 @@ REQUIRED_WHEEL_FILES = {
     "trade_compass_agent/schemas/readers/reader_claims.schema.json",
     "trade_compass_agent/specialists/equity_research/specialist.yaml",
     "trade_compass_agent/web/security.py",
+    "trade_compass_agent/web_dist/favicon.ico",
+    "trade_compass_agent/web_dist/favicon.svg",
     "trade_compass_agent/web_dist/index.html",
     "trade_compass_agent/workflows/catalyst_calendar_cn/workflow.yaml",
 }

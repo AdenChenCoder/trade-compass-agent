@@ -18,16 +18,31 @@ Trade Compass Agent（交易罗盘）将行情数据、技术面与基本面分�
 
 ### 环境要求
 
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/)
+- 一键安装：macOS 或 Linux，以及 `curl`
+- 手动安装或源码开发：Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)
 - 一个可用的 LLM 服务密钥；默认使用 DeepSeek
 
 ### 安装已发布应用
 
-包发布到正式 PyPI 后执行：
+正式版本发布后，macOS 或 Linux 用户可以一条命令安装：
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
+```
+
+安装器会在需要时安装 `uv`，然后将交易罗盘放入隔离的工具环境。安装完成后
+只显示欢迎语和后续指引，**不会自动运行配置向导**。
+
+也可以使用已经安装好的 `uv` 手动安装：
 
 ```bash
 uv tool install trade-compass-agent
+```
+
+准备好后再开始配置：
+
+```bash
 trade-compass setup
 ```
 

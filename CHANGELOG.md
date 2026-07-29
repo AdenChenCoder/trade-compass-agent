@@ -4,6 +4,23 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.2.0rc7] - 2026-07-29
+
+### Added
+
+- Added a macOS/Linux one-command installer that bootstraps `uv` when needed,
+  installs Trade Compass in an isolated tool environment, and ends with a
+  friendly welcome and explicit next steps without starting `setup`.
+- Added installer regression tests and attached the audited installer to each
+  production GitHub Release.
+
+### Fixed
+
+- Added the user-provided Trade Compass logo as SVG and multi-size ICO favicon
+  assets so source and installed Web applications serve `/favicon.svg` and
+  `/favicon.ico` instead of returning 404.
+- Extended release checks to require both favicon assets in the wheel.
+
 ## [0.2.0rc6] - 2026-07-28
 
 ### Fixed
