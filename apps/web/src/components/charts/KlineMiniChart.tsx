@@ -1,10 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import * as echarts from "echarts";
+import * as echarts from "echarts/core";
+import { BarChart, CandlestickChart, LineChart } from "echarts/charts";
+import {
+  GridComponent,
+  MarkLineComponent,
+  TooltipComponent,
+} from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
+import type { ECharts, SeriesOption } from "echarts";
 import { Loader2 } from "lucide-react";
 import { fetchBars } from "@/lib/workbench-api";
 import type { ForecastBar } from "@/lib/workbench-api";
 import type { Bar } from "@/lib/types";
+
+echarts.use([
+  BarChart,
+  CandlestickChart,
+  LineChart,
+  GridComponent,
+  MarkLineComponent,
+  TooltipComponent,
+  CanvasRenderer,
+]);
 
 interface ForecastOverlay {
   bars: ForecastBar[];
@@ -72,7 +90,7 @@ export function KlineMiniChart({
   forecast,
 }: KlineMiniChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<echarts.ECharts | null>(null);
+  const chartRef = useRef<ECharts | null>(null);
   const visibilityRef = useRef<HTMLDivElement>(null);
   const [shouldLoad, setShouldLoad] = useState(false);
 
@@ -134,7 +152,7 @@ export function KlineMiniChart({
       },
     }));
 
-    const series: echarts.SeriesOption[] = [
+    const series: SeriesOption[] = [
       {
         name: symbol,
         type: "candlestick",

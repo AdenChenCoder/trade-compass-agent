@@ -124,8 +124,11 @@ class GatewayDaemon:
 
     async def _dispatch(self, message: IncomingMessage) -> None:
         """Route inbound message to the agent and reply."""
-        logger.info("Gateway: received message from %s/%s: %s",
-                     message.platform, message.sender_id, message.content[:100])
+        logger.info(
+            "Gateway: received message on %s (len=%d)",
+            message.platform,
+            len(message.content),
+        )
 
         if not self._on_message:
             logger.warning("Gateway: no message handler, dropping message from %s", message.platform)

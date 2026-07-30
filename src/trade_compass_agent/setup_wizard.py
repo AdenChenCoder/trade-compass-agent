@@ -430,7 +430,7 @@ def run_setup_wizard(
     ui.section(6, 6, "隐私与确认")
     privacy_raw = dict(raw.get("privacy", {}) or {})
     privacy_raw["allow_external_llm_memory"] = ui.confirm(
-        "允许把记忆/复盘片段发送给外部 LLM",
+        "允许外部 LLM 额外总结对话/复盘并写入记忆",
         default=bool(privacy_raw.get("allow_external_llm_memory", False)),
     )
     raw["privacy"] = privacy_raw

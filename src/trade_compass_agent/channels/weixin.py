@@ -92,8 +92,10 @@ class WeixinBotAdapter(ChannelAdapter):
         if not context_token:
             context_token = self._context_tokens.get(user_id, "")
         if not context_token:
-            logger.warning("WeChat: no context_token for user %s (known: %s)",
-                           user_id, list(self._context_tokens.keys()))
+            logger.warning(
+                "WeChat: no context_token for requested user (known_users=%d)",
+                len(self._context_tokens),
+            )
             return False
 
         text = message.content
@@ -123,9 +125,12 @@ class WeixinBotAdapter(ChannelAdapter):
             ret = resp.get("ret", -1)
             if ret == 0:
                 return True
-            logger.warning("WeChat sendmessage error: ret=%s resp=%s payload_keys=%s context_token=%s...",
-                           ret, resp, list(payload["msg"].keys()),
-                           context_token[:30] if context_token else "EMPTY")
+            logger.warning(
+                "WeChat sendmessage error: ret=%s response_keys=%s payload_keys=%s",
+                ret,
+                sorted(resp),
+                sorted(payload["msg"]),
+            )
             return False
         except Exception as exc:
             logger.error("WeChat send failed: %s", exc)
@@ -151,17 +156,20 @@ class WeixinBotAdapter(ChannelAdapter):
 
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(url, json=payload, headers=headers)
-            logger.debug("WeChat sendmessage: status=%s body=%s",
-                         resp.status_code, resp.text[:500])
+            logger.debug("WeChat sendmessage: status=%s", resp.status_code)
             resp.raise_for_status()
             if not resp.text.strip():
                 logger.warning("WeChat sendmessage: empty body status=%s", resp.status_code)
                 return {"ret": -1}
             data = resp.json()
             if not data or data.get("ret", 0) != 0:
-                logger.warning("WeChat sendmessage: full_resp=%s headers_sent=%s",
-                               resp.text[:500], {k: v[:30] + "..." if len(v) > 30 else v
-                                                  for k, v in headers.items() if k != "Content-Type"})
+                logger.warning(
+                    "WeChat sendmessage: status=%s ret=%s errcode=%s response_keys=%s",
+                    resp.status_code,
+                    data.get("ret"),
+                    data.get("errcode"),
+                    sorted(data),
+                )
             return data
 
     async def start_listening(self, on_message: Any = None) -> None:
@@ -222,13 +230,20 @@ class WeixinBotAdapter(ChannelAdapter):
         try:
             qr_resp = await self._api_get(f"{_QR_ENDPOINT}?bot_type=3")
             if qr_resp.get("ret", -1) != 0:
-                logger.error("WeChat: QR code request failed: %s", qr_resp)
+                logger.error(
+                    "WeChat: QR code request failed: ret=%s errcode=%s",
+                    qr_resp.get("ret"),
+                    qr_resp.get("errcode"),
+                )
                 return False
 
             qr_url = qr_resp.get("qrcode_img_content", "")
             qrcode_id = qr_resp.get("qrcode", "")
             if not qr_url or not qrcode_id:
-                logger.error("WeChat: incomplete QR response: %s", qr_resp)
+                logger.error(
+                    "WeChat: incomplete QR response (keys=%s)",
+                    sorted(qr_resp),
+                )
                 return False
 
             logger.info("WeChat: scan QR code to login: %s", qr_url)
@@ -256,7 +271,10 @@ class WeixinBotAdapter(ChannelAdapter):
                         self._save_credentials()
                         logger.info("WeChat: login successful, bot_id=%s", self._bot_id)
                         return True
-                    logger.warning("WeChat: confirmed but no token: %s", status)
+                    logger.warning(
+                        "WeChat: confirmed but no token (keys=%s)",
+                        sorted(status),
+                    )
                     return False
                 elif state == "expired":
                     logger.warning("WeChat: QR code expired")

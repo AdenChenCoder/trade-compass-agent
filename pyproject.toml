@@ -22,6 +22,7 @@ classifiers = [
 
 dependencies = [
   "fastapi>=0.115,<1",
+  "starlette>=1.3.1,<2",
   "pydantic>=2.0,<3",
   "PyYAML>=6.0,<7",
   "uvicorn[standard]>=0.30,<1",
@@ -55,11 +56,12 @@ search = [
   "tavily-python>=0.5",
 ]
 mcp = [
-  "mcp>=1.0",
+  "mcp>=1.28.1,<2",
+  "cryptography>=48.0.1,<49",
+  "pydantic-settings>=2.14.2,<3",
 ]
 quant = [
   "vectorbt>=0.26",
-  "backtrader>=1.9",
 ]
 channels = [
   "lark_oapi>=1.6",
@@ -68,7 +70,8 @@ channels = [
 ]
 chart = []
 forecast = [
-  "torch>=2.0.0",
+  "torch>=2.13.0,<3",
+  "setuptools>=83.0.0",
   "einops>=0.8",
   "huggingface_hub>=0.30",
   "safetensors>=0.4",
@@ -77,14 +80,15 @@ vision = [
   "pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'",
   "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
   "pytesseract>=0.3; sys_platform != 'darwin'",
-  "Pillow>=10.0; sys_platform != 'darwin'",
-  "pypdf>=4.0",
+  "Pillow>=12.3.0,<13; sys_platform != 'darwin'",
+  "pypdf>=6.14.2,<7",
 ]
 dev = [
   "pytest>=8.0",
   "ruff>=0.6",
   "httpx>=0.27",
   "jsonschema>=4.0",
+  "pip-audit>=2.9,<3",
   "matplotlib>=3.8",
 ]
 

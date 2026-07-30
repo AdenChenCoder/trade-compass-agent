@@ -35,6 +35,8 @@ notifications:
   macos_enabled: false
   max_records: 500
 privacy:
+  # Controls extra LLM-based learning/curation. Normal agent requests still
+  # include applicable user rules and memory context; see PRIVACY.md.
   allow_external_llm_memory: false
 memory:
   governance:

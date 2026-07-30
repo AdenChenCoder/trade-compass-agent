@@ -14,7 +14,8 @@ from trade_compass_agent.logging_config import (
 def test_redact_log_text_removes_url_queries_and_credentials() -> None:
     message = (
         "connected wss://example.test/connect?access_key=secret&ticket=once "
-        "app_secret=hidden Authorization: Bearer header.payload.signature"
+        "app_secret=hidden Authorization: Bearer header.payload.signature "
+        "{'context_token': 'dictionary-secret', \"bot_token\": \"json-secret\"}"
     )
 
     redacted = redact_log_text(message)
@@ -23,9 +24,13 @@ def test_redact_log_text_removes_url_queries_and_credentials() -> None:
     assert "ticket=once" not in redacted
     assert "app_secret=hidden" not in redacted
     assert "header.payload.signature" not in redacted
+    assert "dictionary-secret" not in redacted
+    assert "json-secret" not in redacted
     assert "wss://example.test/connect?<redacted>" in redacted
     assert "app_secret=<redacted>" in redacted
     assert "Bearer <redacted>" in redacted
+    assert "'context_token': '<redacted>'" in redacted
+    assert '"bot_token": "<redacted>"' in redacted
 
 
 def test_sensitive_log_filter_redacts_percent_style_arguments() -> None:

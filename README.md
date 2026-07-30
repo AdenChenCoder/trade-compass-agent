@@ -18,24 +18,32 @@ Trade Compass Agent（交易罗盘）将行情数据、技术面与基本面分�
 
 ### 环境要求
 
-- 一键安装：macOS 或 Linux，以及 `curl`
-- 手动安装或源码开发：Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)
+- 正常安装或源码开发：Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)
+- Release 安装器：macOS 或 Linux，以及 `curl` 和 `sha256sum`（Linux）或
+  `shasum`（macOS）
 - 一个可用的 LLM 服务密钥；默认使用 DeepSeek
 
 ### 安装正式版本
 
-首个正式版本将通过 GitHub Release 提供。发布后，macOS 或 Linux 用户可
-一键安装：
-
-```bash
-curl --proto '=https' --tlsv1.2 -fsSL \
-  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
-```
-
-如果本机已经安装 `uv`，也可以直接安装：
+首选使用已有的 `uv` 安装 PyPI 正式版本：
 
 ```bash
 uv tool install trade-compass-agent
+```
+
+如果本机还没有 `uv`，可下载 GitHub Release 安装器和校验文件。先校验，
+再执行；不要把远程脚本直接管道给 shell：
+
+```bash
+curl --proto '=https' --tlsv1.2 -fLO \
+  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh
+curl --proto '=https' --tlsv1.2 -fLO \
+  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/SHA256SUMS
+# Linux
+grep ' install.sh$' SHA256SUMS | sha256sum --check -
+# macOS（与上一行二选一）
+grep ' install.sh$' SHA256SUMS | shasum -a 256 --check -
+sh install.sh
 ```
 
 安装完成后，运行配置向导：
@@ -231,6 +239,7 @@ uv tool install "trade-compass-agent[tushare]"
 | 使用和自动化命令行 | [CLI 参考](docs/cli.md) |
 | 创建并打包运行时 Skills | [Skills](docs/skills.md) |
 | 理解仓库和状态边界 | [架构](docs/architecture.md) |
+| 了解本地数据与外部服务边界 | [隐私](PRIVACY.md) / [威胁模型](docs/threat-model.md) |
 | 构建、验证和发布版本 | [发布](docs/releasing.md) |
 
 ## 开发与贡献
@@ -258,6 +267,7 @@ git diff --check
 - 提议较大改动前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 - 通过 [SUPPORT.md](SUPPORT.md) 选择正确的支持入口。
 - 安全漏洞按 [SECURITY.md](SECURITY.md) 私下报告，不要创建公开 Issue。
+- 数据流和保留边界见 [PRIVACY.md](PRIVACY.md)。
 - 社区参与遵循 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
 - 版本记录维护在 [CHANGELOG.md](CHANGELOG.md)。
 

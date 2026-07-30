@@ -59,6 +59,37 @@ def test_rejects_oversized_declared_body(
     assert response.json() == {"detail": "Request body too large"}
 
 
+def test_rejects_oversized_streamed_body_without_content_length(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("TRADE_COMPASS_MAX_REQUEST_BYTES", "4")
+    client = _security_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/channels/inbound/feishu",
+        content=iter([b"12", b"345"]),
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "Request body too large"}
+
+
+def test_accepts_streamed_body_within_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("TRADE_COMPASS_MAX_REQUEST_BYTES", "4")
+    client = _security_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/channels/inbound/feishu",
+        content=iter([b"12", b"34"]),
+    )
+
+    assert response.status_code == 501
+
+
 @pytest.mark.parametrize(
     ("headers", "expected_status"),
     [

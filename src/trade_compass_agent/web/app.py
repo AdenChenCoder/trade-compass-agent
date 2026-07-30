@@ -137,7 +137,11 @@ async def _start_gateway(config) -> Any:
 
     if config.channels.weixin_enabled:
         from trade_compass_agent.channels.weixin import WeixinBotAdapter
-        gateway.register(WeixinBotAdapter())
+        gateway.register(
+            WeixinBotAdapter(
+                credentials_path=str(config.data_dir / "weixin_credentials.json"),
+            )
+        )
 
     await gateway.start()
     logger.info("Gateway daemon started with %d platform(s)", len(gateway.platforms))

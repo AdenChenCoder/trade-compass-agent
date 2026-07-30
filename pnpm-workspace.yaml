@@ -1,6 +1,11 @@
 packages:
   - "apps/*"
+overrides:
+  postcss: 8.5.24
 allowBuilds:
   esbuild: true
   sharp: true
   unrs-resolver: true
+auditConfig:
+  ignoreGhsas:
+    - GHSA-qwww-vcr4-c8h2

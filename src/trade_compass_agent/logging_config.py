@@ -23,10 +23,11 @@ from typing import Any
 
 _URL_QUERY_RE = re.compile(r"\b(?P<base>(?:https?|wss?)://[^\s?#]+)\?[^\s]+")
 _SENSITIVE_PAIR_RE = re.compile(
-    r"(?i)\b(?P<key>"
+    r"(?i)(?P<prefix>['\"]?\b(?:"
     r"access[_-]?key|api[_-]?key|app[_-]?secret|client[_-]?secret|"
-    r"password|signature|ticket|token"
-    r")=(?P<value>[^\s&,;]+)"
+    r"password|signature|ticket|"
+    r"(?:access|bot|context|refresh)?[_-]?token"
+    r")\b['\"]?\s*[:=]\s*['\"]?)(?P<value>[^'\"\s&,;}]+)(?P<suffix>['\"]?)"
 )
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 
@@ -34,7 +35,7 @@ _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 def redact_log_text(value: str) -> str:
     """Remove common credential shapes before a log record is emitted."""
     value = _URL_QUERY_RE.sub(r"\g<base>?<redacted>", value)
-    value = _SENSITIVE_PAIR_RE.sub(r"\g<key>=<redacted>", value)
+    value = _SENSITIVE_PAIR_RE.sub(r"\g<prefix><redacted>\g<suffix>", value)
     return _BEARER_RE.sub("Bearer <redacted>", value)
 
 

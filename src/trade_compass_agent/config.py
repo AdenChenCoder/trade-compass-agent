@@ -264,8 +264,9 @@ class AppConfig:
 
 
 def ensure_runtime_dirs(settings: Settings) -> None:
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
-    settings.memory_dir.mkdir(parents=True, exist_ok=True)
+    for path in (settings.data_dir, settings.memory_dir):
+        path.mkdir(parents=True, exist_ok=True)
+        path.chmod(0o700)
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -507,6 +508,7 @@ def initialize_user_files(*, force: bool = False) -> tuple[Path, Path]:
     """Create the installed-app config and env template without touching user data."""
     home = user_home_path()
     home.mkdir(parents=True, exist_ok=True)
+    home.chmod(0o700)
     config_target = user_config_path()
     env_target = user_env_path()
 

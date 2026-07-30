@@ -8,6 +8,8 @@ import pytest
 import yaml
 
 from trade_compass_agent.config import (
+    Settings,
+    ensure_runtime_dirs,
     initialize_user_files,
     invalidate_config_cache,
     load_app_config,
@@ -76,6 +78,17 @@ def test_setup_copies_templates_without_overwriting(installed_layout) -> None:
     assert env_path == home / ".env"
     assert config_path.read_text(encoding="utf-8") == "profile: customized\n"
     assert resolve_config_path() == config_path
+    assert stat.S_IMODE(home.stat().st_mode) == 0o700
+
+
+def test_runtime_state_directories_are_owner_only(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    memory_dir = tmp_path / "memory"
+
+    ensure_runtime_dirs(Settings(data_dir=data_dir, memory_dir=memory_dir))
+
+    assert stat.S_IMODE(data_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(memory_dir.stat().st_mode) == 0o700
 
 
 def test_setup_force_never_overwrites_env_secrets(installed_layout) -> None:

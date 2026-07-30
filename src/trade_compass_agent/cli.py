@@ -720,6 +720,9 @@ def run_serve(
         )
         raise SystemExit(1)
 
+    config = load_app_config()
+    ensure_runtime_dirs(settings_from_config(config))
+
     if dev:
         os.environ["TRADE_COMPASS_DEV_CORS"] = "true"
     else:
@@ -742,7 +745,6 @@ def run_serve(
         os.environ["TRADE_COMPASS_NO_SCHEDULER"] = "true"
         print("Scheduler: disabled (--no-scheduler)")
     else:
-        config = load_app_config()
         if config.scheduler.enabled:
             print("Scheduler: will start via lifespan")
         else:

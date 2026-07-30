@@ -3,6 +3,9 @@
 Releases publish one verified set of Python artifacts to PyPI and attach the
 same files to a GitHub Release.
 
+Before the repository's first public release, complete the
+[public repository release checklist](public-release-checklist.md).
+
 ## Preconditions
 
 - The version in `pyproject.toml` and `trade_compass_agent.__version__` agrees.
@@ -37,8 +40,9 @@ The release workflow verifies the tag, builds once, installs the wheel in an
 isolated environment, publishes through the protected `pypi` environment, and
 then installs the published version from PyPI. It also runs `install.sh` against
 that exact published version and verifies that configuration was not started.
-GitHub Release creation happens only after those consumer checks succeed, and
-attaches the audited installer alongside the Python distributions.
+GitHub Release creation happens only after those consumer checks succeed. It
+attaches the installer, Python distributions, a CycloneDX SBOM, and
+`SHA256SUMS`.
 
 ## Acceptance
 
@@ -50,6 +54,7 @@ The installed-package smoke test verifies:
 - writable runtime paths outside the package;
 - the console entry point and command catalog.
 - the one-command installer, including its no-automatic-setup contract.
+- the release checksums and dependency SBOM.
 
 If publication succeeds but post-publish acceptance fails, do not reuse the
 version number. Diagnose the artifact, publish a new patch or release candidate,

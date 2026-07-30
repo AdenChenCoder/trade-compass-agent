@@ -9,6 +9,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 DEFAULT_MAX_REQUEST_BYTES = 10 * 1024 * 1024
 
@@ -84,22 +85,64 @@ class LocalOriginMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject declared HTTP request bodies above the configured local limit."""
+class RequestSizeLimitMiddleware:
+    """Reject HTTP request bodies above the configured local limit."""
 
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
-    ) -> Response:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope)
         content_length = request.headers.get("content-length", "").strip()
+        limit = max_request_bytes()
         if content_length:
             try:
                 declared_size = int(content_length)
             except ValueError:
-                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+                await JSONResponse(
+                    status_code=400,
+                    content={"detail": "Invalid Content-Length"},
+                )(scope, receive, send)
+                return
             if declared_size < 0:
-                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
-            if declared_size > max_request_bytes():
-                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
-        return await call_next(request)
+                await JSONResponse(
+                    status_code=400,
+                    content={"detail": "Invalid Content-Length"},
+                )(scope, receive, send)
+                return
+            if declared_size > limit:
+                await JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body too large"},
+                )(scope, receive, send)
+                return
+
+        buffered: list[Message] = []
+        received_size = 0
+        while True:
+            message = await receive()
+            buffered.append(message)
+            if message["type"] == "http.disconnect":
+                break
+            if message["type"] != "http.request":
+                continue
+            received_size += len(message.get("body", b""))
+            if received_size > limit:
+                await JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body too large"},
+                )(scope, receive, send)
+                return
+            if not message.get("more_body", False):
+                break
+
+        async def replay_receive() -> Message:
+            if buffered:
+                return buffered.pop(0)
+            return await receive()
+
+        await self.app(scope, replay_receive, send)

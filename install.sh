@@ -2,9 +2,10 @@
 
 set -eu
 
-readonly TRADE_COMPASS_DEFAULT_PACKAGE="trade-compass-agent"
+readonly TRADE_COMPASS_DEFAULT_PACKAGE="trade-compass-agent==0.2.0rc7"
 readonly TRADE_COMPASS_DEFAULT_PYTHON="3.12"
 readonly TRADE_COMPASS_DEFAULT_UV_VERSION="0.11.32"
+readonly TRADE_COMPASS_DEFAULT_UV_INSTALLER_SHA256="43aff33a967fe40e8c17949d8c85c65bc43f3b5c94742393c957f56ab5ba80f4"
 
 installer_tmp=""
 
@@ -24,17 +25,33 @@ show_help() {
 Trade Compass Agent 安装器
 
 用法：
-  curl -fsSL https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
+  sh install.sh
 
 可选环境变量：
-  TRADE_COMPASS_PACKAGE       安装目标，默认 trade-compass-agent
+  TRADE_COMPASS_PACKAGE       安装目标，默认当前 Release 的精确版本
   TRADE_COMPASS_PYTHON        Python 版本，默认 3.12
   TRADE_COMPASS_UV_VERSION    引导安装的 uv 版本，默认 0.11.32
   TRADE_COMPASS_UV_INSTALLER_URL
                               自定义 uv 官方安装器地址
+  TRADE_COMPASS_UV_INSTALLER_SHA256
+                              自定义安装器地址或版本时必须提供
 
 安装完成后不会自动运行 trade-compass setup。
 EOF
+}
+
+verify_sha256() {
+  expected="$1"
+  target="$2"
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$target")"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "$target")"
+  else
+    fail "系统缺少 sha256sum 或 shasum，无法校验 uv 安装器。"
+  fi
+  actual="${actual%% *}"
+  [ "$actual" = "$expected" ] || fail "uv 安装器 SHA-256 校验失败。"
 }
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
@@ -54,6 +71,7 @@ package="${TRADE_COMPASS_PACKAGE:-$TRADE_COMPASS_DEFAULT_PACKAGE}"
 python_version="${TRADE_COMPASS_PYTHON:-$TRADE_COMPASS_DEFAULT_PYTHON}"
 uv_version="${TRADE_COMPASS_UV_VERSION:-$TRADE_COMPASS_DEFAULT_UV_VERSION}"
 uv_installer_url="${TRADE_COMPASS_UV_INSTALLER_URL:-https://astral.sh/uv/${uv_version}/install.sh}"
+uv_installer_sha256="${TRADE_COMPASS_UV_INSTALLER_SHA256:-}"
 
 printf '\n正在安装 Trade Compass Agent…\n'
 
@@ -76,6 +94,16 @@ if [ -z "$uv_bin" ]; then
   else
     fail "需要 curl 或 wget 才能安装 uv。"
   fi
+
+  if [ -z "$uv_installer_sha256" ]; then
+    if [ "$uv_version" = "$TRADE_COMPASS_DEFAULT_UV_VERSION" ] &&
+      [ "$uv_installer_url" = "https://astral.sh/uv/${TRADE_COMPASS_DEFAULT_UV_VERSION}/install.sh" ]; then
+      uv_installer_sha256="$TRADE_COMPASS_DEFAULT_UV_INSTALLER_SHA256"
+    else
+      fail "自定义 uv 安装器地址或版本时必须设置 TRADE_COMPASS_UV_INSTALLER_SHA256。"
+    fi
+  fi
+  verify_sha256 "$uv_installer_sha256" "$uv_installer"
 
   uv_install_dir="${UV_INSTALL_DIR:-$HOME/.local/bin}"
   UV_INSTALL_DIR="$uv_install_dir"

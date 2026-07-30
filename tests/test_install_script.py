@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 import subprocess
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +71,17 @@ def test_installer_has_valid_posix_shell_syntax() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_installer_default_package_matches_project_version() -> None:
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "version"
+    ]
+
+    assert (
+        f'readonly TRADE_COMPASS_DEFAULT_PACKAGE="trade-compass-agent=={version}"'
+        in INSTALLER.read_text(encoding="utf-8")
+    )
 
 
 def test_installer_uses_existing_uv_without_running_setup(tmp_path: Path) -> None:
@@ -155,6 +168,9 @@ cp "$FAKE_REMOTE_INSTALLER" "$output"
             "CURL_CALL_LOG": str(tmp_path / "curl-call.log"),
             "FAKE_REMOTE_INSTALLER": str(remote_installer),
             "FAKE_UV_SOURCE": str(fake_uv_source),
+            "TRADE_COMPASS_UV_INSTALLER_SHA256": hashlib.sha256(
+                remote_installer.read_bytes()
+            ).hexdigest(),
             "UV_INSTALL_ENV_LOG": str(tmp_path / "uv-install-env.log"),
         }
     )
@@ -175,6 +191,48 @@ cp "$FAKE_REMOTE_INSTALLER" "$output"
     assert (tmp_path / "trade-call.log").read_text(encoding="utf-8").splitlines() == [
         "--version"
     ]
+
+
+def test_installer_rejects_unverified_uv_installer(tmp_path: Path) -> None:
+    command_dir = tmp_path / "commands"
+    tool_bin = tmp_path / "tool-bin"
+    command_dir.mkdir()
+    tool_bin.mkdir()
+    remote_installer = tmp_path / "remote-uv-installer.sh"
+    _write_executable(remote_installer, "#!/bin/sh\nexit 99\n")
+    _write_executable(
+        command_dir / "curl",
+        """#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output" ]; then
+    shift
+    output="$1"
+  fi
+  shift
+done
+cp "$FAKE_REMOTE_INSTALLER" "$output"
+""",
+    )
+
+    env = _base_env(tmp_path, command_dir, tool_bin)
+    env.update(
+        {
+            "FAKE_REMOTE_INSTALLER": str(remote_installer),
+            "TRADE_COMPASS_UV_INSTALLER_SHA256": "0" * 64,
+        }
+    )
+    result = subprocess.run(
+        ["/bin/sh", str(INSTALLER)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "SHA-256 校验失败" in result.stderr
+    assert not (tmp_path / "uv-call.log").exists()
 
 
 def test_installer_rejects_unsupported_platform(tmp_path: Path) -> None:

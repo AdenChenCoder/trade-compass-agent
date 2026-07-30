@@ -1,11 +1,19 @@
+import { lazy, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { KlineMiniChart } from "@/components/charts/KlineMiniChart";
 import { fetchForecast } from "@/lib/workbench-api";
 import type { TurnSection } from "@/lib/types";
+
+const Markdown = lazy(async () => {
+  const module = await import("@/components/ui/MarkdownRenderer");
+  return { default: module.MarkdownRenderer };
+});
+
+const KlineMiniChart = lazy(async () => {
+  const module = await import("@/components/charts/KlineMiniChart");
+  return { default: module.KlineMiniChart };
+});
 
 function useForecast(symbol: string | undefined, enabled: boolean) {
   return useQuery({
@@ -66,10 +74,16 @@ export function SectionCard({ section }: { section: TurnSection }) {
       </CardHeader>
       <CardContent className="space-y-3">
         {showChart && chartSymbol ? (
-          <KlineMiniChart symbol={chartSymbol} forecast={forecastOverlay} />
+          <Suspense fallback={<div className="h-20 rounded-md border bg-muted/10" />}>
+            <KlineMiniChart symbol={chartSymbol} forecast={forecastOverlay} />
+          </Suspense>
         ) : null}
         <div className="prose prose-sm max-w-none dark:prose-invert">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{section.content}</ReactMarkdown>
+          <Suspense
+            fallback={<p className="whitespace-pre-wrap m-0">{section.content}</p>}
+          >
+            <Markdown>{section.content}</Markdown>
+          </Suspense>
         </div>
       </CardContent>
     </Card>

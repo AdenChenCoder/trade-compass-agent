@@ -219,7 +219,7 @@ def _run_review_agent_loop(config, prompt: str) -> None:
     try:
         text = session.run(prompt, timeout=120)
         if text and "nothing to save" not in text.lower():
-            logger.info("Background review (agent loop) output: %s", text[:100])
+            logger.info("Background review (agent loop) completed (len=%d)", len(text))
         else:
             logger.debug("Background review: nothing to save")
     except Exception as exc:
@@ -239,7 +239,7 @@ def _run_review_text_only(llm_call: Callable, messages: list[dict[str, Any]], pr
         review_messages,
     )
     if response and "nothing to save" not in response.lower():
-        logger.info("Background review produced output: %s", response[:100])
+        logger.info("Background review completed (len=%d)", len(response))
     else:
         logger.debug("Background review: nothing to save")
 

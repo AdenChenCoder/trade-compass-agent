@@ -18,3 +18,7 @@ API keys, broker credentials, and webhook secrets belong in the local `.env`
 file and must never be committed. Any capability that can create an external
 order or message must define authentication, authorization, confirmation,
 idempotency, audit, and recovery behavior before it is enabled.
+
+The current trust boundaries and residual risks are documented in
+[docs/threat-model.md](docs/threat-model.md). User-facing data flows and
+retention are documented in [PRIVACY.md](PRIVACY.md).

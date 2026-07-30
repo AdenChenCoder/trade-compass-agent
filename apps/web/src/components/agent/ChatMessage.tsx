@@ -1,14 +1,29 @@
-import { useMemo } from "react";
+import { lazy, Suspense, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Wrench } from "lucide-react";
 import { SectionCard } from "@/components/agent/SectionCard";
-import { KlineMiniChart } from "@/components/charts/KlineMiniChart";
 import { fetchForecast } from "@/lib/workbench-api";
 import { filterVisibleSections } from "@/lib/sections";
 import { cn } from "@/lib/utils";
 import type { ChatMessage as ChatMessageType } from "@/lib/types";
+
+const Markdown = lazy(async () => {
+  const module = await import("@/components/ui/MarkdownRenderer");
+  return { default: module.MarkdownRenderer };
+});
+
+const KlineMiniChart = lazy(async () => {
+  const module = await import("@/components/charts/KlineMiniChart");
+  return { default: module.KlineMiniChart };
+});
+
+function MarkdownContent({ children }: { children: string }) {
+  return (
+    <Suspense fallback={<p className="whitespace-pre-wrap m-0">{children}</p>}>
+      <Markdown>{children}</Markdown>
+    </Suspense>
+  );
+}
 
 function ToolCallsSummary({ toolCalls }: { toolCalls: { name: string }[] }) {
   return (
@@ -85,7 +100,7 @@ export function ChatMessage({
           <div className="space-y-3">
             {message.content || isStreaming ? (
               <div className="prose prose-sm max-w-none dark:prose-invert">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                <MarkdownContent>{message.content}</MarkdownContent>
                 {isStreaming ? (
                   <span
                     className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-foreground/70 align-middle"
@@ -95,11 +110,13 @@ export function ChatMessage({
               </div>
             ) : null}
             {forecastChart ? (
-              <KlineMiniChart
-                symbol={forecastChart.symbol}
-                height={260}
-                forecast={forecastChart.overlay}
-              />
+              <Suspense fallback={<div className="h-20 rounded-md border bg-muted/10" />}>
+                <KlineMiniChart
+                  symbol={forecastChart.symbol}
+                  height={260}
+                  forecast={forecastChart.overlay}
+                />
+              </Suspense>
             ) : null}
             {message.toolCalls?.length ? (
               <ToolCallsSummary toolCalls={message.toolCalls} />
@@ -124,7 +141,7 @@ export function ChatMessage({
             {isUser ? (
               <p className="whitespace-pre-wrap m-0">{message.content}</p>
             ) : (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+              <MarkdownContent>{message.content}</MarkdownContent>
             )}
           </div>
         )}
