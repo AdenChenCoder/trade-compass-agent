@@ -163,6 +163,19 @@ When learning from another codebase, write down the semantic mapping before adop
 
 Verification must include the highest-level practical consumer available (API, UI-visible data, workflow result, or external behavior), not only internal storage or unit-level mechanics.
 
+## 6. Keep User-Facing Copy User-Facing
+
+**Describe outcomes and actions, not internal control flow.**
+
+- Success messages should state the achieved result, actionable next steps, and
+  risks the user must know.
+- Do not expose implementation details, actions that did not occur, control-flow
+  guarantees, or developer self-justification unless the user needs them to
+  make a decision or recover.
+- If an implementation fact changes no user choice or recovery step, omit it
+  from the user-facing surface.
+- Verify copy at the actual consumer surface, not only in source text.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
