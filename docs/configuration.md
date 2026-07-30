@@ -10,8 +10,9 @@ Trade Compass keeps installed-application state separate from package files.
 └── memory_vault/
 ```
 
-Run `trade-compass setup` to create this layout and complete the guided
-configuration. Run `trade-compass configure` to revisit the same wizard later.
+An installed application uses this layout. Run `trade-compass setup` to create
+it and complete the guided configuration; run `trade-compass configure` to
+revisit the same wizard later.
 Existing secrets are retained when their masked prompts are left blank, and
 changed files receive a neighboring `*.setup.bak` recovery copy.
 The TUI uses `↑/↓` for navigation, `Space` for multi-select, and `Enter` to
@@ -56,17 +57,16 @@ Chart rendering used by the built-in stock-analysis agents is part of the
 default installation. Extras are only needed for additional integrations and
 heavier capabilities.
 
-Install extras with the application:
+Add an extra to a source checkout:
 
 ```bash
-uv tool install "trade-compass-agent[tushare]"
+uv sync --extra tushare
 ```
 
-For an existing tool installation, use the upgrade/reinstall behavior provided
-by your installed `uv` version. Confirm the resulting environment with:
+Confirm the resulting environment with:
 
 ```bash
-trade-compass doctor
+uv run trade-compass doctor
 ```
 
 ## Source development

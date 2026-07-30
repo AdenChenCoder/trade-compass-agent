@@ -1,49 +1,23 @@
 # Getting started
 
-## Install
+## Run from source
 
-Trade Compass runs on Python 3.12 or newer. The released wheel contains the
-production Web UI and the chart-rendering dependencies used by stock analysis,
-so Node.js or an additional chart package is not required for normal use.
-
-Install the latest production release with an existing `uv`:
+Trade Compass is currently in pre-release and does not yet publish a PyPI
+package or GitHub Release. The current setup path requires Python 3.12 or
+newer, `uv`, Node.js 22, and pnpm 11.1.3.
 
 ```bash
-uv tool install trade-compass-agent
+git clone https://github.com/AdenChenCoder/trade-compass-agent.git
+cd trade-compass-agent
+uv sync
+pnpm install --frozen-lockfile
+pnpm --dir apps/web build
+uv run trade-compass setup --wizard
 ```
 
-On macOS or Linux without `uv`, download and verify the GitHub Release
-installer before running it. Use `sha256sum --check` on Linux or
-`shasum -a 256 --check` on macOS:
-
-```bash
-curl --proto '=https' --tlsv1.2 -fLO \
-  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh
-curl --proto '=https' --tlsv1.2 -fLO \
-  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/SHA256SUMS
-# Linux
-grep ' install.sh$' SHA256SUMS | sha256sum --check -
-# macOS (use instead of the previous line)
-grep ' install.sh$' SHA256SUMS | shasum -a 256 --check -
-sh install.sh
-```
-
-The installer bootstraps a pinned `uv` after verifying its checksum, installs
-the exact package version associated with that Release, and prints the command
-path and next steps. It does not run `setup` or create application
-configuration.
-
-When you are ready to configure the application:
-
-```bash
-trade-compass setup
-```
-
-`setup` creates the installed-application home at `~/.trade-compass/` by
-default and starts a guided terminal wizard. It configures the model credential,
-storage, market data, automation, optional channels and search, and privacy
-without asking installed-app users to edit files. To use another location,
-export `TRADE_COMPASS_HOME` before running setup.
+`setup --wizard` creates the source-checkout `.env` when needed and starts a
+guided terminal wizard. It configures the model credential, storage, market
+data, automation, optional channels and search, and privacy.
 Use `↑/↓` to move between choices, `Space` to toggle multi-select items, and
 `Enter` to confirm. Secret values are masked while typing, and each answer
 advances to the next configuration item.
@@ -52,25 +26,25 @@ advances to the next configuration item.
 
 Choose the provider and model in the setup wizard. Remote-provider credentials
 are entered through a masked prompt and saved to the protected local env file.
-Run `trade-compass configure` whenever you need to change the selection or key.
+Run `uv run trade-compass configure` whenever you need to change the selection
+or key.
 
 Run the readiness check:
 
 ```bash
-trade-compass doctor
+uv run trade-compass doctor
 ```
 
 The command reports each configuration or runtime dependency that still needs
 attention.
 
-For scripts or image builds, `trade-compass setup --non-interactive` retains the
-template-only initialization behavior. Source checkouts also use that behavior
-by default; pass `--wizard` to opt into guided configuration there.
+For scripts or image builds, `uv run trade-compass setup --non-interactive`
+initializes templates and runtime directories without starting the wizard.
 
 ## Start the workbench
 
 ```bash
-trade-compass serve --open
+uv run trade-compass serve --open
 ```
 
 If a browser is not opened automatically, visit
