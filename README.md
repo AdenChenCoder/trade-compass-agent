@@ -26,8 +26,7 @@ Trade Compass Agent（交易罗盘）将行情数据、技术面与基本面分�
 [uv](https://docs.astral.sh/uv/)，再把正式包安装到隔离环境中：
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
 ```
 
 如果已经安装 uv，也可以直接从
