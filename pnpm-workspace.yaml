@@ -8,4 +8,6 @@ allowBuilds:
   unrs-resolver: true
 auditConfig:
   ignoreGhsas:
+    # Upstream patched the v7 line in 7.18.2; this SPA does not use RSC APIs.
+    # Keep the exception until the package-audit advisory range is corrected.
     - GHSA-qwww-vcr4-c8h2

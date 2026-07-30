@@ -19,6 +19,11 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 - Promoted the tested `0.2.0rc1`–`0.2.0rc7` release-candidate series to the
   first public stable release.
 
+### Security
+
+- Updated React Router to 7.18.2, which includes the upstream fix for
+  `GHSA-qwww-vcr4-c8h2`.
+
 ## [0.2.0rc7] - 2026-07-29
 
 ### Added
