@@ -7,7 +7,9 @@ Trade Compass keeps installed-application state separate from package files.
 ├── config.yaml
 ├── .env
 ├── data/
-└── memory_vault/
+├── memory_vault/
+├── backups/
+└── mcp.json                 # optional
 ```
 
 An installed application uses this layout. Run `trade-compass setup` to create
@@ -21,6 +23,46 @@ confirm the current item.
 In a source checkout, `config/default.yaml`, `.env`, `data/`, and
 `memory_vault/` remain the development defaults. Setup only initializes those
 files unless `--wizard` is passed explicitly.
+
+## Installed package paths
+
+`uv tool` chooses platform-specific package directories. Inspect them instead
+of assuming a hard-coded `~/.local` path:
+
+```bash
+uv tool list --show-paths
+uv tool dir
+uv tool dir --bin
+```
+
+- `uv tool dir --bin` contains the `trade-compass` command.
+- `uv tool dir` contains the isolated package environment; the application does
+  not store writable user state there.
+- `TRADE_COMPASS_HOME` defaults to `~/.trade-compass` and contains writable
+  application state.
+- `config.yaml` stores non-secret settings; `.env` stores credentials with
+  owner-only permissions.
+- `data/` and `memory_vault/` are the default data and long-lived memory roots.
+- `backups/` contains recovery archives; optional MCP configuration is
+  `mcp.json`.
+
+Set a custom application root before the first setup:
+
+```bash
+export TRADE_COMPASS_HOME=/path/to/trade-compass
+trade-compass setup
+```
+
+The same environment variable must be present when running the command or
+installing a persistent service.
+
+On macOS, `trade-compass service install` writes
+`~/Library/LaunchAgents/com.trade-compass.serve.plist`; logs default to
+`~/.trade-compass/data/logs/serve.stdout.log` and `serve.stderr.log`. On Linux,
+the user unit is `$XDG_CONFIG_HOME/systemd/user/trade-compass.service` when
+`XDG_CONFIG_HOME` is set, otherwise
+`~/.config/systemd/user/trade-compass.service`; view logs with
+`journalctl --user -u trade-compass.service -f`.
 
 ## Resolution order
 
@@ -57,7 +99,13 @@ Chart rendering used by the built-in stock-analysis agents is part of the
 default installation. Extras are only needed for additional integrations and
 heavier capabilities.
 
-Add an extra to a source checkout:
+Add an extra to an installed tool:
+
+```bash
+uv tool install --force --python 3.12 'trade-compass-agent[tushare]'
+```
+
+Add the same extra to a source checkout:
 
 ```bash
 uv sync --extra tushare
@@ -66,7 +114,7 @@ uv sync --extra tushare
 Confirm the resulting environment with:
 
 ```bash
-uv run trade-compass doctor
+trade-compass doctor
 ```
 
 ## Source development

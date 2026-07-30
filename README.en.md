@@ -4,6 +4,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?logo=fastapi)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111)](https://react.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/AdenChenCoder/trade-compass-agent/blob/main/LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/trade-compass-agent)](https://pypi.org/project/trade-compass-agent/)
 [![CI](https://github.com/AdenChenCoder/trade-compass-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AdenChenCoder/trade-compass-agent/actions/workflows/ci.yml)
 
 [简体中文](README.md) | [English](README.en.md)
@@ -18,28 +19,38 @@ Trade Compass Agent combines market data, technical and fundamental analysis, sp
 
 ### Requirements
 
-- Python 3.12+ and [uv](https://docs.astral.sh/uv/)
-- Node.js 22 and pnpm 11.1.3
+- macOS or Linux
 - An API key for a remote model provider, or a local Ollama / LM Studio service
 
-The project is currently in pre-release and does not yet publish a PyPI package
-or GitHub Release. Run it from source for now:
+The recommended installer bootstraps a pinned
+[uv](https://docs.astral.sh/uv/) version when needed, then installs the stable
+package in an isolated tool environment:
 
 ```bash
-git clone https://github.com/AdenChenCoder/trade-compass-agent.git
-cd trade-compass-agent
-uv sync
-pnpm install --frozen-lockfile
-pnpm --dir apps/web build
-uv run trade-compass setup --wizard
-uv run trade-compass doctor
-uv run trade-compass serve --open
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
 ```
 
-The first run creates local configuration and guides you through choosing a
-model and market-data provider. Use `uv run trade-compass configure` later to
-make changes. See [Getting started](docs/getting-started.md) and
-[Configuration](docs/configuration.md) for the full setup reference.
+If uv is already installed, install directly from the
+[stable PyPI package](https://pypi.org/project/trade-compass-agent/):
+
+```bash
+uv tool install --python 3.12 trade-compass-agent
+```
+
+Then initialize and start the application:
+
+```bash
+trade-compass setup
+trade-compass doctor
+trade-compass serve --open
+```
+
+The first setup creates local configuration and guides you through choosing a
+model and market-data provider. Use `trade-compass configure` later to make
+changes. The installer does not start setup or modify existing configuration.
+See [Getting started](docs/getting-started.md) and
+[Configuration](docs/configuration.md) for the full reference.
 
 Open `http://127.0.0.1:19704/agent` and start a conversation.
 
@@ -120,7 +131,7 @@ flowchart LR
 ### Web workbench
 
 ```bash
-uv run trade-compass serve
+trade-compass serve
 ```
 
 The Web UI includes agent chat, session history, paper portfolios, memory, audit records, user rules, skills, scheduled jobs, and settings. The interactive API reference is available at `http://127.0.0.1:19704/docs`.
@@ -128,34 +139,34 @@ The Web UI includes agent chat, session history, paper portfolios, memory, audit
 Start without scheduled background jobs:
 
 ```bash
-uv run trade-compass serve --no-scheduler
+trade-compass serve --no-scheduler
 ```
 
 ### CLI
 
 ```bash
 # Ask the agent
-uv run trade-compass agent "How is the A-share market today?"
+trade-compass agent "How is the A-share market today?"
 
 # Inspect market data
-uv run trade-compass market-pulse
-uv run trade-compass data check 600519 510300
+trade-compass market-pulse
+trade-compass data check 600519 510300
 
 # Work with schedules, rules, and research history
-uv run trade-compass jobs list
-uv run trade-compass rules list
-uv run trade-compass audit recent --limit 20
-uv run trade-compass evaluate --limit 100
+trade-compass jobs list
+trade-compass rules list
+trade-compass audit recent --limit 20
+trade-compass evaluate --limit 100
 ```
 
-Run `uv run trade-compass --help` to see all commands.
+Run `trade-compass --help` to see all commands.
 
 ### Run as a local service
 
 ```bash
-uv run trade-compass service install
-uv run trade-compass service status
-uv run trade-compass service verify
+trade-compass service install
+trade-compass service status
+trade-compass service verify
 ```
 
 ## Configuration
@@ -163,22 +174,40 @@ uv run trade-compass service verify
 Manage day-to-day settings with the configuration wizard:
 
 ```bash
-uv run trade-compass configure
+trade-compass configure
 ```
 
-Source checkouts use `config/default.yaml` and the repository `.env`; secrets
-must not be added to configuration files or committed to Git. Installed
-application settings and credentials stay locally under `~/.trade-compass/`.
+The stable package and writable user state stay separate. Use these commands to
+show the actual uv paths on the current machine:
+
+```bash
+uv tool list --show-paths
+uv tool dir
+uv tool dir --bin
+```
+
+| Content | Default location or lookup |
+| --- | --- |
+| `trade-compass` command | `uv tool dir --bin` |
+| Isolated package environment | `uv tool dir` / `uv tool list --show-paths` |
+| Application home | `~/.trade-compass/`, overridable with `TRADE_COMPASS_HOME` |
+| Configuration and secrets | `~/.trade-compass/config.yaml`, `~/.trade-compass/.env` |
+| Data and memory | `~/.trade-compass/data/`, `~/.trade-compass/memory_vault/` |
+| Backups | `~/.trade-compass/backups/` |
+
+Secrets must not be added to configuration files or committed to Git. See
+[Configuration](docs/configuration.md) for path overrides, service definitions,
+and log locations.
 
 Supported LLM providers include DeepSeek, OpenAI, Anthropic, OpenRouter, DashScope, Ollama, and LM Studio. The default dependencies include chart rendering for stock analysis. Optional extras add Tushare, MCP clients, messaging channels, forecasting, and enhanced search.
 
 Example: enable Tushare data.
 
 ```bash
-uv sync --extra tushare
+uv tool install --force --python 3.12 'trade-compass-agent[tushare]'
 ```
 
-Run `uv run trade-compass configure`, select the automatic or Tushare data
+Run `trade-compass configure`, select the automatic or Tushare data
 provider, and enter the token.
 
 ## Documentation

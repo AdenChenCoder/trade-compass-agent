@@ -4,6 +4,26 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-30
+
+### Added
+
+- Published the first stable package to PyPI with an isolated `uv tool`
+  installation path and a version-pinned macOS/Linux installer attached to the
+  GitHub Release.
+- Documented installed command, package environment, configuration, secrets,
+  data, memory, and backup locations.
+
+### Changed
+
+- Promoted the tested `0.2.0rc1`–`0.2.0rc7` release-candidate series to the
+  first public stable release.
+
+### Security
+
+- Updated React Router to 7.18.2, which includes the upstream fix for
+  `GHSA-qwww-vcr4-c8h2`.
+
 ## [0.2.0rc7] - 2026-07-29
 
 ### Added
