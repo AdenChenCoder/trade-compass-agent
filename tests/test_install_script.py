@@ -84,7 +84,7 @@ def test_installer_default_package_matches_project_version() -> None:
     )
 
 
-def test_installer_uses_existing_uv_without_running_setup(tmp_path: Path) -> None:
+def test_installer_prints_user_actions_without_running_setup(tmp_path: Path) -> None:
     command_dir = tmp_path / "commands"
     tool_bin = tmp_path / "tool-bin"
     command_dir.mkdir()
@@ -103,7 +103,18 @@ def test_installer_uses_existing_uv_without_running_setup(tmp_path: Path) -> Non
     assert result.returncode == 0, result.stderr
     assert "欢迎使用 Trade Compass Agent" in result.stdout
     assert "trade-compass-agent 9.9.9" in result.stdout
-    assert "trade-compass setup" in result.stdout
+    assert "安装器不会自动启动配置向导" not in result.stdout
+    expected_actions = (
+        "\n接下来可以按顺序执行：\n"
+        "  1. trade-compass setup         完成首次配置\n"
+        "  2. trade-compass doctor        检查运行环境\n"
+        "  3. trade-compass serve --open  启动 Web 工作台\n"
+        "\n常用命令：\n"
+        "  trade-compass -h\n"
+        "  trade-compass --version\n\n"
+    )
+    assert result.stdout.endswith(expected_actions)
+    assert "  trade-compass service" not in result.stdout
     assert f'export PATH="{tool_bin}:$PATH"' in result.stdout
     uv_args = (tmp_path / "uv-call.log").read_text(encoding="utf-8").splitlines()
     assert uv_args == [
