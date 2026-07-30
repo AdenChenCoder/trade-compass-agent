@@ -27,8 +27,7 @@ The recommended installer bootstraps a pinned
 package in an isolated tool environment:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
 ```
 
 If uv is already installed, install directly from the

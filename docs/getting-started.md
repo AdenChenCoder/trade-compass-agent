@@ -7,8 +7,7 @@ pinned `uv` version when needed and installs the exact package version attached
 to the latest GitHub Release:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
 ```
 
 Release assets include `SHA256SUMS` for users who prefer to download and verify
