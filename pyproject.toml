@@ -57,7 +57,7 @@ search = [
 ]
 mcp = [
   "mcp>=1.28.1,<2",
-  "cryptography>=48.0.1,<49",
+  "cryptography>=48.0.1,<50",
   "pydantic-settings>=2.14.2,<3",
 ]
 quant = [
