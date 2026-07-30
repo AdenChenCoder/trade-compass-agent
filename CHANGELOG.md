@@ -4,6 +4,21 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-30
+
+### Added
+
+- Published the first stable package to PyPI with an isolated `uv tool`
+  installation path and a version-pinned macOS/Linux installer attached to the
+  GitHub Release.
+- Documented installed command, package environment, configuration, secrets,
+  data, memory, and backup locations.
+
+### Changed
+
+- Promoted the tested `0.2.0rc1`–`0.2.0rc7` release-candidate series to the
+  first public stable release.
+
 ## [0.2.0rc7] - 2026-07-29
 
 ### Added

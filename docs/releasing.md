@@ -32,8 +32,8 @@ Run the `TestPyPI Publish` workflow manually. It:
 Create and push a tag that exactly matches the package version:
 
 ```bash
-git tag v0.2.0rc7
-git push origin v0.2.0rc7
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The release workflow verifies the tag, builds once, installs the wheel in an

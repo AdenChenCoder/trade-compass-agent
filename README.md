@@ -4,6 +4,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?logo=fastapi)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111)](https://react.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/trade-compass-agent)](https://pypi.org/project/trade-compass-agent/)
 [![CI](https://github.com/AdenChenCoder/trade-compass-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AdenChenCoder/trade-compass-agent/actions/workflows/ci.yml)
 
 [简体中文](README.md) | [English](README.en.md)
@@ -18,26 +19,35 @@ Trade Compass Agent（交易罗盘）将行情数据、技术面与基本面分�
 
 ### 环境要求
 
-- Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)
-- Node.js 22 和 pnpm 11.1.3
+- macOS 或 Linux
 - 远程模型服务的 API Key，或本地运行的 Ollama / LM Studio
 
-项目目前处于预发布阶段，尚未提供 PyPI 包或 GitHub Release。请先从源码运行：
+推荐使用一键安装器。它会在需要时安装固定版本的
+[uv](https://docs.astral.sh/uv/)，再把正式包安装到隔离环境中：
 
 ```bash
-git clone https://github.com/AdenChenCoder/trade-compass-agent.git
-cd trade-compass-agent
-uv sync
-pnpm install --frozen-lockfile
-pnpm --dir apps/web build
-uv run trade-compass setup --wizard
-uv run trade-compass doctor
-uv run trade-compass serve --open
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh | sh
 ```
 
-首次运行会创建本地配置并引导选择模型与数据源；后续可用
-`uv run trade-compass configure` 调整。完整说明见
-[快速上手](docs/getting-started.md)和[配置](docs/configuration.md)。
+如果已经安装 uv，也可以直接从
+[PyPI 正式包](https://pypi.org/project/trade-compass-agent/)安装：
+
+```bash
+uv tool install --python 3.12 trade-compass-agent
+```
+
+安装完成后运行：
+
+```bash
+trade-compass setup
+trade-compass doctor
+trade-compass serve --open
+```
+
+首次设置会创建本地配置并引导选择模型与数据源；后续可用
+`trade-compass configure` 调整。安装器不会自动启动设置，也不会修改已有配置。
+完整说明见[快速上手](docs/getting-started.md)和[配置](docs/configuration.md)。
 
 打开 `http://127.0.0.1:19704/agent`，即可开始对话。
 
@@ -117,7 +127,7 @@ flowchart LR
 ### Web 工作台
 
 ```bash
-uv run trade-compass serve
+trade-compass serve
 ```
 
 Web UI 集中提供 Agent 对话、历史会话、模拟组合、记忆、审计记录、用户规则、Skills、定时任务和设置。交互式 API 文档位于 `http://127.0.0.1:19704/docs`。
@@ -125,34 +135,34 @@ Web UI 集中提供 Agent 对话、历史会话、模拟组合、记忆、审计
 不启动后台定时任务：
 
 ```bash
-uv run trade-compass serve --no-scheduler
+trade-compass serve --no-scheduler
 ```
 
 ### CLI
 
 ```bash
 # 向 Agent 提问
-uv run trade-compass agent "今天 A 股市场怎么样？"
+trade-compass agent "今天 A 股市场怎么样？"
 
 # 检查市场数据
-uv run trade-compass market-pulse
-uv run trade-compass data check 600519 510300
+trade-compass market-pulse
+trade-compass data check 600519 510300
 
 # 查看定时任务、规则和研究记录
-uv run trade-compass jobs list
-uv run trade-compass rules list
-uv run trade-compass audit recent --limit 20
-uv run trade-compass evaluate --limit 100
+trade-compass jobs list
+trade-compass rules list
+trade-compass audit recent --limit 20
+trade-compass evaluate --limit 100
 ```
 
-运行 `uv run trade-compass --help` 可以查看全部命令。
+运行 `trade-compass --help` 可以查看全部命令。
 
 ### 作为本地服务运行
 
 ```bash
-uv run trade-compass service install
-uv run trade-compass service status
-uv run trade-compass service verify
+trade-compass service install
+trade-compass service status
+trade-compass service verify
 ```
 
 ## 配置
@@ -160,22 +170,39 @@ uv run trade-compass service verify
 日常设置通过配置向导管理，无需手动修改配置文件：
 
 ```bash
-uv run trade-compass configure
+trade-compass configure
 ```
 
-源码工作区使用 `config/default.yaml` 和仓库根目录的 `.env`；密钥不应
-写入配置文件或提交到 Git。安装版会将设置和密钥保存在
-`~/.trade-compass/` 下。
+正式包和用户数据彼此分离。用下面的命令查看本机实际安装路径，不必猜测
+不同系统上的 uv 目录：
+
+```bash
+uv tool list --show-paths
+uv tool dir
+uv tool dir --bin
+```
+
+| 内容 | 默认位置或查看方式 |
+| --- | --- |
+| `trade-compass` 命令 | `uv tool dir --bin` |
+| 隔离的正式包环境 | `uv tool dir` / `uv tool list --show-paths` |
+| 应用主目录 | `~/.trade-compass/`，可由 `TRADE_COMPASS_HOME` 覆盖 |
+| 配置与密钥 | `~/.trade-compass/config.yaml`、`~/.trade-compass/.env` |
+| 数据与记忆 | `~/.trade-compass/data/`、`~/.trade-compass/memory_vault/` |
+| 备份 | `~/.trade-compass/backups/` |
+
+密钥不应写入配置文件或提交到 Git。完整的路径覆盖规则、服务定义和日志位置
+见[配置](docs/configuration.md)。
 
 支持的 LLM 提供商包括 DeepSeek、OpenAI、Anthropic、OpenRouter、DashScope、Ollama 和 LM Studio。默认依赖已包含股票分析所需的图表渲染能力；可选依赖还可以增加 Tushare、MCP 客户端、消息通道、行情预测和增强搜索能力。
 
 例如，启用 Tushare 数据：
 
 ```bash
-uv sync --extra tushare
+uv tool install --force --python 3.12 'trade-compass-agent[tushare]'
 ```
 
-再次运行 `uv run trade-compass configure`，选择自动或 Tushare 数据源
+再次运行 `trade-compass configure`，选择自动或 Tushare 数据源
 并填写 Token。
 
 ## 文档导航
