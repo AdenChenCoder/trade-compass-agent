@@ -18,77 +18,26 @@ Trade Compass Agent（交易罗盘）将行情数据、技术面与基本面分�
 
 ### 环境要求
 
-- 正常安装或源码开发：Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)
-- Release 安装器：macOS 或 Linux，以及 `curl` 和 `sha256sum`（Linux）或
-  `shasum`（macOS）
-- 一个可用的 LLM 服务密钥；默认使用 DeepSeek
+- Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)
+- Node.js 22 和 pnpm 11.1.3
+- 远程模型服务的 API Key，或本地运行的 Ollama / LM Studio
 
-### 安装正式版本
-
-首选使用已有的 `uv` 安装 PyPI 正式版本：
+项目目前处于预发布阶段，尚未提供 PyPI 包或 GitHub Release。请先从源码运行：
 
 ```bash
-uv tool install trade-compass-agent
-```
-
-如果本机还没有 `uv`，可下载 GitHub Release 安装器和校验文件。先校验，
-再执行；不要把远程脚本直接管道给 shell：
-
-```bash
-curl --proto '=https' --tlsv1.2 -fLO \
-  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/install.sh
-curl --proto '=https' --tlsv1.2 -fLO \
-  https://github.com/AdenChenCoder/trade-compass-agent/releases/latest/download/SHA256SUMS
-# Linux
-grep ' install.sh$' SHA256SUMS | sha256sum --check -
-# macOS（与上一行二选一）
-grep ' install.sh$' SHA256SUMS | shasum -a 256 --check -
-sh install.sh
-```
-
-安装完成后，运行配置向导：
-
-```bash
-trade-compass setup
-```
-
-终端向导会依次完成模型与 API Key、存储目录、行情数据、定时自动化、
-消息渠道、增强搜索和隐私设置。之后可再次运行 `trade-compass configure`
-调整设置。使用 `↑/↓` 移动、`Space` 多选、`Enter` 确认；密钥输入会自动
-隐藏。
-
-配置完成后，检查运行环境并启动交易罗盘：
-
-```bash
-trade-compass doctor
-trade-compass serve --open
-```
-
-通过上述方式安装时无需准备 Node.js 或 pnpm，Web UI 和股票分析所需的
-K 线图表能力均已包含在应用中。
-
-### 从源码运行
-
-源码开发需要 Node.js 20 和 pnpm 9+。
-
-```bash
+git clone https://github.com/AdenChenCoder/trade-compass-agent.git
+cd trade-compass-agent
 uv sync
 pnpm install --frozen-lockfile
 pnpm --dir apps/web build
-cp .env.example .env
-chmod 600 .env
-```
-
-在仓库 `.env` 中填写模型 API Key，然后启动源码工作区：
-
-```dotenv
-DEEPSEEK_API_KEY=your-deepseek-key
-```
-
-```bash
+uv run trade-compass setup --wizard
 uv run trade-compass doctor
 uv run trade-compass serve --open
 ```
+
+首次运行会创建本地配置并引导选择模型与数据源；后续可用
+`uv run trade-compass configure` 调整。完整说明见
+[快速上手](docs/getting-started.md)和[配置](docs/configuration.md)。
 
 打开 `http://127.0.0.1:19704/agent`，即可开始对话。
 
@@ -165,12 +114,10 @@ flowchart LR
 
 ## 使用方式
 
-以下命令假定应用已经安装；从源码运行时，请在命令前添加 `uv run`。
-
 ### Web 工作台
 
 ```bash
-trade-compass serve
+uv run trade-compass serve
 ```
 
 Web UI 集中提供 Agent 对话、历史会话、模拟组合、记忆、审计记录、用户规则、Skills、定时任务和设置。交互式 API 文档位于 `http://127.0.0.1:19704/docs`。
@@ -178,34 +125,34 @@ Web UI 集中提供 Agent 对话、历史会话、模拟组合、记忆、审计
 不启动后台定时任务：
 
 ```bash
-trade-compass serve --no-scheduler
+uv run trade-compass serve --no-scheduler
 ```
 
 ### CLI
 
 ```bash
 # 向 Agent 提问
-trade-compass agent "今天 A 股市场怎么样？"
+uv run trade-compass agent "今天 A 股市场怎么样？"
 
 # 检查市场数据
-trade-compass market-pulse
-trade-compass data check 600519 510300
+uv run trade-compass market-pulse
+uv run trade-compass data check 600519 510300
 
 # 查看定时任务、规则和研究记录
-trade-compass jobs list
-trade-compass rules list
-trade-compass audit recent --limit 20
-trade-compass evaluate --limit 100
+uv run trade-compass jobs list
+uv run trade-compass rules list
+uv run trade-compass audit recent --limit 20
+uv run trade-compass evaluate --limit 100
 ```
 
-运行 `trade-compass --help` 可以查看全部命令。
+运行 `uv run trade-compass --help` 可以查看全部命令。
 
 ### 作为本地服务运行
 
 ```bash
-trade-compass service install
-trade-compass service status
-trade-compass service verify
+uv run trade-compass service install
+uv run trade-compass service status
+uv run trade-compass service verify
 ```
 
 ## 配置
@@ -213,22 +160,23 @@ trade-compass service verify
 日常设置通过配置向导管理，无需手动修改配置文件：
 
 ```bash
-trade-compass configure
+uv run trade-compass configure
 ```
 
-安装版的设置和密钥保存在本机 `~/.trade-compass/` 下；源码工作区使用
-`config/default.yaml` 和仓库根目录的 `.env`。
+源码工作区使用 `config/default.yaml` 和仓库根目录的 `.env`；密钥不应
+写入配置文件或提交到 Git。安装版会将设置和密钥保存在
+`~/.trade-compass/` 下。
 
-支持的 LLM 提供商包括 DeepSeek、OpenAI、Anthropic、OpenRouter、DashScope、Ollama 和 LM Studio。默认安装已包含股票分析所需的图表渲染能力；可选依赖还可以增加 Tushare、MCP 客户端、消息通道、行情预测和增强搜索能力。
+支持的 LLM 提供商包括 DeepSeek、OpenAI、Anthropic、OpenRouter、DashScope、Ollama 和 LM Studio。默认依赖已包含股票分析所需的图表渲染能力；可选依赖还可以增加 Tushare、MCP 客户端、消息通道、行情预测和增强搜索能力。
 
 例如，启用 Tushare 数据：
 
 ```bash
-uv tool install "trade-compass-agent[tushare]"
+uv sync --extra tushare
 ```
 
-再次运行 `trade-compass configure`，选择自动或 Tushare 数据源，并在
-隐藏输入框中填写 Token。
+再次运行 `uv run trade-compass configure`，选择自动或 Tushare 数据源
+并填写 Token。
 
 ## 文档导航
 
