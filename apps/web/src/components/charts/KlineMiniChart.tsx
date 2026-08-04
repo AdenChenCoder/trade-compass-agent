@@ -327,7 +327,7 @@ export function KlineMiniChart({
     return () => {
       window.removeEventListener("resize", onResize);
     };
-  }, [bars, overlays, symbol, showMA, showBollinger, forecast]);
+  }, [bars, overlays, symbol, showMA, showBollinger, forecast, shouldLoad]);
 
   useEffect(() => {
     return () => {
