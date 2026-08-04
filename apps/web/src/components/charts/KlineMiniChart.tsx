@@ -11,7 +11,7 @@ import { CanvasRenderer } from "echarts/renderers";
 import type { ECharts, SeriesOption } from "echarts";
 import { Loader2 } from "lucide-react";
 import { fetchBars } from "@/lib/workbench-api";
-import type { ForecastBar } from "@/lib/workbench-api";
+import type { ForecastOverlay } from "@/lib/forecast";
 import type { Bar } from "@/lib/types";
 
 echarts.use([
@@ -23,12 +23,6 @@ echarts.use([
   TooltipComponent,
   CanvasRenderer,
 ]);
-
-interface ForecastOverlay {
-  bars: ForecastBar[];
-  upperBand?: number[];
-  lowerBand?: number[];
-}
 
 interface KlineMiniChartProps {
   symbol: string;
@@ -389,7 +383,12 @@ export function KlineMiniChart({
           <span style={{ color: MA_COLORS.MA20 }}>MA20</span>
         </span>}
         {forecast?.bars.length ? (
-          <span className="ml-2 text-blue-500">+ 预测 {forecast.bars.length} 根</span>
+          <span className="ml-2 text-blue-500">
+            + {forecast.model} 预测 {forecast.bars.length} 根
+            {forecast.qualityStatus === "experimental"
+              ? " · 研究辅助，非交易信号"
+              : ""}
+          </span>
         ) : null}
         {barsQuery.data?.provider_name ? ` · ${barsQuery.data.provider_name}` : ""}
       </div>

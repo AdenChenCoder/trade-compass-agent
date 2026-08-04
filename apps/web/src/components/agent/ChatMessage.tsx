@@ -1,7 +1,13 @@
 import { lazy, Suspense, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Wrench } from "lucide-react";
+import { ForecastUnavailableNotice } from "@/components/agent/ForecastFeedback";
 import { SectionCard } from "@/components/agent/SectionCard";
+import {
+  shouldRetryForecast,
+  toForecastOverlay,
+  type ForecastOverlay,
+} from "@/lib/forecast";
 import { fetchForecast } from "@/lib/workbench-api";
 import { filterVisibleSections } from "@/lib/sections";
 import { cn } from "@/lib/utils";
@@ -54,17 +60,18 @@ function useForecastChart(content: string, role: string) {
     queryFn: () => fetchForecast(detected!, 5),
     enabled: Boolean(detected),
     staleTime: 5 * 60_000,
-    retry: 1,
+    retry: shouldRetryForecast,
   });
 
-  if (!detected || !query.data) return null;
+  if (!detected) return null;
+  if (query.isError) {
+    return { status: "error" as const, symbol: detected, error: query.error };
+  }
+  if (!query.data) return null;
   return {
+    status: "ready" as const,
     symbol: detected,
-    overlay: {
-      bars: query.data.forecast_bars,
-      upperBand: query.data.confidence_band.upper,
-      lowerBand: query.data.confidence_band.lower,
-    },
+    overlay: toForecastOverlay(query.data) satisfies ForecastOverlay,
   };
 }
 
@@ -109,7 +116,14 @@ export function ChatMessage({
                 ) : null}
               </div>
             ) : null}
-            {forecastChart ? (
+            {forecastChart?.status === "error" ? (
+              <>
+                <Suspense fallback={<div className="h-20 rounded-md border bg-muted/10" />}>
+                  <KlineMiniChart symbol={forecastChart.symbol} height={260} />
+                </Suspense>
+                <ForecastUnavailableNotice error={forecastChart.error} />
+              </>
+            ) : forecastChart?.status === "ready" ? (
               <Suspense fallback={<div className="h-20 rounded-md border bg-muted/10" />}>
                 <KlineMiniChart
                   symbol={forecastChart.symbol}

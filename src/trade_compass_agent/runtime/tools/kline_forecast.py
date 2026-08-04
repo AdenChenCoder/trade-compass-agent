@@ -10,6 +10,7 @@ import json
 import logging
 from typing import Any
 
+from trade_compass_agent.data.kronos_adapter import forecast_install_command
 from trade_compass_agent.runtime.market_stack import MarketStack
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,8 @@ def tool_kline_forecast(stack: MarketStack, **kwargs: Any) -> str:
         from trade_compass_agent.data.kronos_adapter import is_kronos_available
         if not is_kronos_available():
             return json.dumps({
-                "error": "K线预测功能不可用 — 需要安装 PyTorch: pip install -e '.[forecast]'",
+                "error": "K线预测功能不可用 — 预测引擎尚未安装。",
+                "hint": forecast_install_command(),
             }, ensure_ascii=False)
     except ImportError:
         return json.dumps({"error": "kronos_adapter not found"}, ensure_ascii=False)
@@ -66,7 +68,7 @@ def tool_kline_forecast(stack: MarketStack, **kwargs: Any) -> str:
     except ImportError as exc:
         return json.dumps({
             "error": f"Kronos 依赖未安装: {exc}",
-            "hint": "pip install -e '.[forecast]'",
+            "hint": forecast_install_command(),
         }, ensure_ascii=False)
     except Exception as exc:
         logger.exception("Kronos forecast failed for %s", symbol)
@@ -104,6 +106,13 @@ def tool_kline_forecast(stack: MarketStack, **kwargs: Any) -> str:
         "confidence_band": {
             "upper": result.confidence_upper,
             "lower": result.confidence_lower,
+        },
+        "quality_status": "experimental",
+        "parameters": {
+            "horizon": horizon,
+            "model_size": model_size,
+            "sample_count": sample_count,
+            "lookback": lookback,
         },
         "disclaimer": "⚠️ 模型预测仅供参考，不构成投资建议。实际走势受多重因素影响。",
     }

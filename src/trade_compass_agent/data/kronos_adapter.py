@@ -69,6 +69,16 @@ class ForecastResult:
 _predictor_cache: dict[str, Any] = {}
 
 
+def forecast_install_command() -> str:
+    """Return the version-pinned command for installed-package users."""
+    from trade_compass_agent import __version__
+
+    return (
+        "uv tool install --force --python 3.12 "
+        f"'trade-compass-agent[forecast]=={__version__}'"
+    )
+
+
 def _get_predictor(model_size: str = "small") -> Any:
     """Load and cache a KronosPredictor instance."""
     if model_size in _predictor_cache:

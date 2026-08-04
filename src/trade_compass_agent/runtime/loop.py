@@ -825,8 +825,12 @@ def _compact_forecast_summary(result: str) -> TurnSection | None:
     horizon = payload.get("horizon_bars", "?")
     content = f"{symbol} K线预测 {change_pct:+.2f}% {direction_cn}，预测 {horizon} 根"
     forecast_data = {
+        "symbol": symbol,
         "forecast_bars": payload.get("forecast_bars") or [],
         "confidence_band": payload.get("confidence_band") or {},
+        "model": payload.get("model") or "",
+        "quality_status": payload.get("quality_status") or "experimental",
+        "parameters": payload.get("parameters") or {},
     }
     return TurnSection(
         title=f"{symbol} K线预测",

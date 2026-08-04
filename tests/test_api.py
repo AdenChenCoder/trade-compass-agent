@@ -28,6 +28,210 @@ def test_bars(client: TestClient) -> None:
     assert {"symbol", "timestamp", "open", "high", "low", "close", "volume"} <= body["bars"][0].keys()
 
 
+def test_forecast_missing_dependency_is_structured_503(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from trade_compass_agent.data import kronos_adapter
+
+    monkeypatch.setattr(kronos_adapter, "is_kronos_available", lambda: False)
+    response = client.get("/api/forecast?symbol=600519&horizon=5")
+
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "forecast_unavailable"
+    assert detail["message"] == "预测引擎尚未安装。"
+    assert "trade-compass-agent[forecast]==" in detail["recovery"]["command"]
+    assert "pip install -e" not in detail["recovery"]["command"]
+    assert detail["recovery"]["restart_required"] is True
+
+
+def test_forecast_insufficient_history_is_structured_422(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from trade_compass_agent.data import kronos_adapter
+    from trade_compass_agent.web import api as web_api
+
+    monkeypatch.setattr(kronos_adapter, "is_kronos_available", lambda: True)
+    monkeypatch.setattr(
+        web_api,
+        "_stack",
+        lambda: SimpleNamespace(
+            provider=SimpleNamespace(get_bars=lambda *args, **kwargs: [])
+        ),
+    )
+    response = client.get("/api/forecast?symbol=600519&horizon=5")
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "insufficient_history"
+
+
+def test_forecast_failure_hides_internal_exception(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from trade_compass_agent.data import kronos_adapter
+    from trade_compass_agent.web import api as web_api
+
+    def fail_forecast(*args, **kwargs):
+        raise RuntimeError("private path /tmp/model")
+
+    bars = [SimpleNamespace(close=100.0) for _ in range(30)]
+    monkeypatch.setattr(kronos_adapter, "is_kronos_available", lambda: True)
+    monkeypatch.setattr(kronos_adapter, "forecast_kline", fail_forecast)
+    monkeypatch.setattr(
+        web_api,
+        "_stack",
+        lambda: SimpleNamespace(
+            provider=SimpleNamespace(get_bars=lambda *args, **kwargs: bars)
+        ),
+    )
+    response = client.get("/api/forecast?symbol=600519&horizon=5")
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["code"] == "forecast_failed"
+    assert "private path" not in detail["message"]
+    assert "/tmp/model" not in response.text
+
+
+def test_forecast_provider_failure_is_structured_and_sanitized(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from trade_compass_agent.data import kronos_adapter
+    from trade_compass_agent.web import api as web_api
+
+    def fail_bars(*args, **kwargs):
+        raise RuntimeError("private provider path /tmp/provider")
+
+    monkeypatch.setattr(kronos_adapter, "is_kronos_available", lambda: True)
+    monkeypatch.setattr(
+        web_api,
+        "_stack",
+        lambda: SimpleNamespace(provider=SimpleNamespace(get_bars=fail_bars)),
+    )
+
+    response = client.get("/api/forecast?symbol=600519&horizon=5")
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["code"] == "forecast_failed"
+    assert "/tmp/provider" not in response.text
+
+
+def test_forecast_rejects_mismatched_result_lengths(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from trade_compass_agent.data import kronos_adapter
+    from trade_compass_agent.web import api as web_api
+
+    bars = [SimpleNamespace(close=100.0) for _ in range(30)]
+    result = SimpleNamespace(
+        model_id="NeoQuasar/Kronos-small",
+        lookback_used=30,
+        horizon=2,
+        mean_bars=[
+            SimpleNamespace(
+                timestamp=datetime(2026, 8, 5),
+                open=100.0,
+                high=102.0,
+                low=99.0,
+                close=101.0,
+                volume=5000.0,
+            ),
+        ],
+        confidence_upper=[],
+        confidence_lower=[99.0],
+    )
+    monkeypatch.setattr(kronos_adapter, "is_kronos_available", lambda: True)
+    monkeypatch.setattr(kronos_adapter, "forecast_kline", lambda **kwargs: result)
+    monkeypatch.setattr(
+        web_api,
+        "_stack",
+        lambda: SimpleNamespace(
+            provider=SimpleNamespace(get_bars=lambda *args, **kwargs: bars)
+        ),
+    )
+
+    response = client.get("/api/forecast?symbol=600519&horizon=2")
+
+    assert response.status_code == 500
+    assert response.json()["detail"]["code"] == "forecast_failed"
+
+
+def test_forecast_success_reports_quality_and_parameters(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from trade_compass_agent.data import kronos_adapter
+    from trade_compass_agent.web import api as web_api
+
+    bars = [SimpleNamespace(close=100.0) for _ in range(60)]
+    result = SimpleNamespace(
+        model_id="NeoQuasar/Kronos-mini",
+        lookback_used=60,
+        horizon=2,
+        mean_bars=[
+            SimpleNamespace(
+                timestamp=datetime(2026, 8, 5),
+                open=100.0,
+                high=102.0,
+                low=99.0,
+                close=101.0,
+                volume=5000.0,
+            ),
+            SimpleNamespace(
+                timestamp=datetime(2026, 8, 6),
+                open=101.0,
+                high=103.0,
+                low=100.0,
+                close=102.0,
+                volume=5100.0,
+            ),
+        ],
+        confidence_upper=[102.0, 103.0],
+        confidence_lower=[99.0, 100.0],
+    )
+    monkeypatch.setattr(kronos_adapter, "is_kronos_available", lambda: True)
+    monkeypatch.setattr(kronos_adapter, "forecast_kline", lambda **kwargs: result)
+    monkeypatch.setattr(
+        web_api,
+        "_stack",
+        lambda: SimpleNamespace(
+            provider=SimpleNamespace(get_bars=lambda *args, **kwargs: bars)
+        ),
+    )
+
+    response = client.get(
+        "/api/forecast?symbol=600519&horizon=2&model_size=mini&sample_count=3&lookback=60"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["quality_status"] == "experimental"
+    assert body["parameters"] == {
+        "horizon": 2,
+        "model_size": "mini",
+        "sample_count": 3,
+        "lookback": 60,
+    }
+
+
 def test_events(client: TestClient) -> None:
     body = _get(client, "/api/events?symbol=600519&limit=3")
     assert body["symbol"] == "600519"

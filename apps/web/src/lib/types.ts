@@ -1,20 +1,12 @@
+import type { ForecastPayload } from "@/lib/forecast";
+
 export interface TurnSection {
   title: string;
   content: string;
   specialist?: string;
   symbols?: string[];
   kind?: "summary" | "narrative" | "tool" | "json" | "raw";
-  forecast_data?: {
-    forecast_bars: Array<{
-      timestamp: string;
-      open: number;
-      high: number;
-      low: number;
-      close: number;
-      volume: number;
-    }>;
-    confidence_band: { upper: number[]; lower: number[] };
-  };
+  forecast_data?: ForecastPayload;
 }
 
 export interface TurnResponse {

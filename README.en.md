@@ -209,6 +209,17 @@ uv tool install --force --python 3.12 'trade-compass-agent[tushare]'
 Run `trade-compass configure`, select the automatic or Tushare data
 provider, and enter the token.
 
+Forecasting uses the Kronos engine and requires the full optional dependencies:
+
+```bash
+uv tool install --force --python 3.12 'trade-compass-agent[forecast]'
+```
+
+Adding the extra preserves configuration, data, rules, and memory under
+`~/.trade-compass/`. Restart Trade Compass after installation. The first
+successful forecast may download Kronos model weights. Forecasts are
+experimental research aids, not trading signals.
+
 ## Documentation
 
 | Goal | Guide |

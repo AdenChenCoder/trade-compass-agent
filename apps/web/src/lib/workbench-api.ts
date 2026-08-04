@@ -1,4 +1,12 @@
-import { ApiError } from "@/lib/agent-api";
+import { ApiError, type ApiErrorMetadata } from "@/lib/agent-api";
+import {
+  isForecastPayload,
+  type ForecastPayload,
+} from "@/lib/forecast";
+export type {
+  ForecastBar,
+  ForecastPayload as ForecastResponse,
+} from "@/lib/forecast";
 import type {
   Account,
   AuditEvent,
@@ -23,15 +31,40 @@ async function parseJson<T>(res: Response): Promise<T> {
   const text = await res.text();
   if (!res.ok) {
     let detail = res.statusText || `HTTP ${res.status}`;
+    let metadata: ApiErrorMetadata = {};
     try {
-      const body = JSON.parse(text) as { detail?: string; error?: string };
+      const body = JSON.parse(text) as {
+        detail?:
+          | string
+          | {
+              code?: string;
+              message?: string;
+              recovery?: { command?: string; restart_required?: boolean };
+            };
+        error?: string;
+      };
       if (typeof body.error === "string") detail = body.error;
       else if (typeof body.detail === "string") detail = body.detail;
+      else if (body.detail && typeof body.detail === "object") {
+        if (typeof body.detail.message === "string") detail = body.detail.message;
+        metadata = {
+          code:
+            typeof body.detail.code === "string" ? body.detail.code : undefined,
+          recoveryCommand:
+            typeof body.detail.recovery?.command === "string"
+              ? body.detail.recovery.command
+              : undefined,
+          restartRequired:
+            typeof body.detail.recovery?.restart_required === "boolean"
+              ? body.detail.recovery.restart_required
+              : undefined,
+        };
+      }
     } catch {
       const trimmed = text.trim();
       if (trimmed) detail = trimmed.slice(0, 500);
     }
-    throw new ApiError(detail, res.status);
+    throw new ApiError(detail, res.status, metadata);
   }
   return JSON.parse(text) as T;
 }
@@ -119,39 +152,24 @@ export async function fetchBars(
   return parseJson<BarsResponse>(res);
 }
 
-export interface ForecastBar {
-  timestamp: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
-
-export interface ForecastResponse {
-  symbol: string;
-  model: string;
-  lookback_used: number;
-  horizon: number;
-  current_close: number;
-  forecast_bars: ForecastBar[];
-  confidence_band: { upper: number[]; lower: number[] };
-  change_pct: number;
-  error?: string;
-}
-
 export async function fetchForecast(
   symbol: string,
   horizon = 10,
   modelSize = "small",
-): Promise<ForecastResponse> {
+): Promise<ForecastPayload> {
   const params = new URLSearchParams({
     symbol,
     horizon: String(horizon),
     model_size: modelSize,
   });
   const res = await fetch(`/api/forecast?${params.toString()}`);
-  return parseJson<ForecastResponse>(res);
+  const body = await parseJson<unknown>(res);
+  if (!isForecastPayload(body)) {
+    throw new ApiError("预测服务返回了无效数据。", 502, {
+      code: "invalid_forecast_response",
+    });
+  }
+  return body;
 }
 
 export async function fetchRules(): Promise<RulesResponse> {

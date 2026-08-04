@@ -4,13 +4,27 @@ import type {
   TurnResponse,
 } from "@/lib/types";
 
+export interface ApiErrorMetadata {
+  code?: string;
+  recoveryCommand?: string;
+  restartRequired?: boolean;
+}
+
 export class ApiError extends Error {
+  readonly code?: string;
+  readonly recoveryCommand?: string;
+  readonly restartRequired?: boolean;
+
   constructor(
     message: string,
     readonly status: number,
+    metadata: ApiErrorMetadata = {},
   ) {
     super(message);
     this.name = "ApiError";
+    this.code = metadata.code;
+    this.recoveryCommand = metadata.recoveryCommand;
+    this.restartRequired = metadata.restartRequired;
   }
 }
 
