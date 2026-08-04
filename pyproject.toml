@@ -1,6 +1,6 @@
 [project]
 name = "trade-compass-agent"
-version = "0.2.0"
+version = "0.2.1"
 description = "交易罗盘: local-first A-share trading agent workbench for short-term trading, ETF rotation, simulation, review, and memory-driven improvement."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -57,7 +57,7 @@ search = [
 ]
 mcp = [
   "mcp>=1.28.1,<2",
-  "cryptography>=48.0.1,<49",
+  "cryptography>=50.0.0,<51",
   "pydantic-settings>=2.14.2,<3",
 ]
 quant = [

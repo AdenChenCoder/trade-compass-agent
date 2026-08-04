@@ -294,3 +294,21 @@ class TestToolKlineForecast:
         assert len(result["forecast_bars"]) == 3
         assert "confidence_band" in result
         assert "disclaimer" in result
+        assert result["quality_status"] == "experimental"
+        assert result["parameters"] == {
+            "horizon": 3,
+            "model_size": "small",
+            "sample_count": 5,
+            "lookback": 120,
+        }
+
+    @patch("trade_compass_agent.data.kronos_adapter.is_kronos_available", return_value=False)
+    def test_unavailable_uses_installed_package_command(self, mock_avail):
+        import json
+
+        from trade_compass_agent.runtime.tools.kline_forecast import tool_kline_forecast
+
+        result = json.loads(tool_kline_forecast(MagicMock(), symbol="600519"))
+
+        assert "trade-compass-agent[forecast]==" in result["hint"]
+        assert "pip install -e" not in result["hint"]

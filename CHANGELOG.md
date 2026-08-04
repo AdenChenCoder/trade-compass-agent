@@ -4,6 +4,27 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-04
+
+### Fixed
+
+- Kept the Web workbench usable when optional Kronos forecasting dependencies
+  are unavailable: forecast requests now return structured errors, preserve the
+  assistant response and historical K-line, and show an installed-user recovery
+  command instead of crashing while reading a missing confidence band.
+- Rejected malformed or inconsistent forecast payloads before rendering and
+  labeled successful Kronos output as experimental research assistance rather
+  than a trading signal.
+
+### Changed
+
+- Simplified the documented one-command install invocation to the familiar
+  `curl -fsSL URL | sh` form while retaining the installer's pinned inner
+  download and checksum verification.
+- Kept the successful installer output focused on the three first-run steps
+  and the `-h` / `--version` discovery commands, without exposing internal
+  setup control flow.
+
 ## [0.2.0] - 2026-07-30
 
 ### Added

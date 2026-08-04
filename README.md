@@ -204,6 +204,16 @@ uv tool install --force --python 3.12 'trade-compass-agent[tushare]'
 再次运行 `trade-compass configure`，选择自动或 Tushare 数据源
 并填写 Token。
 
+预测功能使用 Kronos 引擎，需要单独安装完整预测依赖：
+
+```bash
+uv tool install --force --python 3.12 'trade-compass-agent[forecast]'
+```
+
+补装依赖不会改动 `~/.trade-compass/` 下的配置、数据、规则或记忆。
+安装完成后请重启 Trade Compass；首次成功预测时可能需要下载 Kronos 模型权重。
+预测结果属于实验性研究辅助，不是交易信号。
+
 ## 文档导航
 
 | 目标 | 文档 |

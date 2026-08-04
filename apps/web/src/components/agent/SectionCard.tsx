@@ -1,7 +1,13 @@
 import { lazy, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ForecastUnavailableNotice } from "@/components/agent/ForecastFeedback";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  isForecastPayload,
+  shouldRetryForecast,
+  toForecastOverlay,
+} from "@/lib/forecast";
 import { fetchForecast } from "@/lib/workbench-api";
 import type { TurnSection } from "@/lib/types";
 
@@ -21,7 +27,7 @@ function useForecast(symbol: string | undefined, enabled: boolean) {
     queryFn: () => fetchForecast(symbol!, 5),
     enabled: Boolean(symbol && enabled),
     staleTime: 5 * 60_000,
-    retry: 1,
+    retry: shouldRetryForecast,
   });
 }
 
@@ -29,9 +35,10 @@ export function SectionCard({ section }: { section: TurnSection }) {
   const chartSymbol = section.symbols?.[0];
   const showChart = Boolean(chartSymbol) && section.kind === "summary";
 
-  const hasEmbeddedForecast =
-    section.forecast_data &&
-    section.forecast_data.forecast_bars.length > 0;
+  const embeddedForecast = isForecastPayload(section.forecast_data)
+    ? section.forecast_data
+    : undefined;
+  const hasEmbeddedForecast = Boolean(embeddedForecast);
 
   const hasForecastContent =
     !hasEmbeddedForecast &&
@@ -43,18 +50,10 @@ export function SectionCard({ section }: { section: TurnSection }) {
     showChart && hasForecastContent,
   );
 
-  const forecastOverlay = hasEmbeddedForecast
-    ? {
-        bars: section.forecast_data!.forecast_bars,
-        upperBand: section.forecast_data!.confidence_band.upper,
-        lowerBand: section.forecast_data!.confidence_band.lower,
-      }
+  const forecastOverlay = embeddedForecast
+    ? toForecastOverlay(embeddedForecast)
     : forecastQuery.data && !forecastQuery.isError
-      ? {
-          bars: forecastQuery.data.forecast_bars,
-          upperBand: forecastQuery.data.confidence_band.upper,
-          lowerBand: forecastQuery.data.confidence_band.lower,
-        }
+      ? toForecastOverlay(forecastQuery.data)
       : undefined;
 
   return (
@@ -77,6 +76,9 @@ export function SectionCard({ section }: { section: TurnSection }) {
           <Suspense fallback={<div className="h-20 rounded-md border bg-muted/10" />}>
             <KlineMiniChart symbol={chartSymbol} forecast={forecastOverlay} />
           </Suspense>
+        ) : null}
+        {forecastQuery.isError ? (
+          <ForecastUnavailableNotice error={forecastQuery.error} />
         ) : null}
         <div className="prose prose-sm max-w-none dark:prose-invert">
           <Suspense

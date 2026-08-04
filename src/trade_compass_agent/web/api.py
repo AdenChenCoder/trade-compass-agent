@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -32,6 +33,7 @@ from .agent_api import router as agent_router
 
 router = APIRouter(prefix="/api")
 router.include_router(agent_router)
+logger = logging.getLogger(__name__)
 
 
 def _stack() -> MarketStack:
@@ -283,17 +285,63 @@ def get_forecast(
 ):
     """Predict future K-line bars using Kronos foundation model."""
     try:
-        from trade_compass_agent.data.kronos_adapter import forecast_kline, is_kronos_available
+        from trade_compass_agent.data.kronos_adapter import (
+            forecast_install_command,
+            forecast_kline,
+            is_kronos_available,
+        )
     except ImportError:
-        return {"error": "Kronos adapter not available"}
+        from trade_compass_agent import __version__
+
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "forecast_unavailable",
+                "message": "预测引擎尚未安装。",
+                "recovery": {
+                    "command": (
+                        "uv tool install --force --python 3.12 "
+                        f"'trade-compass-agent[forecast]=={__version__}'"
+                    ),
+                    "restart_required": True,
+                },
+            },
+        ) from None
 
     if not is_kronos_available():
-        return {"error": "PyTorch not installed. Run: pip install -e '.[forecast]'"}
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "forecast_unavailable",
+                "message": "预测引擎尚未安装。",
+                "recovery": {
+                    "command": forecast_install_command(),
+                    "restart_required": True,
+                },
+            },
+        )
 
-    stack = _stack()
-    bars = stack.provider.get_bars(symbol.strip(), timeframe="1d", limit=lookback)
+    try:
+        stack = _stack()
+        bars = stack.provider.get_bars(symbol.strip(), timeframe="1d", limit=lookback)
+    except Exception:
+        logger.exception("Forecast history loading failed for %s", symbol.strip())
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "forecast_failed",
+                "message": "预测执行失败，请稍后重试。",
+            },
+        ) from None
+
     if not bars or len(bars) < 30:
-        return {"error": f"Insufficient data: {len(bars) if bars else 0} bars (need ≥30)"}
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "insufficient_history",
+                "message": f"历史数据不足：当前 {len(bars) if bars else 0} 条，需要至少 30 条。",
+            },
+        )
 
     try:
         result = forecast_kline(
@@ -303,34 +351,55 @@ def get_forecast(
             model_size=model_size,
             sample_count=sample_count,
         )
-    except Exception as exc:
-        return {"error": f"Forecast failed: {exc}"}
+        if (
+            len(result.mean_bars) != horizon
+            or len(result.confidence_upper) != horizon
+            or len(result.confidence_lower) != horizon
+        ):
+            raise ValueError("forecast result lengths do not match requested horizon")
 
-    last_close = bars[-1].close
-    pred_close = result.mean_bars[-1].close
-    return {
-        "symbol": symbol.strip(),
-        "model": result.model_id,
-        "lookback_used": result.lookback_used,
-        "horizon": result.horizon,
-        "current_close": last_close,
-        "forecast_bars": [
-            {
-                "timestamp": b.timestamp.isoformat(),
-                "open": b.open,
-                "high": b.high,
-                "low": b.low,
-                "close": b.close,
-                "volume": b.volume,
-            }
-            for b in result.mean_bars
-        ],
-        "confidence_band": {
-            "upper": result.confidence_upper,
-            "lower": result.confidence_lower,
-        },
-        "change_pct": round((pred_close - last_close) / last_close * 100, 2),
-    }
+        last_close = bars[-1].close
+        pred_close = result.mean_bars[-1].close
+        payload = {
+            "symbol": symbol.strip(),
+            "model": result.model_id,
+            "lookback_used": result.lookback_used,
+            "horizon": result.horizon,
+            "current_close": last_close,
+            "forecast_bars": [
+                {
+                    "timestamp": bar.timestamp.isoformat(),
+                    "open": bar.open,
+                    "high": bar.high,
+                    "low": bar.low,
+                    "close": bar.close,
+                    "volume": bar.volume,
+                }
+                for bar in result.mean_bars
+            ],
+            "confidence_band": {
+                "upper": result.confidence_upper,
+                "lower": result.confidence_lower,
+            },
+            "change_pct": round((pred_close - last_close) / last_close * 100, 2),
+            "quality_status": "experimental",
+            "parameters": {
+                "horizon": horizon,
+                "model_size": model_size,
+                "sample_count": sample_count,
+                "lookback": lookback,
+            },
+        }
+    except Exception:
+        logger.exception("Kronos forecast failed for %s", symbol.strip())
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "forecast_failed",
+                "message": "预测执行失败，请稍后重试。",
+            },
+        ) from None
+    return payload
 
 
 @router.get("/portfolio", response_model=s.PortfolioResponse)
