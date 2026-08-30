@@ -19,7 +19,10 @@ const { fetchBarsMock, chartMock } = vi.hoisted(() => ({
 vi.mock("@/lib/workbench-api", () => ({ fetchBars: fetchBarsMock }));
 vi.mock("echarts/core", () => ({
   use: vi.fn(),
-  init: vi.fn(() => chartMock),
+  init: vi.fn((element: HTMLDivElement) => {
+    element.appendChild(document.createElement("canvas"));
+    return chartMock;
+  }),
 }));
 
 class IntersectionObserverMock {
@@ -113,5 +116,44 @@ describe("KlineMiniChart forecast quality", () => {
         );
       });
     });
+  });
+});
+
+describe("KlineMiniChart virtualized remount", () => {
+  it("renders the cached chart again after its message is unmounted and remounted", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    const mountChart = async () => {
+      container = document.createElement("div");
+      document.body.appendChild(container);
+      root = createRoot(container);
+
+      await act(async () => {
+        root?.render(
+          <QueryClientProvider client={client}>
+            <KlineMiniChart symbol="600519" />
+          </QueryClientProvider>,
+        );
+      });
+
+      await act(async () => {
+        await vi.waitFor(() => {
+          expect(container?.querySelector("canvas")).not.toBeNull();
+        });
+      });
+    };
+
+    await mountChart();
+    expect(fetchBarsMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => root?.unmount());
+    container?.remove();
+    root = null;
+    container = null;
+
+    await mountChart();
+    expect(fetchBarsMock).toHaveBeenCalledTimes(1);
   });
 });
