@@ -11,6 +11,8 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 - Restored Agent conversation K-line charts after virtualized messages scroll
   off-screen and are later revisited, while retaining cached market data and
   avoiding duplicate requests.
+- Updated locked tooling and the optional PDF dependency to versions that
+  address newly disclosed vulnerabilities.
 
 ## [0.2.1] - 2026-08-04
 

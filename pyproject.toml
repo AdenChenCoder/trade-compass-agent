@@ -81,7 +81,7 @@ vision = [
   "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
   "pytesseract>=0.3; sys_platform != 'darwin'",
   "Pillow>=12.3.0,<13; sys_platform != 'darwin'",
-  "pypdf>=6.14.2,<7",
+  "pypdf>=6.16.1,<7",
 ]
 dev = [
   "pytest>=8.0",
