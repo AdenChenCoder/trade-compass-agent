@@ -1,6 +1,6 @@
 [project]
 name = "trade-compass-agent"
-version = "0.2.1"
+version = "0.2.2"
 description = "交易罗盘: local-first A-share trading agent workbench for short-term trading, ETF rotation, simulation, review, and memory-driven improvement."
 readme = "README.md"
 requires-python = ">=3.12"
