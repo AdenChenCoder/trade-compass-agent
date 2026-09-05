@@ -1,7 +1,10 @@
 packages:
   - "apps/*"
 overrides:
+  browserslist: 4.28.7
+  nanoid: 3.3.18
   postcss: 8.5.24
+  postcss-selector-parser: 6.1.3
 allowBuilds:
   esbuild: true
   sharp: true

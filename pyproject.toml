@@ -1,6 +1,6 @@
 [project]
 name = "trade-compass-agent"
-version = "0.2.1"
+version = "0.2.2"
 description = "交易罗盘: local-first A-share trading agent workbench for short-term trading, ETF rotation, simulation, review, and memory-driven improvement."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -81,7 +81,7 @@ vision = [
   "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
   "pytesseract>=0.3; sys_platform != 'darwin'",
   "Pillow>=12.3.0,<13; sys_platform != 'darwin'",
-  "pypdf>=6.14.2,<7",
+  "pypdf>=6.16.1,<7",
 ]
 dev = [
   "pytest>=8.0",
