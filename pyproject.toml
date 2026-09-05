@@ -56,7 +56,7 @@ search = [
   "tavily-python>=0.5",
 ]
 mcp = [
-  "mcp>=1.28.1,<2",
+  "mcp>=1.28.1,<3",
   "cryptography>=50.0.0,<51",
   "pydantic-settings>=2.14.2,<3",
 ]
