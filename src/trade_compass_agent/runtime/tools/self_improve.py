@@ -78,6 +78,7 @@ def tool_memory_write(
     evidence: list[str] | None = None,
     replacements: list[dict] | None = None,
     llm_call=None,
+    observations=None,
     status: str = "all",
 ) -> str:
     """Manage bounded declarative memory with trust-tiered writes."""
@@ -87,7 +88,7 @@ def tool_memory_write(
         from trade_compass_agent.memory.semantic_merge import maintain_memory
         if target != "memory":
             return json.dumps({"ok": False, "error": "Automatic pressure maintenance applies to knowledge"})
-        return json.dumps(maintain_memory(store, llm_call), ensure_ascii=False)
+        return json.dumps(maintain_memory(store, llm_call, observations=observations), ensure_ascii=False)
 
     if action == "list":
         snapshot = store.snapshot(target, include_history=status in {"all", "archived"})

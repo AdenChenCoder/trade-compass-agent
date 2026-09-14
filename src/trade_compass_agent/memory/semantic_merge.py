@@ -179,7 +179,19 @@ def _user_rules(store):
     return rules.read_for_prompt()
 
 
-def maintain_memory(store, llm_call, *, force=False):
+def maintain_memory(store, llm_call, *, force=False, observations=None):
+    """Review evidence for drafts before running the existing capacity review."""
+    from trade_compass_agent.memory.reassessment import review_candidates
+
+    review = review_candidates(store, llm_call, observations=observations, force=force)
+    if not review["ok"]:
+        return review
+    result = _maintain_capacity(store, llm_call, force=force)
+    return {**result, "changed": review["changed"] or result.get("changed", False),
+            "commits": review["commits"] + result.get("commits", []), "reviews": review["reviews"]}
+
+
+def _maintain_capacity(store, llm_call, *, force=False):
     """Pressure review: merge first, then explicitly compare admission/replacement.
 
     A content/state fingerprint avoids repeating unchanged evaluations. Reads and
@@ -188,7 +200,8 @@ def maintain_memory(store, llm_call, *, force=False):
     import hashlib
     import json
     rows = store.get_entries_with_meta()
-    eligible = [m for m in rows if m.status != "archived" and store.is_trusted_source(m.source)]
+    eligible = [m for m in rows if store.is_trusted_source(m.source) and
+                (m.status == "active" or (m.status == "candidate" and m.reason == "capacity_review_required"))]
     fingerprint = hashlib.sha256(json.dumps([(m.entry_id, m.version, m.status) for m in eligible]).encode()).hexdigest()
     if not force and store.maintenance_marker("reviewed_fingerprint") == fingerprint:
         return {"ok": True, "changed": False, "disposition": "unchanged"}
@@ -201,7 +214,8 @@ def maintain_memory(store, llm_call, *, force=False):
     if failures:
         return {"ok": False, "changed": bool(commits), "commits": commits,
                 "merged_clusters": merged, "error": "; ".join(failures)}
-    eligible = [m for m in store.get_entries_with_meta() if m.status != "archived" and store.is_trusted_source(m.source)]
+    eligible = [m for m in store.get_entries_with_meta() if store.is_trusted_source(m.source) and
+                (m.status == "active" or (m.status == "candidate" and m.reason == "capacity_review_required"))]
     candidates = [m for m in eligible if m.status == "candidate"]
     changed = bool(merged)
     if candidates:

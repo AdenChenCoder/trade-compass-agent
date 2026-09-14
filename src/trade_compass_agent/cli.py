@@ -523,7 +523,9 @@ def run_contradiction_scan(apply: bool = False) -> None:
     skills_summary = (
         "\n".join(f"- {s.name}: {s.description or ''}" for s in skills[:20]) if skills else ""
     )
-    reports = scan_active_conflicts(active, GROUNDING_RULES, skills_summary, _llm_call)
+    from trade_compass_agent.memory.rules_store import RulesStore
+    reports = scan_active_conflicts(active, GROUNDING_RULES, skills_summary, _llm_call,
+                                   user_rules=RulesStore(config.memory_dir).read_for_prompt())
 
     if not reports:
         print("No conflicts detected.")

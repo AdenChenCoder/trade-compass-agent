@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 .env
 /data/
-# Local dated diagnostic reports belong under data/, not in release documentation.
+# Temporary reports belong under /temp/; keep legacy dated reports ignored.
 /docs/*-20??-??-??.*
 memory_vault/
 *.duckdb
