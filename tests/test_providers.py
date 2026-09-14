@@ -34,7 +34,14 @@ class _FixedProvider:
         return Instrument(symbol=symbol, name=symbol, kind=InstrumentKind.STOCK)
 
     def get_bars(self, symbol: str, timeframe: str = "1d", limit: int = 120):
-        return SampleProvider().get_bars(symbol, timeframe=timeframe, limit=3)
+        bars = SampleProvider().get_bars(symbol, timeframe=timeframe, limit=3)
+        if timeframe == "1d":
+            from dataclasses import replace
+            from trade_compass_agent.data.providers import _market_now, _prev_trading_date
+            now = _market_now()
+            shift = bars[-1].timestamp.date() - _prev_trading_date(now.date(), now.hour)
+            bars = [replace(bar, timestamp=bar.timestamp - shift) for bar in bars]
+        return bars
 
 
 def test_run_with_timeout_uses_daemon_worker():
@@ -138,12 +145,12 @@ def test_bulk_daily_provider_uses_cache_before_network(tmp_path):
     provider._network = ChainProvider([_SlowNetwork()])
     bars = provider.get_bars("600519", timeframe="1d", limit=5)
     assert len(bars) == 5
-    assert bars[-1].close == source[-1].close
+    assert bars[-1].close == [bar for bar in source if bar.timestamp.date() <= provider._get_min_date()][-1].close
 
 
 def test_bulk_daily_provider_writes_cache_on_network_fetch(tmp_path):
     provider = BulkDailyBarProvider(cache_dir=tmp_path, request_timeout=1.0)
-    provider._network = ChainProvider([_FixedProvider()])
+    provider._network = ChainProvider([provider._cache, _FixedProvider()])
     bars = provider.get_bars("600519", timeframe="1d", limit=3)
     assert len(bars) == 3
     cached = LocalBarCacheProvider(tmp_path).get_bars("600519", timeframe="1d", limit=3)

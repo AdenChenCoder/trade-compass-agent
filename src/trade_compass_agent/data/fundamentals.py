@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
+import math
 
 import requests
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from statistics import mean
 from typing import Protocol
 
@@ -25,10 +26,37 @@ class FundamentalsSnapshot:
     industry: str | None = None
     provider_name: str = "unknown"
     notes: tuple[str, ...] = ()
+    as_of: str | None = None
+
+    def __post_init__(self):
+        invalid = []
+        for field in ("pe_ttm", "pb", "market_cap", "roe", "float_shares", "total_shares"):
+            value = getattr(self, field)
+            if value is None:
+                continue
+            number = _safe_float(value)
+            if (number is None or (field in {"market_cap", "float_shares", "total_shares"} and number <= 0)
+                    or (field in {"pe_ttm", "pb"} and number == 0)):
+                object.__setattr__(self, field, None)
+                invalid.append(field)
+        if self.industry is not None and (not str(self.industry).strip() or _safe_float(self.industry) is not None
+                                          or str(self.industry).strip() in {"-", "--", "nan", "None"}):
+            object.__setattr__(self, "industry", None)
+            invalid.append("industry")
+        if _not_corporate(self.symbol):
+            for field in ("pe_ttm", "pb", "market_cap", "roe", "float_shares", "total_shares", "industry"):
+                object.__setattr__(self, field, None)
+            object.__setattr__(self, "notes", (*self.notes, "该资产不适用个股企业基本面；基金需使用基金规模、净值及持仓口径。"))
+        elif invalid:
+            object.__setattr__(self, "notes", (*self.notes, "已剔除无效基本面字段：" + ", ".join(invalid)))
+
+    @property
+    def data_status(self):
+        return "not_applicable" if _not_corporate(self.symbol) else "available" if self.has_real_fundamentals else "unavailable"
 
     @property
     def has_real_fundamentals(self) -> bool:
-        return any(value is not None for value in (self.pe_ttm, self.pb, self.market_cap, self.roe))
+        return not _not_corporate(self.symbol) and any(value is not None for value in (self.pe_ttm, self.pb, self.market_cap, self.roe))
 
 
 class FundamentalsProvider(Protocol):
@@ -83,11 +111,15 @@ class EastmoneyDirectFundamentalsProvider:
 
     def get_snapshot(self, symbol: str, *, bars: list[Bar] | None = None) -> FundamentalsSnapshot:
         normalized = symbol.strip()
-        secid = f"0.{normalized}" if normalized.startswith(("0", "3")) else f"1.{normalized}"
+        if _not_corporate(normalized):
+            return FundamentalsSnapshot(symbol=normalized, provider_name=self.name)
+        from .providers import split_symbol
+        market, code = split_symbol(normalized)
+        secid = f"{0 if market == 'sz' else 1}.{code}"
         url = "https://push2.eastmoney.com/api/qt/stock/get"
         params = {
             "secid": secid,
-            "fields": "f57,f58,f84,f85,f116,f117,f127,f162,f167,f168",
+            "fields": "f57,f58,f84,f85,f116,f117,f124,f127,f162,f167,f168",
             "ut": "fa5fd1943c7b386f172d6893dbfbaeb",
         }
 
@@ -161,6 +193,8 @@ class AkshareFundamentalsProvider:
 
     def get_snapshot(self, symbol: str, *, bars: list[Bar] | None = None) -> FundamentalsSnapshot:
         normalized = symbol.strip()
+        if _not_corporate(normalized):
+            return FundamentalsSnapshot(symbol=normalized, provider_name=self.name)
 
         def fetch():
             if hasattr(self.ak, "stock_individual_info_em"):
@@ -225,21 +259,55 @@ class TushareFundamentalsProvider:
         token = os.getenv(token_env, "").strip()
         if not token:
             raise RuntimeError(f"{token_env} not set")
-        try:
-            import tushare as ts  # type: ignore
-        except Exception as exc:  # pragma: no cover
-            raise RuntimeError("tushare is not available") from exc
-        self.pro = ts.pro_api(token)
+        self._token = token
         self.timeout = timeout
         self._fallback = RuleFundamentalsProvider()
 
-    def get_snapshot(self, symbol: str, *, bars: list[Bar] | None = None) -> FundamentalsSnapshot:
-        from .tushare_provider import to_ts_code
+    def get_snapshots(self, symbols: list[str]) -> dict[str, FundamentalsSnapshot]:
+        from trade_compass_agent.domain import InstrumentKind
+        from .providers import _market_now, _prev_trading_date, infer_instrument_kind, is_index_symbol, is_lof_symbol
+        from .tushare_provider import query_tushare, to_ts_code
 
+        codes = {to_ts_code(s): s for s in symbols if infer_instrument_kind(s) != InstrumentKind.ETF
+                 and not is_index_symbol(s) and not is_lof_symbol(s)}
+        if not codes:
+            return {}
+        now = _market_now()
+        day = _prev_trading_date(now.date(), now.hour).strftime("%Y%m%d")
+        timeout = max(self.timeout, 6)
+        frame = run_with_timeout(
+            lambda: query_tushare("daily_basic", token=self._token, timeout=timeout, trade_date=day,
+                                  limit=6000, fields="ts_code,trade_date,pe_ttm,pb,total_mv"),
+            timeout + 1, "tushare fundamentals batch",
+        )
+        if frame.empty:
+            return {}
+        if len(frame) >= 6000 or not (frame.trade_date == day).all() or frame.ts_code.duplicated().any():
+            raise ProviderError("Tushare fundamental batch is incomplete or has invalid identities/dates")
+        result = {}
+        for _, row in frame[frame.ts_code.isin(codes)].iterrows():
+            symbol = codes[row.ts_code]
+            total_mv = _safe_float(row.get("total_mv"))
+            snap = FundamentalsSnapshot(symbol=symbol, pe_ttm=_safe_float(row.get("pe_ttm")),
+                                        pb=_safe_float(row.get("pb")),
+                                        market_cap=total_mv * 10_000 if total_mv is not None else None,
+                                        provider_name=self.name, as_of=str(row["trade_date"]))
+            if snap.has_real_fundamentals:
+                result[symbol] = snap
+        return result
+
+    def get_snapshot(self, symbol: str, *, bars: list[Bar] | None = None) -> FundamentalsSnapshot:
+        from .tushare_provider import query_tushare, to_ts_code
+
+        if _not_corporate(symbol):
+            return FundamentalsSnapshot(symbol=symbol, provider_name=self.name)
         ts_code = to_ts_code(symbol)
 
         def fetch():
-            return self.pro.daily_basic(ts_code=ts_code, fields="ts_code,trade_date,pe_ttm,pb,total_mv")
+            return query_tushare(
+                "daily_basic", token=self._token, timeout=self.timeout,
+                ts_code=ts_code, limit=1, fields="ts_code,trade_date,pe_ttm,pb,total_mv",
+            )
 
         try:
             df = run_with_timeout(fetch, self.timeout + 2, f"tushare fundamentals {symbol}")
@@ -267,7 +335,7 @@ class TushareFundamentalsProvider:
             pe_ttm=_safe_float(row.get("pe_ttm")),
             pb=_safe_float(row.get("pb")),
             market_cap=market_cap,
-            provider_name=self.name,
+            provider_name=self.name, as_of=str(row["trade_date"]),
         )
 
 
@@ -281,16 +349,24 @@ class ChainFundamentalsProvider:
         self._rule = RuleFundamentalsProvider()
 
     def get_snapshot(self, symbol: str, *, bars: list[Bar] | None = None) -> FundamentalsSnapshot:
+        if _not_corporate(symbol):
+            return self._rule.get_snapshot(symbol, bars=bars)
+        failures = []
         for provider in self.providers:
             if provider.name == "rule":
                 continue
             try:
                 snapshot = provider.get_snapshot(symbol, bars=bars)
+                if snapshot.symbol != symbol:
+                    raise ProviderError("fundamental symbol mismatch")
                 if snapshot.has_real_fundamentals:
-                    return snapshot
-            except Exception:
-                continue
-        return self._rule.get_snapshot(symbol, bars=bars)
+                    return replace(snapshot, notes=(*snapshot.notes, *failures))
+                failures.extend(snapshot.notes or (f"{provider.name}: no applicable fundamentals",))
+            except Exception as exc:
+                failures.append(f"{provider.name}: {short_error_message(exc)}")
+        fallback = self._rule.get_snapshot(symbol, bars=bars)
+        return replace(fallback, notes=(*fallback.notes, *failures))
+
 
 
 def create_fundamentals_provider(
@@ -350,6 +426,13 @@ def _safe_float(value) -> float | None:
     if not text or text in {"--", "-", "nan", "None"}:
         return None
     try:
-        return float(text)
+        number = float(text)
+        return number if math.isfinite(number) else None
     except ValueError:
         return None
+
+
+def _not_corporate(symbol: str) -> bool:
+    from trade_compass_agent.domain import InstrumentKind
+    from .providers import infer_instrument_kind, is_index_symbol, is_lof_symbol
+    return infer_instrument_kind(symbol) == InstrumentKind.ETF or is_index_symbol(symbol) or is_lof_symbol(symbol)

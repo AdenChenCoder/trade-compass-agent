@@ -256,8 +256,8 @@ def test_agent_add_cannot_supersede_high_trust_entry(mem_store: MemoryStore) -> 
         )
     )
 
-    assert result["ok"] is False
-    assert mem_store.memory_entries == [original]
+    assert result["ok"] is True and not result["accepted"]
+    assert [m.text for m in mem_store.list_active()] == [original]
     assert mem_store.get_active_meta("memory")[0]["confidence"] == 0.85
 
 
@@ -310,16 +310,16 @@ def test_low_trust_reinforce_cannot_cross_injection_threshold(mem_store: MemoryS
     assert text not in mem_store.format_for_system_prompt()
 
 
-def test_trusted_reinforce_can_cross_injection_threshold(mem_store: MemoryStore) -> None:
+def test_recall_does_not_promote_even_curator_drafts(mem_store: MemoryStore) -> None:
     text = "人工整理过但暂未达到阈值的规则"
     mem_store.add(text, source="curator", confidence=0.45)
 
     result = mem_store.reinforce(text[:50])
 
     assert result["ok"] is True
-    assert result["confidence"] >= mem_store.min_inject_confidence
+    assert result["confidence"] == .45
     mem_store.load_from_disk()
-    assert text in mem_store.format_for_system_prompt()
+    assert text not in mem_store.format_for_system_prompt()
 
 
 def test_archive_stale_soft_archives(mem_store: MemoryStore) -> None:

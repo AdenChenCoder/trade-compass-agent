@@ -189,7 +189,9 @@ def run_data_check(
 ) -> None:
     config = load_app_config()
     symbols = symbols or config.watchlists.premarket_symbols()
-    names = [provider] if provider else ["tushare", "akshare", "sina", "baostock", "auto"]
+    names = [provider] if provider else ["auto", "tencent", "sina", "akshare", "baostock"]
+    if not provider and config.data.tushare_enabled and os.getenv(config.data.tushare_token_env, "").strip():
+        names.append("tushare")
     for provider_name in names:
         print(f"\n=== {provider_name} ===")
         try:
@@ -977,8 +979,8 @@ def _configure_data_check_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--provider",
         default=None,
-        choices=["tushare", "akshare", "sina", "baostock", "auto"],
-        help="Test a single provider (default: all including tushare when token set)",
+        choices=["tencent", "akshare", "sina", "baostock", "auto", "tushare"],
+        help="Test a single provider (default: free sources; Tushare only when enabled and configured)",
     )
 
 

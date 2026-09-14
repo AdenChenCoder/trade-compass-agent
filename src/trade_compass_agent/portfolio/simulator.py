@@ -6,8 +6,10 @@ import hashlib
 import json
 import logging
 from datetime import datetime
+from decimal import Decimal
 import os
 from pathlib import Path
+from typing import Callable
 import tempfile
 
 from trade_compass_agent.config import TradingCostConfig
@@ -126,15 +128,20 @@ class PaperPortfolio:
             grouped[position.account].append(position)
         return grouped
 
-    def account_summaries(self) -> list[AccountSummary]:
+    def account_summaries(self, positions: list[PortfolioPosition] | None = None) -> list[AccountSummary]:
         summaries: list[AccountSummary] = []
-        grouped = self.positions_by_account()
+        grouped: dict[AccountKind, list[PortfolioPosition]] = defaultdict(list)
+        for position in self.positions() if positions is None else positions:
+            grouped[position.account].append(position)
         realized = self.realized_trades()
         fees_by_account = self.fees_by_account()
         for account in AccountKind:
             items = grouped.get(account, [])
-            market_value = sum(item.quantity * item.last_price for item in items)
-            cost_basis = sum(item.quantity * item.avg_cost for item in items)
+            market_value = sum(item.market_value for item in items)
+            unrealized_pnl = sum(item.unrealized_pnl for item in items)
+            # The displayed average cost is rounded; retain the FIFO cost already
+            # reflected in each position instead of multiplying that rounded price.
+            cost_basis = market_value - unrealized_pnl
             account_realized = [item for item in realized if item.account == account]
             realized_pnl = sum(item.pnl for item in account_realized)
             wins = [item.pnl for item in account_realized if item.pnl > 0]
@@ -147,7 +154,7 @@ class PaperPortfolio:
                     position_count=len(items),
                     market_value=round(market_value, 2),
                     cost_basis=round(cost_basis, 2),
-                    unrealized_pnl=round(market_value - cost_basis, 2),
+                    unrealized_pnl=round(unrealized_pnl, 2),
                     realized_pnl=round(realized_pnl, 2),
                     fees=round(fees_by_account.get(account, 0.0), 2),
                     wins=len(wins),
@@ -159,9 +166,27 @@ class PaperPortfolio:
             )
         return summaries
 
+    def trade_history(self, *, trade_ids: set[str] | None = None, limit: int | None = None) -> list[dict]:
+        """Actual executions, distinct from FIFO lot settlements and decisions."""
+        trades = [t for t in self.trades if trade_ids is None or t.trade_id in trade_ids]
+        trades.sort(key=lambda t: t.timestamp.timestamp(), reverse=True)
+        if limit is not None:
+            trades = trades[:limit]
+        return [_trade_payload(t) for t in trades]
+
     def realized_trades(self) -> list[RealizedTrade]:
         _lots, realized, _fees = self._lots_and_realized()
         return realized
+
+    def cash_balance(self, account: AccountKind, capital: float) -> float:
+        cash = Decimal(str(capital))
+        for trade in self.trades:
+            if trade.account != account:
+                continue
+            gross = Decimal(str(trade.price)) * trade.quantity
+            cash += gross if trade.side == "sell" else -gross
+            cash -= Decimal(str(self.estimate_fee(trade)))
+        return float(cash.quantize(Decimal("0.0001")))
 
     def fees_by_account(self) -> dict[AccountKind, float]:
         _lots, _realized, fees = self._lots_and_realized()
@@ -444,22 +469,32 @@ class JsonPaperPortfolio(PaperPortfolio):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         super().__init__(costs=costs)
         self.trades = self._load()
-        from trade_compass_agent.concurrency import get_path_lock
-        self._lock = get_path_lock(self.path)
 
-    def record(self, trade: PaperTrade, *, skip_t1: bool = False) -> None:
-        with self._lock:
+    def record(
+        self,
+        trade: PaperTrade,
+        *,
+        skip_t1: bool = False,
+        before_record: Callable[[PaperPortfolio], None] | None = None,
+    ) -> None:
+        from trade_compass_agent.portfolio.trading_policy import portfolio_transaction
+
+        with portfolio_transaction(self.path):
             self.trades = self._load()
             ok, message = self.validate_trade(trade, skip_t1=skip_t1)
             if not ok:
                 raise ValueError(message)
+            if before_record is not None:
+                before_record(self)
             super().record(trade)
             with self.path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(_trade_payload(trade), ensure_ascii=False) + "\n")
 
     def persist_trade_metadata(self, decision_ids_by_trade: dict[str, str]) -> bool:
         """Atomically persist IDs for legacy rows without changing trade semantics."""
-        with self._lock:
+        from trade_compass_agent.portfolio.trading_policy import portfolio_transaction
+
+        with portfolio_transaction(self.path):
             raw_rows = [
                 json.loads(line)
                 for line in self.path.read_text(encoding="utf-8").splitlines()

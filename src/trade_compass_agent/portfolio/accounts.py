@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from trade_compass_agent.domain import AccountKind
+from trade_compass_agent.concurrency import atomic_write
 
 
 @dataclass
@@ -68,9 +69,7 @@ class AccountStore:
         return json.loads(self._path.read_text(encoding="utf-8"))
 
     def _save(self, data: list[dict]) -> None:
-        self._path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        atomic_write(self._path, json.dumps(data, ensure_ascii=False, indent=2))
 
     def list(self) -> list[Account]:
         return [self._dict_to_account(d) for d in self._load()]

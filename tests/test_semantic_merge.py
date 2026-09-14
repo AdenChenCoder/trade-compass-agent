@@ -76,7 +76,8 @@ class TestMergeSimilarEntries:
         merged_text = "涨停超三十家表明市场情绪偏强"
 
         def fake_llm(sys: str, user: str) -> str:
-            return merged_text
+            import json
+            return json.dumps({"valid": True, "reason": "同一条件"}) if "审查记忆修订" in sys else json.dumps({"content": merged_text, "reason": "同义合并"})
 
         result = merge_similar_entries(store, llm_call=fake_llm, force=True)
         assert result == 1

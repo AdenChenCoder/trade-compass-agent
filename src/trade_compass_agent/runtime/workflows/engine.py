@@ -91,13 +91,33 @@ class WorkflowRunContext:
     started_at: str
     inputs_hash: str
     cancelled: threading.Event = field(default_factory=threading.Event, compare=False, repr=False)
+    active_steps: dict[str, dict] = field(default_factory=dict, compare=False, repr=False)
+    state_lock: threading.Lock = field(default_factory=threading.Lock, compare=False, repr=False)
 
     @property
     def trace_path(self) -> Path:
         return self.trace_writer.trace_path
 
     def record(self, event: str, data: dict[str, Any] | None = None) -> None:
-        self.trace_writer.record(TurnEvent(event=event, data=data or {}))
+        payload = data or {}
+        with self.state_lock:
+            if event in {"builtin.step_started", "builtin.step_finished"}:
+                if self.cancelled.is_set():
+                    return
+                if event == "builtin.step_started":
+                    self.active_steps[payload["step_id"]] = payload
+                else:
+                    self.active_steps.pop(payload["step_id"], None)
+            self.trace_writer.record(TurnEvent(event=event, data=payload))
+
+    def finish_active_steps(self, error: str) -> None:
+        with self.state_lock:
+            self.cancelled.set()
+            for step_id in self.active_steps:
+                self.trace_writer.record(TurnEvent(event="builtin.step_finished", data={
+                    "step_id": step_id, "status": "failed", "error": error,
+                }))
+            self.active_steps.clear()
 
 
 REQUIRED_V2_WORKFLOW_FIELDS = (
@@ -218,6 +238,9 @@ def run_workflow_asset(
             visited=(*_visited, manifest.id),
         )
         output = _with_metadata(manifest, inputs, _compose_workflow_output(manifest, inputs, outputs, warnings), context)
+        if output.get("degraded"):
+            status = "degraded"
+            error = str(output.get("error") or "workflow degraded")
         validate_workflow_asset_output(manifest, output)
         context.record("builtin.schema_validated", {"workflow_id": manifest.id})
         if persist:
@@ -229,6 +252,7 @@ def run_workflow_asset(
     except Exception as exc:
         status = "failed"
         error = f"{type(exc).__name__}: {exc}"
+        context.finish_active_steps(error)
         context.record("builtin.failed", {"workflow_id": manifest.id, "error": error})
         if not _should_degrade(manifest):
             raise
@@ -304,6 +328,8 @@ def _execute_steps_with_retry(
         except Exception as exc:
             last_error = exc
             context.record("builtin.attempt_failed", {"attempt": attempt + 1, "error": str(exc)})
+            if context.cancelled.is_set():
+                raise
             continue
         return
     assert last_error is not None
@@ -347,7 +373,7 @@ def _execute_steps_with_timeout(
         future.result(timeout=max(1, manifest.timeout_seconds))
     except FutureTimeoutError as exc:
         future.cancel()
-        context.cancelled.set()
+        context.finish_active_steps(f"{manifest.id}: workflow timed out after {manifest.timeout_seconds}s")
         context.record("builtin.timeout", {"timeout_seconds": manifest.timeout_seconds})
         raise TimeoutError(f"{manifest.id}: workflow timed out after {manifest.timeout_seconds}s") from exc
     finally:
@@ -397,6 +423,8 @@ def _execute_steps_once(
                 workflow_directory=_workflow_asset_directory(manifest),
                 manifest=manifest,
             )
+        if context.cancelled.is_set():
+            return
         outputs[step.id] = result
         warnings.extend(result.warnings)
         if step.persist_artifact and persist:
@@ -404,7 +432,8 @@ def _execute_steps_once(
             artifact_paths.append(str(artifact))
             context.record("builtin.step_artifact_written", {"step_id": step.id, "path": str(artifact)})
         result_output = _output_as_dict(result.output)
-        result_error = str(result_output.get("error") or "") if result_output else ""
+        result_data = result_output.get("data") if isinstance(result_output.get("data"), dict) else {}
+        result_error = str(result_output.get("error") or result_data.get("error") or "")
         context.record(
             "builtin.step_finished",
             {
@@ -500,7 +529,7 @@ def _compose_workflow_output(
         "as_of": str(primary.get("as_of") or inputs.get("as_of") or ""),
         "primary_step_id": primary_step_id,
         "warnings": list(dict.fromkeys(merged_warnings)),
-        "no_trade_disclaimer": True,
+        "no_trade_disclaimer": not manifest.risk_policy.get("executes_paper_trades", False),
         **({"degraded": True} if primary.get("error") else {}),
     }
 
@@ -747,7 +776,10 @@ def _run_step(
             output = run_reader_tool(tool_id, **args)
             return WorkflowStepResult(step_id=step.id, type=step.type, uses=step.uses, output=output)
         output = ToolRegistry(stack).execute(tool_id, args)
-        return WorkflowStepResult(step_id=step.id, type=step.type, uses=step.uses, output=output)
+        decoded = _output_as_dict(output) or {}
+        data = decoded.get("data") if isinstance(decoded.get("data"), dict) else {}
+        warnings = tuple(str(w) for w in [*(decoded.get("warnings") or []), *(data.get("warnings") or [])])
+        return WorkflowStepResult(step_id=step.id, type=step.type, uses=step.uses, output=output, warnings=warnings)
     if step.type == "compose":
         return WorkflowStepResult(
             step_id=step.id,
@@ -815,7 +847,7 @@ def _degraded_output(
             "workflow_version": manifest.version,
             "as_of": str(inputs.get("as_of") or "unknown"),
             "warnings": merged_warnings,
-            "no_trade_disclaimer": True,
+            "no_trade_disclaimer": not manifest.risk_policy.get("executes_paper_trades", False),
             "degraded": True,
         },
         context,

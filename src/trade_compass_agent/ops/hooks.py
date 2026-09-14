@@ -112,6 +112,8 @@ def hook_memory_reflection(ctx: HookContext) -> None:
     settings = settings_from_config(ctx.ctx.config)
     vault = MemoryVault(settings.memory_dir)
     path = vault.root / "reflections" / f"{ctx.run.job_id}-{ctx.ctx.date.isoformat()}.md"
+    if ctx.run.job_id == "autonomous_trading":
+        path = path.with_name(f"{ctx.run.job_id}-{ctx.ctx.date.isoformat()}-{ctx.run.id}.md")
     path.parent.mkdir(parents=True, exist_ok=True)
 
     lines = [
@@ -151,6 +153,8 @@ def hook_channel_alert_on_failure(ctx: HookContext) -> None:
     """Push alert to external channels when a job fails."""
     if ctx.run.status != "failed":
         return
+    if ctx.job.id == "autonomous_trading":
+        return  # This workflow records results in the workbench, without external notifications.
     from trade_compass_agent.ops.delivery import DeliveryRouter
     if ctx.ctx:
         router = DeliveryRouter(ctx.ctx.config)

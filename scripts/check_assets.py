@@ -256,8 +256,9 @@ def _check_workflow_assets(
         risk_policy = raw.get("risk_policy") or {}
         if not isinstance(risk_policy, dict):
             _err(f"workflow asset {workflow_id} risk_policy must be object")
-        elif risk_policy.get("may_recommend_trade") is not False:
-            _err(f"workflow asset {workflow_id} risk_policy.may_recommend_trade must be false")
+        elif risk_policy.get("may_recommend_trade") is not (workflow_id == "autonomous_trading"):
+            _err(f"workflow asset {workflow_id} risk_policy.may_recommend_trade must be "
+                 f"{workflow_id == 'autonomous_trading'}")
         persistence = raw.get("persistence") or {}
         if not isinstance(persistence, dict):
             _err(f"workflow asset {workflow_id} persistence must be object")

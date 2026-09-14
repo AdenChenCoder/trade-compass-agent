@@ -361,6 +361,16 @@ class SqliteRunStore:
                 (_dt(rec.finished_at), output, data_json, rec.id),
             )
 
+    def skip_step(self, rec: StepRunRecord, reason: str) -> None:
+        rec.status = "skipped"
+        rec.finished_at = datetime.now()
+        rec.output = reason
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE step_runs SET status = 'skipped', finished_at = ?, output = ? WHERE id = ?",
+                (_dt(rec.finished_at), reason, rec.id),
+            )
+
     def fail_step(self, rec: StepRunRecord, error: str) -> None:
         rec.status = "failed"
         rec.finished_at = datetime.now()

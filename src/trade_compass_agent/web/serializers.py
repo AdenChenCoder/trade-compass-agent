@@ -148,16 +148,13 @@ def to_portfolio_response(
 ) -> s.PortfolioResponse:
     portfolio.resolve_names()
     positions_grouped: dict[str, list[s.PortfolioPositionPayload]] = defaultdict(list)
-    if live_positions:
-        for p in live_positions:
-            positions_grouped[p.account.value].append(to_position_payload(p))
-    else:
-        for account_kind, positions in portfolio.positions_by_account().items():
-            positions_grouped[account_kind.value] = [to_position_payload(p) for p in positions]
+    positions = portfolio.positions() if live_positions is None else live_positions
+    for p in positions:
+        positions_grouped[p.account.value].append(to_position_payload(p))
     for account in AccountKind:
         positions_grouped.setdefault(account.value, [])
     return s.PortfolioResponse(
-        accounts=[to_account_summary_payload(item) for item in portfolio.account_summaries()],
+        accounts=[to_account_summary_payload(item) for item in portfolio.account_summaries(positions)],
         positions_by_account=dict(positions_grouped),
         trades=[to_paper_trade_payload(item) for item in portfolio.trades],
         realized_trades=[to_realized_trade_payload(item) for item in portfolio.realized_trades()],

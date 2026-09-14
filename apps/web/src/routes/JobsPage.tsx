@@ -603,7 +603,7 @@ export function JobsPage() {
               <Clock className="h-4 w-4" />
               已注册任务
             </CardTitle>
-            <CardDescription>6 个内置 Job，由 TickScheduler 按上方时间触发</CardDescription>
+            <CardDescription>{jobs.length} 个内置任务；盘中自主交易由持仓页开关控制，其余按上方时间运行。</CardDescription>
           </CardHeader>
           <CardContent>
             {jobs.length === 0 ? (
@@ -626,7 +626,7 @@ export function JobsPage() {
                       <TableRow key={job.id}>
                         <TableCell className="font-medium">{job.name}</TableCell>
                         <TableCell className="font-mono text-xs">{job.id}</TableCell>
-                        <TableCell>{job.cadence}</TableCell>
+                        <TableCell>{job.cadence === "trading_session 30m" ? "交易日盘中 8 轮" : job.cadence}</TableCell>
                         <TableCell>
                           <div className="space-y-2">
                             <ChannelBadges channels={job.delivery_channels ?? []} />

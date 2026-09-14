@@ -6,7 +6,7 @@ Each Job declares schedule, delivery, and the workflow asset it triggers.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
@@ -84,7 +84,7 @@ class StepContext:
 # ---------------------------------------------------------------------------
 
 class JobRegistry:
-    """Job definition registry. Built-in 6 + extensible."""
+    """Job definition registry."""
 
     def __init__(self) -> None:
         self._jobs: dict[str, JobDefinition] = {}
@@ -103,13 +103,17 @@ class JobRegistry:
         return list(self._jobs.keys())
 
     def from_config(self, config: AppConfig) -> None:
-        """Register the 6 built-in Jobs from config schedules."""
+        """Register built-in Jobs from config schedules."""
         from trade_compass_agent.ops.builtin_job_delivery import BuiltinJobDeliveryStore
 
         s = config.scheduler
         overrides = BuiltinJobDeliveryStore(config.data_dir / "scheduler.db").all()
         builtin = _builtin_jobs(s, overrides)
+        from trade_compass_agent.ops.autonomous_trading import JOB_ID
+        from trade_compass_agent.portfolio.trading_policy import AutonomousTradingStore
         for job in builtin:
+            if job.id == JOB_ID:
+                job = replace(job, enabled=AutonomousTradingStore(config.data_dir).read())
             self.register(job)
 
 
@@ -125,9 +129,19 @@ def _delivery(
 
 
 def _builtin_jobs(s, overrides: dict[str, tuple[str, ...]] | None = None) -> list[JobDefinition]:
-    """Construct the 6 built-in JobDefinitions."""
+    """Construct built-in JobDefinitions."""
+    from trade_compass_agent.ops.autonomous_trading import JOB_ID, SCHEDULE
     o = overrides or {}
     return [
+        JobDefinition(
+            id=JOB_ID,
+            name="盘中自主交易",
+            description="全局开关开启时，交易日 09:35、10:05、10:35、11:05、13:05、13:35、14:05、14:35 分析行情与热点，按决策买卖模拟持仓；保留每轮执行记录",
+            schedule=SCHEDULE,
+            workflow_id="autonomous_trading",
+            timeout_seconds=900,
+            delivery=_delivery(JOB_ID, ("web_log",), o),
+        ),
         JobDefinition(
             id="premarket",
             name="盘前扫描",

@@ -52,6 +52,10 @@ class ChannelAdapter(ABC):
 
     name: str = "base"
 
+    def delivery_unavailable_reason(self, message: ChannelMessage) -> str | None:
+        """Return a known configuration blocker before attempting delivery."""
+        return None
+
     @abstractmethod
     async def send(self, message: ChannelMessage) -> bool:
         """Send a message to the platform. Returns True on success."""

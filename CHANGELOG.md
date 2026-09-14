@@ -4,6 +4,29 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+### Added
+
+- Optional autonomous paper trading in existing accounts, controlled by a
+  persistent global switch during conversations and scheduled intraday analysis.
+
+### Changed
+
+- Prefer explicitly enabled paid data sources for supported data while retaining
+  free defaults, source attribution, and failure fallbacks.
+- Keep effective memory within the existing 3,000-character budget through
+  candidate admission, merging, replacement, and retirement with preserved history.
+- Support validated, versioned Skill changes in the writable vault, including
+  overrides of packaged built-ins while preserving user pin protection.
+
+### Fixed
+
+- Keep account limits, trade receipts, and final scheduled reports consistent
+  across tools and workbench views.
+- Apply the same asset and field validation to single and batch fundamentals.
+- Preserve committed learning changes across partial failures and interrupted
+  background-review retries.
+- Exclude local diagnostic reports and runtime state from release archives.
+
 ## [0.2.2] - 2026-09-05
 
 ### Fixed

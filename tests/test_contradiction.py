@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 
 from trade_compass_agent.memory.contradiction import (
     apply_conflict_reports,
@@ -91,7 +92,7 @@ def test_scan_active_conflicts_min_lot_fixture(tmp_path: Path) -> None:
 
 def test_apply_conflict_reports_supersede(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "vault")
-    store.add("100股减1/3", source="promotion", confidence=0.85)
+    original = store.add("100股减1/3", source="promotion", confidence=0.85)
 
     from trade_compass_agent.memory.contradiction import ConflictReport
 
@@ -102,6 +103,7 @@ def test_apply_conflict_reports_supersede(tmp_path: Path) -> None:
             reason="min-lot",
             refined_text="A股卖出须100股整数倍",
             conflicts_with="100股减",
+            entry_id=original["entry_id"], expected_version=original["version"],
         ),
     ]
     applied = apply_conflict_reports(reports, store)
@@ -122,3 +124,53 @@ def test_archive_inactive_skips_user_pin(tmp_path: Path) -> None:
     archived = store.archive_inactive("memory", stale_days=90)
     assert archived == []
     assert store.get_active_meta("memory")[0]["status"] == "active"
+
+
+@pytest.mark.parametrize("verdict", ["SUPERSEDE", "ARCHIVE"])
+def test_curator_preserves_concurrent_correction(tmp_path, verdict):
+    store, writer = MemoryStore(tmp_path), MemoryStore(tmp_path)
+    original = store.add("成交量扩大时需要观察价格确认。", source="curator")
+    corrected = "成交量扩大时需要观察价格确认；集合竞价期间不能据此下结论。"
+
+    def evaluate(system, prompt):
+        assert writer.replace("", corrected, entry_id=original["entry_id"],
+                              expected_version=original["version"], source="curator")["ok"]
+        return json.dumps([{"verdict": verdict, "entry_prefix": "成交量扩大时",
+                            "conflicts_with": "成交量扩大时", "refined": "成交量扩大时可判断趋势延续。",
+                            "reason": "旧快照上的评估"}])
+
+    reports = scan_active_conflicts(store.list_active(), "", "", evaluate)
+    assert not apply_conflict_reports(reports, store)
+    assert MemoryStore(tmp_path).list_active()[0].text == corrected
+
+
+@pytest.mark.parametrize("concurrent", [False, True])
+def test_promotion_supersede_checks_reviewed_version(tmp_path, concurrent):
+    from trade_compass_agent.memory.observation_store import ObservationStore
+    from trade_compass_agent.memory.promotion import apply_promotions
+
+    store, writer = MemoryStore(tmp_path / "vault"), MemoryStore(tmp_path / "vault")
+    original = store.add("成交量扩大时需要观察价格确认。", source="curator")
+    corrected = "成交量扩大时需要观察价格确认；集合竞价期间不能据此下结论。"
+    observations = ObservationStore(tmp_path / "observations.db")
+    candidates = []
+    for index in range(2):
+        assert observations.append(session_id=f"session-{index}", tool_name="get_bars",
+                                   summary=f"成交量观察样本{index}", concepts=["成交量"], importance=9)
+        obs = observations.recent(session_id=f"session-{index}")[0]
+        candidates.append(PromotionCandidate(obs, .9, {}))
+
+    def evaluate(system, prompt):
+        if "提炼引擎" in system:
+            return "成交量扩大时可判断趋势延续。"
+        if concurrent:
+            assert writer.replace("", corrected, entry_id=original["entry_id"],
+                                  expected_version=original["version"], source="curator")["ok"]
+        return json.dumps({"verdict": "SUPERSEDE", "conflicts_with": "成交量扩大时",
+                           "refined": "成交量扩大时可判断趋势延续。", "reason": "归纳两次样本"})
+
+    results = apply_promotions(candidates, store, observations, llm_call=evaluate)
+    assert results[0].verdict == ("REJECT" if concurrent else "SUPERSEDE")
+    assert MemoryStore(tmp_path / "vault").list_active()[0].text == (
+        corrected if concurrent else "成交量扩大时可判断趋势延续。")
+    assert all(bool(obs.promoted_at) is not concurrent for obs in observations.recent())

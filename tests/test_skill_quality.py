@@ -99,7 +99,7 @@ def test_view_counts_and_quality_header(tmp_path: Path) -> None:
     assert rec.usage.view_count == 2
 
 
-def test_existing_skills_migrate_to_user_owned_and_lazy_quality(tmp_path: Path) -> None:
+def test_existing_skill_migration_preserves_recorded_ownership(tmp_path: Path) -> None:
     skill_dir = tmp_path / "skills" / "legacy-skill"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(_skill("legacy-skill"), encoding="utf-8")
@@ -112,10 +112,10 @@ def test_existing_skills_migrate_to_user_owned_and_lazy_quality(tmp_path: Path) 
     rec = store.get("legacy-skill")
 
     assert rec is not None
-    assert rec.usage.created_by == "user"
-    assert rec.usage.curator_managed is False
-    assert (skill_dir / ".quality.json").is_file()
-    assert "origin: user" in store.read_full("legacy-skill", record_view=False)
+    assert rec.usage.created_by == "agent"
+    assert rec.usage.curator_managed is True
+    assert rec.quality.static_status in {"pass", "warning"}
+    assert store.read_full("legacy-skill", record_view=False) == _skill("legacy-skill")
 
 
 def test_existing_curator_managed_flag_is_preserved(tmp_path: Path) -> None:
@@ -132,7 +132,7 @@ def test_existing_curator_managed_flag_is_preserved(tmp_path: Path) -> None:
     assert store.get("auto-skill").usage.curator_managed is True
 
 
-def test_registry_foreground_skill_create_is_user_owned(tmp_path: Path) -> None:
+def test_registry_foreground_agent_cannot_claim_user_identity(tmp_path: Path) -> None:
     stack = SimpleNamespace(config=SimpleNamespace(memory_dir=tmp_path / "vault"))
     store = SkillStore(tmp_path / "vault" / "skills")
     registry = ToolRegistry(stack, skill_store=store)
@@ -151,8 +151,8 @@ def test_registry_foreground_skill_create_is_user_owned(tmp_path: Path) -> None:
 
     assert result["ok"] is True
     rec = store.get("foreground-skill")
-    assert rec.usage.created_by == "user"
-    assert rec.usage.curator_managed is False
+    assert rec.usage.created_by == "agent"
+    assert rec.usage.curator_managed is True
 
 
 def test_registry_scheduled_skill_create_is_curator_managed(tmp_path: Path) -> None:

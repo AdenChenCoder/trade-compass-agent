@@ -72,14 +72,32 @@ def tool_memory_write(
     source: str = "agent",
     actor: str = "agent",
     governance: MemoryGovernanceConfig | None = None,
+    entry_id: str | None = None,
+    expected_version: int | None = None,
+    reason: str = "",
+    evidence: list[str] | None = None,
+    replacements: list[dict] | None = None,
+    llm_call=None,
+    status: str = "all",
 ) -> str:
     """Manage bounded declarative memory with trust-tiered writes."""
     gov = governance or MemoryGovernanceConfig()
 
+    if action == "maintain":
+        from trade_compass_agent.memory.semantic_merge import maintain_memory
+        if target != "memory":
+            return json.dumps({"ok": False, "error": "Automatic pressure maintenance applies to knowledge"})
+        return json.dumps(maintain_memory(store, llm_call), ensure_ascii=False)
+
     if action == "list":
-        entries = store.list_active(target, min_confidence=0.0)
+        snapshot = store.snapshot(target, include_history=status in {"all", "archived"})
+        entries = snapshot.pop("entries")
+        if status != "all":
+            entries = [m for m in entries if m.status == status]
         items = [
             {
+                "entry_id": m.entry_id, "version": m.version, "reason": m.reason, "evidence": m.evidence,
+                "pinned": m.source == "user_pin",
                 "text": m.text,
                 "confidence": round(m.confidence, 3),
                 "source": m.source,
@@ -89,15 +107,24 @@ def tool_memory_write(
             for m in entries
         ]
         return json.dumps(
-            {"target": target, "entries": items, "count": len(items), "min_inject": gov.min_inject_confidence},
+            {"target": target, "entries": items, "count": len(items), "min_inject": gov.min_inject_confidence, **snapshot},
             ensure_ascii=False,
         )
 
-    if action in ("replace", "remove") and actor in _AGENT_ACTORS:
-        return json.dumps(
-            {"ok": False, "error": "Agent cannot replace or remove KNOWLEDGE entries; use pin/forget (user) or promotion."},
-            ensure_ascii=False,
-        )
+    if action in ("replace", "remove", "revise") and actor in _AGENT_ACTORS:
+        if not reason.strip() or not evidence:
+            return json.dumps({"ok": False, "error": "Agent revisions require a reason and evidence; list entries to obtain IDs and versions"}, ensure_ascii=False)
+        if action == "remove":
+            if not entry_id or expected_version is None:
+                return json.dumps({"ok": False, "error": "entry_id and expected_version required"})
+            result = store.archive_entry(target=target, entry_id=entry_id, expected_version=expected_version,
+                                         actor=actor, reason=reason, evidence=evidence)
+        else:
+            from trade_compass_agent.memory.semantic_merge import evaluate_revision
+            refs = replacements or ([{"entry_id": entry_id, "version": expected_version}] if entry_id else [])
+            result = evaluate_revision(store, replacements=refs, content=content, reason=reason, evidence=evidence,
+                                       llm_call=llm_call, target=target, actor=actor)
+        return json.dumps(result, ensure_ascii=False)
 
     if action in _USER_ONLY_ACTIONS and actor != "user":
         return json.dumps(
@@ -122,7 +149,7 @@ def tool_memory_write(
     if action == "forget":
         if not content.strip():
             return json.dumps({"ok": False, "error": "content required (text prefix to forget)"}, ensure_ascii=False)
-        result = store.archive_entry(content, target=target)
+        result = store.archive_entry(content, target=target, actor="user", reason="user_forgotten")
         return json.dumps(result, ensure_ascii=False)
 
     if action == "add":
@@ -166,9 +193,9 @@ def tool_memory_write(
         return json.dumps(result, ensure_ascii=False)
 
     if action == "replace":
-        result = store.replace(old_text, content, target=target)
+        result = store.replace(old_text, content, target=target, actor=actor, entry_id=entry_id, expected_version=expected_version, reason=reason or "revision")
     elif action == "remove":
-        result = store.remove(content, target=target)
+        result = store.remove(content, target=target, actor=actor, entry_id=entry_id, expected_version=expected_version, reason=reason or "retired")
     else:
         result = {"ok": False, "error": f"Unknown action: {action}. Use add/replace/remove/list/pin/forget."}
     return json.dumps(result, ensure_ascii=False)
@@ -182,41 +209,56 @@ def tool_skill_manage(
     old_text: str = "",
     new_text: str = "",
     actor: str = "agent",
+    expected_version: str | None = None,
+    reason: str = "",
+    evidence: list[str] | None = None,
+    reference: str = "",
+    version: str = "",
 ) -> str:
     """Manage procedural skills (trading playbooks/strategies)."""
     if action == "list":
         skills = store.list_skills(include_stale=True)
         items = [{"name": s.name, "description": s.description, "category": s.category,
                   "state": s.usage.state, "quality": s.quality.quality,
-                  "static_status": s.quality.static_status, "use_count": s.usage.use_count} for s in skills]
+                  "static_status": s.quality.static_status, "use_count": s.usage.use_count,
+                  "source": s.source, "enabled": s.enabled, "version": s.version, "pinned": s.usage.pinned} for s in skills]
         return json.dumps({"skills": items, "count": len(items)}, ensure_ascii=False)
 
     elif action == "view":
-        content_text = store.read_full(name, record_view=True, with_quality_header=True)
-        if content_text is None:
-            return json.dumps({"ok": False, "error": f"Skill '{name}' not found"}, ensure_ascii=False)
-        return json.dumps({"name": name, "content": content_text}, ensure_ascii=False)
+        return json.dumps(store.view(name), ensure_ascii=False)
+
+    elif action == "versions":
+        return json.dumps(store.versions(name), ensure_ascii=False)
+
+    elif actor != "user" and action in {"patch", "edit", "archive", "write_reference", "restore_version"} and (not expected_version or not reason.strip()):
+        return json.dumps({"ok": False, "error": "View current skill; supply expected_version and a concrete reason for the change"})
 
     elif action == "create":
-        result = store.create(name, content, created_by=_resolve_write_source(actor, "agent"))
+        result = store.create(name, content, created_by=_resolve_write_source(actor, "agent"), reason=reason or "create", evidence=evidence or [])
 
     elif action == "patch":
-        result = store.patch(name, old_text, new_text)
+        result = store.patch(name, old_text, new_text, expected_version=expected_version, actor=actor, reason=reason, evidence=evidence or [])
 
     elif action == "edit":
-        result = store.edit(name, content)
+        result = store.edit(name, content, expected_version=expected_version, actor=actor, reason=reason, evidence=evidence or [])
+
+    elif action == "write_reference":
+        result = store.write_reference(name, reference, content, expected_version=expected_version, actor=actor, reason=reason, evidence=evidence or [])
 
     elif action == "archive":
-        result = store.archive(name)
+        result = store.archive(name, expected_version=expected_version, actor=actor, reason=reason)
+
+    elif action == "restore_version":
+        result = store.restore_version(name, version, expected_version=expected_version, actor=actor, reason=reason, evidence=evidence or [])
 
     elif action == "restore":
-        result = store.restore(name)
+        result = store.restore(name, actor=actor)
 
     elif action == "pin":
-        result = store.pin(name)
+        result = store.pin(name, actor=actor)
 
     elif action == "unpin":
-        result = store.unpin(name)
+        result = store.unpin(name, actor=actor)
 
     else:
         result = {"ok": False, "error": f"Unknown action: {action}"}
@@ -231,14 +273,16 @@ MEMORY_WRITE_SCHEMA = {
         "target='memory' → KNOWLEDGE.md: 声明性记忆，只保存长期判断原则/事实/用户偏好（≤80字/条）。"
         "禁止写入流程、策略/playbook、触发条件、工具调用顺序、评分表、阈值表、输出模板、load_skill 路由。"
         "这些过程性内容必须用 skill_manage(create/patch/edit)。"
-        "Agent add 为低信任暂存，默认不注入后续 prompt。"
+        "Agent add 保存候选，不占有效额度，不注入后续 prompt。list 查看状态和 ID/版本。"
+        "replace/revise 用于带证据的自主修订/合并；remove 软退出非固定记忆，必须给出理由、证据、ID 和版本。"
+        "归档是停用历史；用户固定保护不变。"
         "target='user' → USER.md: 用户画像。"
         "pin/forget 仅用户侧操作（action=pin|forget）。"
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["add", "replace", "remove", "list", "pin", "forget"]},
+            "action": {"type": "string", "enum": ["add", "replace", "remove", "revise", "maintain", "list", "pin", "forget"]},
             "content": {"type": "string", "description": "要添加/替换/遗忘匹配的内容（add≤80字；forget 为条目文本前缀）"},
             "target": {
                 "type": "string",
@@ -270,3 +314,21 @@ SKILL_MANAGE_SCHEMA = {
         "required": ["action"],
     },
 }
+
+MEMORY_WRITE_SCHEMA["parameters"]["properties"].update({
+    "entry_id": {"type": "string"},
+    "expected_version": {"type": "integer"},
+    "reason": {"type": "string", "description": "具体纠错、合并或容量退选理由；年龄本身不是失效证据"},
+    "evidence": {"type": "array", "items": {"type": "string"}},
+    "status": {"type": "string", "enum": ["all", "active", "candidate", "archived"]},
+    "replacements": {"type": "array", "items": {"type": "object", "properties": {
+        "entry_id": {"type": "string"}, "version": {"type": "integer"}}, "required": ["entry_id", "version"]}},
+})
+SKILL_MANAGE_SCHEMA["parameters"]["properties"].update({
+    "expected_version": {"type": "string", "description": "view 返回的基准版本；修改时必填"},
+    "reason": {"type": "string", "description": "源任务中可定位的缺陷或新证据；不以扩写次数代表改进"},
+    "evidence": {"type": "array", "items": {"type": "string"}},
+    "reference": {"type": "string", "description": "参考文档名，不带路径或 .md"},
+    "version": {"type": "string", "description": "restore_version 指定 versions 返回的历史版本"},
+})
+SKILL_MANAGE_SCHEMA["parameters"]["properties"]["action"]["enum"].extend(["write_reference", "versions", "restore_version"])

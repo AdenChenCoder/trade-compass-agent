@@ -9,6 +9,9 @@ from __future__ import annotations
 import os
 import tempfile
 import threading
+from contextlib import contextmanager
+
+import fcntl
 from pathlib import Path
 
 _path_locks: dict[str, threading.Lock] = {}
@@ -43,3 +46,34 @@ def atomic_write(path: Path, content: str) -> None:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise
+
+
+_transaction_depth = threading.local()
+
+
+@contextmanager
+def file_transaction(path: Path):
+    """Serialize a store across threads, instances and processes; allow nesting.
+
+    The lock file is permanent: replacing/unlinking it would split the lock domain.
+    """
+    key = str(path.resolve())
+    depths = getattr(_transaction_depth, "paths", None)
+    if depths is None:
+        depths = _transaction_depth.paths = {}
+    if depths.get(key, 0):
+        depths[key] += 1
+        try:
+            yield
+        finally:
+            depths[key] -= 1
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with get_path_lock(path), path.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        depths[key] = 1
+        try:
+            yield
+        finally:
+            depths.pop(key, None)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)

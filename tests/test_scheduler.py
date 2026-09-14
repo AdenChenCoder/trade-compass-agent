@@ -18,7 +18,7 @@ def test_registry_from_config():
     registry = JobRegistry()
     registry.from_config(config)
     ids = set(registry.ids())
-    assert ids == {"premarket", "morning_plan", "close", "eod_review", "postmarket", "weekly"}
+    assert ids == {"premarket", "morning_plan", "close", "eod_review", "postmarket", "weekly", "autonomous_trading"}
 
 
 def test_registry_get():
@@ -125,7 +125,7 @@ def test_sqlite_import_from_jsonl(tmp_path: Path):
 def test_tick_scheduler_builds_without_starting():
     scheduler = TickScheduler(load_app_config())
     jobs = scheduler.list_jobs()
-    assert len(jobs) == 6
+    assert len(jobs) == 7
     assert {j.id for j in jobs} >= {"close", "postmarket", "weekly"}
     assert not scheduler.running
 

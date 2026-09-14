@@ -52,6 +52,13 @@ class JobExecutor:
     ) -> RunRecord:
         run = self.run_store.create_run(job.id, trigger=trigger)
 
+        from trade_compass_agent.ops.autonomous_trading import JOB_ID, skip_reason
+        if job.id == JOB_ID:
+            reason = skip_reason(self.config.data_dir)
+            if reason:
+                self.run_store.skip_run(run, reason=reason)
+                return run
+
         if trigger not in {"api", "cli"} and job.trading_day_only and not _is_trading_day():
             self.run_store.skip_run(run, reason="非交易日")
             return run

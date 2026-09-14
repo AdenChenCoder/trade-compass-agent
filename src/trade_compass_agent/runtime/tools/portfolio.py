@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, time
+import math
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from trade_compass_agent.domain import AccountKind, PaperTrade
 from trade_compass_agent.evaluation.signal_tracker import SignalTracker
@@ -17,6 +19,12 @@ from trade_compass_agent.portfolio.lot_sizing import (
     suggest_rebalance_for_pnl,
 )
 from trade_compass_agent.portfolio.market_rules import infer_market_rules
+from trade_compass_agent.portfolio.trading_policy import (
+    AutonomousTradingStore,
+    TradeRejected,
+    account_balances,
+    buying_power,
+)
 from trade_compass_agent.runtime.market_stack import MarketStack
 
 logger = logging.getLogger(__name__)
@@ -70,7 +78,7 @@ def tool_analyze_portfolio(stack: MarketStack) -> str:
             raise TypeError("non-numeric position data")
     except Exception:
         positions = portfolio.positions()
-    summaries = portfolio.account_summaries()
+    summaries = portfolio.account_summaries(positions)
     realized = portfolio.realized_trades()
 
     position_data = []
@@ -144,6 +152,10 @@ def tool_analyze_portfolio(stack: MarketStack) -> str:
     recent_closed = [
         {
             "symbol": r.symbol,
+            "account": r.account.value,
+            "quantity": r.quantity,
+            "entry_trade_id": r.entry_trade_id,
+            "exit_trade_id": r.exit_trade_id,
             "pnl": r.pnl,
             "entry": r.entry_price,
             "exit": r.exit_price,
@@ -166,9 +178,14 @@ def tool_analyze_portfolio(stack: MarketStack) -> str:
             "positions": position_data,
             "account_summaries": summary_data,
             "recent_closed_trades": recent_closed,
+            "recent_trades": portfolio.trade_history(limit=20),
+            "trades_as_of": _market_now().isoformat(),
+            "trade_history_note": "recent_trades 是按成交时间倒序的最近20笔实际流水，数量和 trade_id 以此为准；recent_closed_trades 是 FIFO 分批结算，同一卖出可能对应多条，不代表多笔成交。更早成交可用 search_decisions 的 execution_trades 核对，未查询到不能推算或编造。",
             "total_market_value": round(total_value, 2),
             "total_positions": len(positions),
             "concentration_top5": concentration,
+            "autonomous_trading_enabled": AutonomousTradingStore(stack.config.data_dir).read(),
+            "account_balances": account_balances(portfolio, stack.config.data_dir),
         },
         ensure_ascii=False,
     )
@@ -192,6 +209,7 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
         else None
     )
     price_source = str(kwargs.get("price_source") or "provided_execution")
+    autonomous = bool(kwargs.get("_autonomous", False))
 
     if price_source not in _EXECUTION_PRICE_SOURCES:
         return json.dumps({"error": f"无效价格来源: {price_source}"}, ensure_ascii=False)
@@ -204,6 +222,8 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
     if price_source == "market_quote":
         try:
             price, price_as_of = _latest_execution_price(stack, symbol)
+        except TradeRejected as exc:
+            return json.dumps(exc.payload, ensure_ascii=False)
         except Exception as exc:
             return json.dumps(
                 {"error": f"无法获取 {symbol} 的市场成交价: {exc}", "trade_rejected": True},
@@ -228,10 +248,10 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
     is_st = bool(kwargs.get("is_st", False))
     suspended = bool(kwargs.get("suspended", False))
     is_t0 = kwargs.get("is_t0")
-    if is_t0 is None:
+    if is_t0 is None or price_source == "market_quote":
         is_t0 = rules.is_t0
     price_limit_pct = kwargs.get("price_limit_pct")
-    if price_limit_pct is None:
+    if price_limit_pct is None or price_source == "market_quote":
         price_limit_pct = rules.price_limit_pct
 
     trade = PaperTrade(
@@ -240,7 +260,7 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
         side=side,
         quantity=quantity,
         price=price,
-        timestamp=datetime.now(),
+        timestamp=_market_now() if price_source == "market_quote" else datetime.now(),
         reason=reason,
         trade_id=trade_id,
         decision_id=decision_id,
@@ -259,9 +279,44 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
         return json.dumps({"error": msg, "trade_rejected": True}, ensure_ascii=False)
 
     fee = portfolio.estimate_fee(trade)
-    portfolio.record(trade)
+    def validate_execution(current_portfolio):
+        execution_guard = kwargs.get("_execution_guard")
+        if execution_guard is not None:
+            execution_guard()
+        if autonomous and not AutonomousTradingStore(stack.config.data_dir).read():
+            raise TradeRejected("自主交易已关闭，本次交易未成交", "autonomous_trading_disabled")
+        if price_source != "market_quote":
+            return
+        _validate_quote_time(price_as_of, _market_now())
+        if side == "buy":
+            if quantity < rules.min_lot or (
+                rules.board not in ("科创板", "北交所") and quantity % rules.min_lot
+            ):
+                raise TradeRejected("买入数量不符合该标的最小交易单位", "invalid_lot_size")
+            available = buying_power(current_portfolio, stack.config.data_dir, acct)
+            required = round(price * quantity + fee, 4)
+            if required > available + 0.000001:
+                raise TradeRejected(
+                    f"可用资金不足：需要 {required:.2f}，可用 {available:.2f}",
+                    "insufficient_funds", available_cash=available, required_cash=required,
+                )
+        elif rules.board not in ("科创板", "北交所") and quantity % rules.min_lot:
+            if quantity != current_portfolio._position_qty(symbol, acct):
+                raise TradeRejected("零股卖出须一次性卖出该标的剩余持仓", "invalid_lot_size")
 
-    _update_signal_tracker(stack.config.data_dir, symbol, side, price)
+    try:
+        portfolio.record(trade, before_record=validate_execution)
+    except TradeRejected as exc:
+        return json.dumps(exc.payload, ensure_ascii=False)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc), "trade_rejected": True}, ensure_ascii=False)
+
+    try:
+        _update_signal_tracker(stack.config.data_dir, symbol, side, price)
+    except Exception as exc:
+        # The authoritative fill already exists; reporting a failed order here
+        # could make the agent retry a trade that has actually executed.
+        logger.warning("Trade %s executed but signal synchronization failed: %s", trade_id, exc)
 
     # Decision Journal + Instrument Page integration
     _sync_decision_journal(
@@ -289,6 +344,7 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
             "reason": reason,
             "trade_id": trade_id,
             "decision_id": decision_id,
+            "timestamp": trade.timestamp.isoformat(),
             "price_source": price_source,
             "price_as_of": price_as_of.isoformat() if price_as_of else None,
             "requested_price": requested_price if requested_price > 0 else None,
@@ -467,6 +523,8 @@ def tool_batch_paper_trades(stack: MarketStack, **kwargs: Any) -> str:
         results.append({
             "symbol": symbol,
             "status": "executed",
+            "account": account,
+            "timestamp": trade.timestamp.isoformat(),
             "side": side,
             "quantity": quantity,
             "price": price,
@@ -517,6 +575,33 @@ def _latest_execution_price(stack: MarketStack, symbol: str) -> tuple[float, dat
         raise ValueError("行情源未返回数据")
     latest = max(bars, key=lambda bar: bar.timestamp)
     price = float(latest.close)
-    if price <= 0:
+    if not math.isfinite(price) or price <= 0:
         raise ValueError("行情价格无效")
+    _validate_quote_time(latest.timestamp, _market_now())
+    if not math.isfinite(float(latest.volume)) or latest.volume <= 0:
+        raise TradeRejected("最新行情没有有效成交量，请重新获取行情后判断", "no_market_trades")
     return price, latest.timestamp
+
+
+def _market_now() -> datetime:
+    return datetime.now(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+
+
+def _validate_quote_time(timestamp: datetime, now: datetime) -> None:
+    from trade_compass_agent.ops.trading_calendar import is_trading_day
+
+    clock = now.time()
+    if not is_trading_day(now.date()) or not (
+        time(9, 30) <= clock <= time(11, 30) or time(13) <= clock <= time(15)
+    ):
+        raise TradeRejected("当前不在交易时段，本次模拟交易未成交", "market_closed")
+    local_timestamp = (
+        timestamp.astimezone(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+        if timestamp.tzinfo is not None else timestamp
+    )
+    age = (now - local_timestamp).total_seconds()
+    if not -60 <= age <= 120:
+        raise TradeRejected(
+            "行情已过期或时间无效，请重新获取有效市场行情后决定是否交易",
+            "stale_quote", price_as_of=timestamp.isoformat(), quote_age_seconds=age,
+        )

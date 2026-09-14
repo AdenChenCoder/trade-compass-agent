@@ -354,14 +354,14 @@ def test_memory_pin_and_forget_api(client: TestClient) -> None:
     forgotten = forget_response.json()["entries"][0]
     assert forgotten["text"] == text
     assert forgotten["status"] == "archived"
-    assert forgotten["confidence"] == 0.0
+    assert forgotten["confidence"] == 1.0  # retirement preserves recorded confidence
 
 
 def test_jobs_listing_and_run(client: TestClient) -> None:
     jobs = _get(client, "/api/jobs")
     assert isinstance(jobs, list)
     job_ids = {job["id"] for job in jobs}
-    assert job_ids == {"premarket", "morning_plan", "close", "eod_review", "postmarket", "weekly"}
+    assert job_ids == {"premarket", "morning_plan", "close", "eod_review", "postmarket", "weekly", "autonomous_trading"}
     for job in jobs:
         assert "delivery_channels" in job
         assert isinstance(job["delivery_channels"], list)

@@ -45,6 +45,7 @@ def test_tushare_provider_daily_bars(monkeypatch):
 
     rows = [
         {
+            "ts_code": "600519.SH",
             "trade_date": "20240102",
             "open": 10.0,
             "high": 10.5,
@@ -54,6 +55,7 @@ def test_tushare_provider_daily_bars(monkeypatch):
             "amount": 10000,
         },
         {
+            "ts_code": "600519.SH",
             "trade_date": "20240103",
             "open": 10.2,
             "high": 10.8,
@@ -63,21 +65,16 @@ def test_tushare_provider_daily_bars(monkeypatch):
             "amount": 12000,
         },
     ]
-    fake_pro = MagicMock()
-    fake_pro.daily.return_value = FakeFrame(rows)
-
-    fake_ts = MagicMock()
-    fake_ts.pro_api.return_value = fake_pro
-
-    with patch.dict("sys.modules", {"tushare": fake_ts}):
+    with patch("trade_compass_agent.data.tushare_provider.query_tushare", return_value=FakeFrame(rows)) as query:
         provider = TushareProvider(token="test-token")
         bars = provider.get_bars("600519", limit=5)
 
     assert len(bars) == 2
     assert bars[-1].close == 10.6
     assert bars[-1].timestamp == datetime(2024, 1, 3, 15, 0, 0)
-    fake_pro.daily.assert_called_once()
-    call_kwargs = fake_pro.daily.call_args.kwargs
+    query.assert_called_once()
+    assert query.call_args.args[0] == "daily"
+    call_kwargs = query.call_args.kwargs
     assert call_kwargs["ts_code"] == "600519.SH"
 
 

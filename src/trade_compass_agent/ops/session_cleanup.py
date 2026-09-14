@@ -88,6 +88,10 @@ def sweep_scheduler_sessions(
 
     for path in sessions_dir.glob("scheduler-*.jsonl"):
         session_id = path.stem
+        from trade_compass_agent.ops.autonomous_trading import SESSION_PREFIX
+        if session_id.startswith(SESSION_PREFIX):
+            # Trading decisions and tool receipts remain accessible for month-long reviews.
+            continue
         session_date = parse_scheduler_session_date(session_id)
         if session_date is None or session_date >= cutoff:
             continue

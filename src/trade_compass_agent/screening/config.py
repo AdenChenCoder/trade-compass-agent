@@ -44,7 +44,7 @@ class ScreeningConfig:
     trading_days: int = 60
 
     # Data fetch
-    fetch_workers: int = 40
+    fetch_workers: int = 8
     batch_size: int = 200
     batch_sleep: float = 0.5
 

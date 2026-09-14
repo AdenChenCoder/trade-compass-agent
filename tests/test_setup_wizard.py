@@ -169,7 +169,7 @@ def test_wizard_writes_config_and_secrets_to_authoritative_files(
             "企业微信 Bot ID": "wecom-bot-id",
         },
         confirms={
-            "启用 Tushare（需要安装 tushare extra）": True,
+            "启用 Tushare（需要 Token 和相应数据权限）": True,
             "配置增强搜索 API Key": True,
             "允许外部 LLM 额外总结对话/复盘并写入记忆": True,
             "启用对话后学习（需同时允许外部 LLM 记忆）": True,

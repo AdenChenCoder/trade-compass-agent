@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Briefcase, Loader2, Pencil, PlusCircle, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
+import { AutonomousTradingControl } from "@/components/portfolio/AutonomousTradingControl";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -87,6 +88,7 @@ export function PortfolioPage() {
   const accountsQuery = useQuery({
     queryKey: ["accounts"],
     queryFn: fetchAccounts,
+    refetchInterval: isMarketHours() ? 30_000 : false,
   });
 
   const portfolioQuery = useQuery({
@@ -223,6 +225,8 @@ export function PortfolioPage() {
           </Button>
         </div>
 
+        <AutonomousTradingControl />
+
         {portfolioQuery.isLoading && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> 加载中…
@@ -343,6 +347,11 @@ export function PortfolioPage() {
                           <CardDescription className="font-mono text-xs">
                             {acct.kind} · 资金 {formatMoney(acct.capital)}
                           </CardDescription>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {typeof acct.available_cash === "number"
+                              ? `可用资金 ${formatMoney(acct.available_cash)}`
+                              : acct.cash_error ?? "可用资金暂不可用"}
+                          </p>
                         </div>
                         <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                           <Button

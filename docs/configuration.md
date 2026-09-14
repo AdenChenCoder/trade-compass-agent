@@ -99,6 +99,26 @@ Chart rendering used by the built-in stock-analysis agents is part of the
 default installation. Extras are only needed for additional integrations and
 heavier capabilities.
 
+Market data uses free sources by default. With `data_provider: auto`, configure
+`TUSHARE_TOKEN` and enable `data.tushare_enabled` to prefer Tushare for supported
+daily bars and fundamentals, including bulk screening. A saved token alone does
+not enable paid requests. Valid Tushare daily caches can be reused; other cached
+sources and free providers become fallbacks when Tushare fails or returns stale
+data. Minute bars continue to use the existing free providers because this
+integration only supports completed daily bars. Existing caches are retained
+when the option is disabled; subsequent network requests use free sources.
+
+Batch requests follow the same preference. Large stock screens fetch Tushare
+history by trading date and reuse the existing cache; batch fundamentals use
+daily snapshots. Missing or failed symbols fall back individually, and results
+retain their actual source and data status. Invalid placeholder values are not
+treated as company fundamentals; funds and indices report this data as not
+applicable. A successful request alone does not establish data completeness.
+
+These providers use the official HTTPS API directly. The `tushare` extra remains
+available for users who also need the vendor SDK; it is not required by the
+built-in providers.
+
 Add an extra to an installed tool:
 
 ```bash

@@ -262,7 +262,7 @@ def test_decisions_api_recovers_ledger_and_exposes_audit_fields(client, tmp_path
     assert decision["reconciliation_status"] == "confirmed"
 
 
-def test_market_quote_execution_uses_server_price_and_records_provenance(tmp_path):
+def test_market_quote_execution_uses_server_price_and_records_provenance(tmp_path, monkeypatch):
     from unittest.mock import MagicMock
 
     stack = MagicMock()
@@ -270,6 +270,8 @@ def test_market_quote_execution_uses_server_price_and_records_provenance(tmp_pat
     stack.config.memory_dir = tmp_path / "memory"
     stack.config.trading_costs = TradingCostConfig()
     quote_time = datetime(2026, 7, 16, 10, 5)
+    monkeypatch.setattr("trade_compass_agent.runtime.tools.portfolio._market_now", lambda: quote_time)
+    monkeypatch.setattr("trade_compass_agent.ops.trading_calendar.is_trading_day", lambda day: True)
     stack.provider.get_bars.return_value = [
         Bar(
             symbol="600519",

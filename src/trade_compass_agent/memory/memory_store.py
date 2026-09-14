@@ -6,15 +6,10 @@ Maintains two parallel states:
 - Live entries: mutated by tool calls, persisted immediately to disk.
   Tool responses reflect live state.
 
-Entry format: JSON-lines metadata file + plain-text body.
-Legacy format (§-delimited) is auto-migrated on first load.
-
-Features (v2):
-- Context fencing for safe prompt injection
-- Per-entry metadata: confidence, access_count, last_accessed, source
-- Ebbinghaus decay: confidence decays over time, reinforced on access
-- SHA-256 dedup within 5-minute window
-- Auto-archive entries below confidence threshold
+The JSON ledger commits text, identity, lifecycle and provenance together.
+KNOWLEDGE.md / USER.md are effective-only projections. Candidates and retired
+versions remain accessible in the ledger and the normal memory API.
+Age/usage informs review; neither changes admission by itself.
 """
 
 from __future__ import annotations
@@ -28,6 +23,13 @@ import re
 import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
+from copy import deepcopy
+from functools import wraps
+from uuid import uuid4
+import threading
+
+from trade_compass_agent.concurrency import file_transaction
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -46,7 +48,6 @@ REINFORCED_LAMBDA_FACTOR = 0.5  # halve decay rate for frequently accessed
 REINFORCE_THRESHOLD = 5  # access_count above which decay slows
 ARCHIVE_CONFIDENCE_KNOWLEDGE = 0.3  # archive threshold for KNOWLEDGE entries
 ARCHIVE_CONFIDENCE_USER = 0.2  # archive threshold for USER entries
-DEDUP_WINDOW_MINUTES = 5
 
 _INJECTION_PATTERNS = [
     r"ignore\s+(previous|all|above)\s+(instructions?|prompts?)",
@@ -120,6 +121,11 @@ class EntryMeta:
     source: str = "agent"  # "agent" | "user" | "promotion" | "user_pin" | "curator" | ...
     dedup_hash: str = ""
     status: str = "active"  # "active" | "archived"
+    entry_id: str = field(default_factory=lambda: uuid4().hex)
+    version: int = 1
+    reason: str = ""
+    evidence: list[str] = field(default_factory=list)
+    needs_review: bool = False
     disproof_count: int = 0
     promoted_by_run_id: str = ""
     promoted_by_job_id: str = ""
@@ -179,703 +185,555 @@ def _compute_confidence(meta: EntryMeta, target: str = "memory") -> float:
 # ---------------------------------------------------------------------------
 
 
-class MemoryStore:
-    """Bounded curated memory with file persistence, decay, and dedup."""
+def _live(method):
+    """Refresh under the shared transaction before every live read or mutation."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._transaction():
+            return method(self, *args, **kwargs)
+    return wrapped
 
-    def __init__(
-        self,
-        memory_dir: Path,
-        memory_char_limit: int = DEFAULT_MEMORY_CHAR_LIMIT,
-        user_char_limit: int = DEFAULT_USER_CHAR_LIMIT,
-        write_gate: "SemanticWriteGate | None" = None,
-        min_inject_confidence: float = 0.5,
-    ) -> None:
-        self._memory_dir = memory_dir
-        self._memory_file = memory_dir / "KNOWLEDGE.md"
-        self._user_file = memory_dir / "USER.md"
-        self._meta_file = memory_dir / ".memory_meta.json"
+
+class MemoryStore:
+    """Versioned memory ledger with a bounded, explicit effective core.
+
+    .memory_meta.json is the authoritative record (including candidates/history).
+    Markdown files are recoverable projections of the effective core only. A
+    single atomic ledger replacement commits text, identity, provenance and state.
+    All consumers use this boundary; session prompt snapshots remain frozen.
+    """
+
+    def __init__(self, memory_dir: Path,
+                 memory_char_limit: int = DEFAULT_MEMORY_CHAR_LIMIT,
+                 user_char_limit: int = DEFAULT_USER_CHAR_LIMIT,
+                 write_gate: "SemanticWriteGate | None" = None,
+                 min_inject_confidence: float = 0.5) -> None:
+        self._memory_dir = Path(memory_dir)
+        self._memory_file = self._memory_dir / "KNOWLEDGE.md"
+        self._user_file = self._memory_dir / "USER.md"
+        self._meta_file = self._memory_dir / ".memory_meta.json"
+        self._previous_file = self._memory_dir / ".memory_meta.previous.json"
+        self._lock_file = self._memory_dir / ".memory.lock"
         self._memory_char_limit = memory_char_limit
         self._user_char_limit = user_char_limit
         self._min_inject_confidence = min_inject_confidence
-        self._recent_hashes: dict[str, datetime] = {}
         self._write_gate = write_gate
-
-        memory_dir.mkdir(parents=True, exist_ok=True)
-        self._memory_snapshot: str = ""
-        self._user_snapshot: str = ""
-        self._meta: dict[str, list[dict]] = {"memory": [], "user": []}
-        self._load_meta()
-        self._maybe_migrate_legacy()
-        self._reconcile_meta()
+        self._memory_snapshot = self._user_snapshot = ""
+        self._meta: dict[str, Any] = {}
+        self._local = threading.local()
+        self._memory_dir.mkdir(parents=True, exist_ok=True)
         self.load_from_disk()
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    @contextmanager
+    def _transaction(self):
+        with file_transaction(self._lock_file):
+            outer = not getattr(self._local, "depth", 0)
+            self._local.depth = getattr(self._local, "depth", 0) + 1
+            try:
+                if outer:
+                    self._load_meta()
+                yield
+            finally:
+                self._local.depth -= 1
 
-    def load_from_disk(self, min_inject_confidence: float | None = None) -> None:
-        """Load and freeze snapshots for this session (confidence-filtered)."""
-        min_conf = min_inject_confidence if min_inject_confidence is not None else self._min_inject_confidence
-        self._memory_snapshot = self._build_snapshot_text("memory", min_conf)
-        self._user_snapshot = self._build_snapshot_text("user", min_conf)
+    def _limit(self, target):
+        if target not in ("memory", "user"):
+            raise ValueError("target must be memory or user")
+        return self._memory_char_limit if target == "memory" else self._user_char_limit
 
-    def _build_snapshot_text(self, target: str, min_confidence: float) -> str:
-        active = self.list_active(target, min_confidence=min_confidence)
-        if not active:
-            return ""
-        return ENTRY_DELIMITER.join(m.text for m in active)
+    def _core(self, target):
+        self._limit(target)
+        return [r for r in self._meta.get(target, []) if r.get("status") == "active"]
 
-    def find_by_source_obs_ids(
-        self,
-        obs_ids: list[str],
-        target: str = "memory",
-    ) -> list[EntryMeta]:
-        """Find entries whose source_obs_ids overlap with the given observation ids."""
-        if not obs_ids:
-            return []
-        wanted = set(obs_ids)
-        result: list[EntryMeta] = []
-        for meta in self.get_entries_with_meta(target):
-            row_ids = set(meta.source_obs_ids or [])
-            raw = self._meta.get(target, [])
-            idx = next((i for i, m in enumerate(raw) if m.get("text") == meta.text), -1)
-            if idx >= 0:
-                row_ids |= set(raw[idx].get("source_obs_ids") or [])
-            if wanted & row_ids:
-                result.append(meta)
-        return result
+    def _chars(self, target):
+        return len(ENTRY_DELIMITER.join(r["text"] for r in self._core(target)))
+
+    def _fits(self, target, rows):
+        return len(ENTRY_DELIMITER.join(r["text"] for r in rows if r["status"] == "active")) <= self._limit(target)
+
+    @_live
+    def capacity(self, target="memory") -> dict[str, Any]:
+        rows = self._meta.get(target, [])
+        used, limit = self._chars(target), self._limit(target)
+        return {"chars_used": used, "limit": limit, "revision": self._meta["revision"],
+                "active_count": sum(r["status"] == "active" for r in rows),
+                "candidate_count": sum(r["status"] == "candidate" for r in rows),
+                "archived_count": sum(r["status"] == "archived" for r in rows),
+                "pressure": used >= int(limit * .9),
+                "maintenance_needed": used >= int(limit * .9) or any(
+                    r["status"] == "candidate" or r.get("needs_review") for r in rows)}
+
+    @_live
+    def review_fingerprint(self):
+        values = [(r["entry_id"], r["version"], r["status"], r.get("needs_review"))
+                  for target in ("memory", "user") for r in self._meta[target]]
+        return hashlib.sha256(json.dumps(values).encode()).hexdigest()
+
+    @_live
+    def review_due(self):
+        return self.capacity()["maintenance_needed"] and self._meta.get("background_reviewed_fingerprint") != self.review_fingerprint()
+
+    @_live
+    def snapshot(self, target="memory", *, include_history=True):
+        return {"entries": self.get_entries_with_meta(target, include_history=include_history), **self.capacity(target)}
 
     @property
-    def memory_entries(self) -> list[str]:
-        """Live entries from disk (not frozen snapshot)."""
-        return self._parse_entries(self._read_file(self._memory_file))
-
-    @property
-    def user_entries(self) -> list[str]:
-        """Live user entries from disk."""
-        return self._parse_entries(self._read_file(self._user_file))
-
-    @property
-    def min_inject_confidence(self) -> float:
+    def min_inject_confidence(self):
         return self._min_inject_confidence
 
-    def get_entries_with_meta(self, target: str = "memory") -> list[EntryMeta]:
-        """Get entries with computed confidence scores."""
-        metas = self._meta.get(target, [])
-        entries = self.memory_entries if target == "memory" else self.user_entries
-        result = []
-        for i, text in enumerate(entries):
-            if i < len(metas):
-                meta = _entry_meta_from_dict(metas[i])
-            else:
-                meta = EntryMeta(text=text)
-            meta.confidence = _compute_confidence(meta, target)
-            result.append(meta)
-        return result
+    @property
+    @_live
+    def revision(self):
+        return self._meta["revision"]
 
-    def get_active_meta(
-        self,
-        target: str = "memory",
-        min_confidence: float = 0.0,
-    ) -> list[dict[str, Any]]:
-        """Return non-archived metadata dicts with confidence >= *min_confidence*."""
-        rows: list[dict[str, Any]] = []
-        for row in self._meta.get(target, []):
-            if row.get("status", "active") == "archived":
-                continue
-            meta = _entry_meta_from_dict(row)
-            effective = _compute_confidence(meta, target)
-            if effective >= min_confidence:
-                rows.append(row)
-        return rows
+    @property
+    @_live
+    def memory_entries(self):
+        """Compatibility accessor: current records, including inactive records."""
+        return [r["text"] for r in self._meta["memory"]]
 
-    def list_active(
-        self,
-        target: str = "memory",
-        min_confidence: float = 0.0,
-    ) -> list[EntryMeta]:
-        """Active entries with effective confidence >= *min_confidence*."""
-        result: list[EntryMeta] = []
-        for meta in self.get_entries_with_meta(target):
-            raw = self._meta.get(target, [])
-            idx = next((i for i, m in enumerate(raw) if m.get("text") == meta.text), -1)
-            if idx >= 0 and raw[idx].get("status", "active") == "archived":
-                continue
-            if meta.confidence >= min_confidence:
-                result.append(meta)
-        return result
+    @property
+    @_live
+    def user_entries(self):
+        return [r["text"] for r in self._meta["user"]]
 
-    def _is_trusted_write(self, source: str) -> bool:
+    @_live
+    def get_entries_with_meta(self, target="memory", *, include_history=False):
+        self._limit(target)
+        rows = list(self._meta[target])
+        if include_history:
+            rows += [r for r in self._meta.get("history", []) if r.get("target") == target]
+        return [_entry_meta_from_dict(deepcopy(r)) for r in rows]
+
+    @_live
+    def get_active_meta(self, target="memory", min_confidence=0.0):
+        # Admission is explicit. Age triggers re-evaluation, never silent eviction.
+        return deepcopy([r for r in self._core(target) if r["confidence"] >= min_confidence])
+
+    @_live
+    def list_active(self, target="memory", min_confidence=0.0):
+        return [_entry_meta_from_dict(r) for r in self.get_active_meta(target, min_confidence)]
+
+    @_live
+    def find_by_source_obs_ids(self, obs_ids, target="memory"):
+        wanted = set(obs_ids)
+        return [m for m in self.get_entries_with_meta(target) if wanted.intersection(m.source_obs_ids)]
+
+    @_live
+    def load_from_disk(self, min_inject_confidence=None):
+        # State and quota use the same set; confidence filtering occurs at admission.
+        self._memory_snapshot = ENTRY_DELIMITER.join(r["text"] for r in self._core("memory"))
+        self._user_snapshot = ENTRY_DELIMITER.join(r["text"] for r in self._core("user"))
+
+    def format_for_system_prompt(self):
+        parts = []
+        for label, snapshot, limit in (("KNOWLEDGE", self._memory_snapshot, self._memory_char_limit),
+                                      ("USER PROFILE", self._user_snapshot, self._user_char_limit)):
+            if snapshot:
+                used = len(snapshot)
+                parts.append(f"## {label} ({int(used / limit * 100)}% — {used}/{limit} chars)\n\n{snapshot}")
+        return build_memory_context_block("\n\n".join(parts)) if parts else ""
+
+    @staticmethod
+    def is_trusted_source(source):
         return source in _TRUSTED_WRITE_SOURCES
 
-    @staticmethod
-    def is_trusted_source(source: str) -> bool:
-        return source in _TRUSTED_WRITE_SOURCES
+    def _write_confidence(self, source, confidence):
+        if source == "user_pin":
+            return 1.0
+        value = float(confidence if confidence is not None else (.85 if self.is_trusted_source(source) else .4))
+        cap = 1.0 if self.is_trusted_source(source) else max(0, self._min_inject_confidence - .01)
+        return max(0.0, min(cap, value))
 
-    def _write_confidence(self, source: str, confidence: float | None) -> float:
-        if confidence is None:
-            if source == "user_pin":
-                return 1.0
-            if self.is_trusted_source(source):
-                return 0.85
-            confidence = 0.4
-        value = float(confidence)
-        if self.is_trusted_source(source):
-            return max(0.0, min(1.0, value))
-        cap = max(0.0, self._min_inject_confidence - _CONFIDENCE_EPSILON)
-        return max(0.0, min(value, cap))
+    def _new_row(self, text, source, confidence=None, meta_extra=None):
+        conf = self._write_confidence(source, confidence)
+        row = asdict(EntryMeta(text=text, source=source, confidence=conf,
+                              status="active" if conf >= self._min_inject_confidence else "candidate"))
+        # Callers can attach evidence, never replace identity or lifecycle fields.
+        for key in ("source_obs_ids", "promoted_by_run_id", "promoted_by_job_id", "promoted_at",
+                    "supersedes_hashes", "reason", "evidence"):
+            if meta_extra and key in meta_extra:
+                row[key] = deepcopy(meta_extra[key])
+        if not row["reason"]:
+            row["reason"] = "admitted" if row["status"] == "active" else "awaiting_evidence"
+        return row
 
-    @staticmethod
-    def _merge_meta_extra(row: dict[str, Any], meta_extra: dict[str, Any] | None) -> None:
-        if not meta_extra:
-            return
-        for key, value in meta_extra.items():
-            if key in _META_FIELD_NAMES:
-                row[key] = value
+    def _receipt(self, row, target, *, changed=True, **extra):
+        return {"ok": True, "changed": changed, "accepted": row["status"] == "active",
+                "disposition": {"active": "adopted", "candidate": "pending", "archived": "retired"}[row["status"]],
+                "entry_id": row["entry_id"], "version": row["version"], "status": row["status"],
+                "confidence": row["confidence"], "source": row["source"], "reason": row["reason"],
+                **self.capacity(target), **extra}
 
-    def _upgrade_existing_entry(
-        self,
-        idx: int,
-        *,
-        target: str,
-        source: str,
-        confidence: float | None,
-        meta_extra: dict[str, Any] | None,
-        reason: str,
-    ) -> dict[str, Any]:
-        metas = self._meta.setdefault(target, [])
-        while len(metas) <= idx:
-            entries = self.memory_entries if target == "memory" else self.user_entries
-            text = entries[len(metas)] if len(metas) < len(entries) else ""
-            metas.append(asdict(EntryMeta(text=text, source="reconciled", confidence=0.85)))
-        row = metas[idx]
-        row["status"] = "active"
-        row["source"] = source
-        if confidence is not None:
-            row["confidence"] = max(float(row.get("confidence", 0.0)), confidence)
-        row["content_hash"] = row.get("content_hash") or row.get("dedup_hash") or _content_hash(row.get("text", ""))
-        self._merge_meta_extra(row, meta_extra)
-        self._save_meta()
-        return {
-            "ok": True,
-            reason: True,
-            "entry_index": idx,
-            "confidence": row.get("confidence", confidence),
-            "source": row.get("source", source),
-        }
+    def _error(self, message, disposition="failed", **extra):
+        return {"ok": False, "changed": False, "disposition": disposition, "error": message, **extra}
 
-    def adjust_confidence(
-        self,
-        *,
-        entry_hash: str | None = None,
-        text_prefix: str | None = None,
-        delta: float,
-        reason: str,
-        run_id: str | None = None,
-        target: str = "memory",
-        archive_after_disproofs: int = 2,
-    ) -> dict[str, Any]:
-        """Adjust stored confidence for an entry; archive after repeated disproofs."""
-        metas = self._meta.get(target, [])
-        idx = self._find_meta_index(metas, entry_hash=entry_hash, text_prefix=text_prefix)
-        if idx is None:
-            return {"ok": False, "error": "Entry not found"}
-
-        row = metas[idx]
-        previous = float(row.get("confidence", 1.0))
-        new_conf = max(0.0, min(1.0, previous + delta))
-        row["confidence"] = new_conf
-        row["content_hash"] = row.get("content_hash") or row.get("dedup_hash") or _content_hash(row.get("text", ""))
-
-        adjustments = list(row.get("adjustments") or [])
-        adjustments.append({
-            "at": _now_iso(),
-            "delta": delta,
-            "reason": reason,
-            "run_id": run_id,
-            "previous": previous,
-            "new": new_conf,
-        })
-        row["adjustments"] = adjustments[-20:]
-
-        if delta < 0:
-            row["disproof_count"] = int(row.get("disproof_count", 0)) + 1
-            if row["disproof_count"] >= archive_after_disproofs:
-                row["status"] = "archived"
-                row["confidence"] = 0.0
-                new_conf = 0.0
-
-        self._save_meta()
-        return {
-            "ok": True,
-            "entry_hash": row["content_hash"],
-            "previous_confidence": previous,
-            "confidence": new_conf,
-            "disproof_count": row.get("disproof_count", 0),
-            "status": row.get("status", "active"),
-        }
-
-    @staticmethod
-    def _find_meta_index(
-        metas: list[dict[str, Any]],
-        *,
-        entry_hash: str | None,
-        text_prefix: str | None,
-    ) -> int | None:
-        if entry_hash:
-            for i, row in enumerate(metas):
-                h = row.get("content_hash") or row.get("dedup_hash") or _content_hash(row.get("text", ""))
-                if h == entry_hash:
-                    return i
-        if text_prefix:
-            matches = [i for i, row in enumerate(metas) if text_prefix in row.get("text", "")]
-            if len(matches) == 1:
-                return matches[0]
+    def _validate_text(self, text):
+        if not text.strip():
+            return "Empty entry"
+        if "§" in text:
+            return "Entry delimiter is not allowed inside a memory entry"
+        if self._scan_threats(text):
+            return "Content blocked by safety filter"
         return None
 
-    def archive_entry(self, text_prefix: str, target: str = "memory") -> dict[str, Any]:
-        """Soft-forget: mark entry archived and zero confidence (stays on disk)."""
-        metas = self._meta.get(target, [])
-        idx = self._find_meta_index(metas, entry_hash=None, text_prefix=text_prefix)
-        if idx is None:
-            return {"ok": False, "error": f"No entry contains '{text_prefix[:50]}'"}
-        row = metas[idx]
-        row["confidence"] = 0.0
-        row["status"] = "archived"
-        self._save_meta()
-        return {"ok": True, "text": (row.get("text") or "")[:80], "status": "archived"}
-
-    def format_for_system_prompt(self) -> str:
-        """Return FROZEN snapshot wrapped in context fencing."""
-        parts = []
-        if self._memory_snapshot:
-            used = len(self._memory_snapshot)
-            pct = int(used / self._memory_char_limit * 100)
-            parts.append(
-                f"## KNOWLEDGE ({pct}% — {used}/{self._memory_char_limit} chars)\n\n"
-                f"{self._memory_snapshot}"
-            )
-        if self._user_snapshot:
-            used = len(self._user_snapshot)
-            pct = int(used / self._user_char_limit * 100)
-            parts.append(
-                f"## USER PROFILE ({pct}% — {used}/{self._user_char_limit} chars)\n\n"
-                f"{self._user_snapshot}"
-            )
-        raw = "\n\n".join(parts)
-        if not raw:
-            return ""
-        return build_memory_context_block(raw)
-
-    def add(
-        self,
-        entry: str,
-        target: str = "memory",
-        source: str = "agent",
-        confidence: float | None = None,
-        meta_extra: dict[str, Any] | None = None,
-        allow_supersede: bool | None = None,
-        allow_reinforce: bool | None = None,
-    ) -> dict[str, Any]:
-        """Add a new entry with dedup check + WriteGate. Returns status dict."""
-        from trade_compass_agent.memory.write_gate import jaccard_similarity, JACCARD_THRESHOLD
-
+    @_live
+    def add(self, entry, target="memory", source="agent", confidence=None, meta_extra=None,
+            allow_supersede=None, allow_reinforce=None):
         entry = entry.strip()
-        if not entry:
-            return {"ok": False, "error": "Empty entry"}
-        if self._scan_threats(entry):
-            return {"ok": False, "error": "Content blocked by safety filter"}
-
-        h = _content_hash(entry)
-        write_confidence = self._write_confidence(source, confidence)
-        trusted_write = self._is_trusted_write(source)
-        if self._is_recent_dup(h) and not trusted_write:
-            return {"ok": False, "error": "Duplicate within dedup window"}
-
-        file_path = self._memory_file if target == "memory" else self._user_file
-        char_limit = self._memory_char_limit if target == "memory" else self._user_char_limit
-
-        entries = self._parse_entries(self._read_file(file_path))
-        metas = self._meta.get(target, [])
-        can_supersede = trusted_write if allow_supersede is None else allow_supersede
-        can_reinforce = trusted_write if allow_reinforce is None else allow_reinforce
-
-        # Check exact dup in existing entries. Trusted writes can revive/upgrade
-        # low-confidence or archived rows; low-trust writes cannot boost existing memory.
-        for i, existing in enumerate(entries):
-            if _content_hash(existing) != h:
+        error = self._validate_text(entry)
+        if error:
+            return self._error(error)
+        self._limit(target)
+        new = self._new_row(entry, source, confidence, meta_extra)
+        for row in sorted(self._meta[target], key=lambda r: (r["source"] != "user_pin", r["status"] != "active", r["status"] == "archived")):
+            if row["content_hash"] != new["content_hash"]:
                 continue
-            if trusted_write:
-                return self._upgrade_existing_entry(
-                    i,
-                    target=target,
-                    source=source,
-                    confidence=write_confidence,
-                    meta_extra=meta_extra,
-                    reason="duplicate",
-                )
-            return {"ok": False, "error": "Duplicate entry"}
-
-        # Similar entry → supersede or reinforce.
-        for i, existing in enumerate(entries):
-            sim = jaccard_similarity(entry, existing)
-            if sim > JACCARD_THRESHOLD:
-                self._record_hash(h)
-                row = metas[i] if i < len(metas) else {}
-                existing_conf = float(row.get("confidence", 1.0))
-                existing_archived = row.get("status", "active") == "archived"
-                existing_injects = (not existing_archived) and existing_conf >= self._min_inject_confidence
-
-                if trusted_write and (existing_archived or not existing_injects):
-                    result = self.replace(
-                        existing[:50],
-                        entry,
-                        target,
-                        source=source,
-                        confidence=write_confidence,
-                        meta_extra=meta_extra,
-                    )
-                    if result.get("ok"):
-                        return {"ok": True, "upgraded": True, "superseded": existing[:40]}
-
-                if can_supersede and len(entry) > len(existing) * 1.2:
-                    result = self.replace(
-                        existing[:50],
-                        entry,
-                        target,
-                        source=source,
-                        confidence=write_confidence,
-                        meta_extra=meta_extra,
-                    )
-                    if result.get("ok"):
-                        return {"ok": True, "superseded": existing[:40]}
-
-                if can_reinforce and existing_injects:
-                    self.reinforce(existing[:50], target)
-                return {
-                    "ok": False,
-                    "merged": True,
-                    "error": (
-                        f"Similar entry reinforced: '{existing[:40]}…'"
-                        if can_reinforce and existing_injects
-                        else f"Similar entry exists: '{existing[:40]}…'"
-                    ),
-                }
-
-        # WriteGate dedup check (quality checks moved to promotion stage)
-        if self._write_gate:
-            gate_entries = [
-                e for i, e in enumerate(entries)
-                if i >= len(metas)
-                or (
-                    metas[i].get("status", "active") != "archived"
-                    and float(metas[i].get("confidence", 1.0)) >= self._min_inject_confidence
-                )
-            ]
-            admitted, reason = self._write_gate.should_admit(entry, target, gate_entries)
-            if not admitted:
-                return {"ok": False, "error": f"WriteGate rejected: {reason}"}
-
-        new_content = ENTRY_DELIMITER.join(entries + [entry])
-        if len(new_content) > char_limit:
-            return {
-                "ok": False,
-                "error": f"Would exceed {target} limit ({len(new_content)}/{char_limit} chars). Remove old entries first.",
-            }
-
-        self._atomic_write(file_path, new_content)
-        self._record_hash(h)
-
-        meta = EntryMeta(text=entry, source=source)
-        meta.confidence = write_confidence
-        meta_dict = asdict(meta)
-        if meta_extra:
-            for key, value in meta_extra.items():
-                if key in _META_FIELD_NAMES:
-                    meta_dict[key] = value
-        self._meta.setdefault(target, []).append(meta_dict)
-        self._save_meta()
-
-        return {
-            "ok": True,
-            "entries": len(entries) + 1,
-            "chars_used": len(new_content),
-            "limit": char_limit,
-            "confidence": meta_dict.get("confidence", meta.confidence),
-            "source": source,
-        }
-
-    def replace(
-        self,
-        old_text: str,
-        new_text: str,
-        target: str = "memory",
-        *,
-        source: str | None = None,
-        confidence: float | None = None,
-        meta_extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Replace text within an entry (supersession: marks old as superseded)."""
-        new_text = new_text.strip()
-        if self._scan_threats(new_text):
-            return {"ok": False, "error": "Content blocked by safety filter"}
-
-        file_path = self._memory_file if target == "memory" else self._user_file
-        entries = self._parse_entries(self._read_file(file_path))
-
-        matches = [i for i, e in enumerate(entries) if old_text in e]
-        if len(matches) == 0:
-            return {"ok": False, "error": f"No entry contains '{old_text[:50]}'"}
-        if len(matches) > 1:
-            return {"ok": False, "error": f"Ambiguous: {len(matches)} entries match. Be more specific."}
-
-        idx = matches[0]
-        old_entry = entries[idx]
-        entries[idx] = new_text
-        new_content = ENTRY_DELIMITER.join(entries)
-
-        char_limit = self._memory_char_limit if target == "memory" else self._user_char_limit
-        if len(new_content) > char_limit:
-            return {"ok": False, "error": f"Would exceed {target} limit ({len(new_content)}/{char_limit} chars)."}
-
-        self._atomic_write(file_path, new_content)
-
-        # Supersession chain: record what was replaced
-        metas = self._meta.get(target, [])
-        old_hash = _content_hash(old_entry)
-        new_hash = _content_hash(new_text)
-        if idx < len(metas):
-            metas[idx]["text"] = new_text
-            metas[idx]["dedup_hash"] = new_hash
-            metas[idx]["content_hash"] = new_hash
-            metas[idx]["last_accessed"] = _now_iso()
-            metas[idx]["access_count"] = metas[idx].get("access_count", 0) + 1
-            metas[idx]["supersedes"] = old_hash
-            supersedes_hashes = list(metas[idx].get("supersedes_hashes") or [])
-            if old_hash not in supersedes_hashes:
-                supersedes_hashes.append(old_hash)
-            metas[idx]["supersedes_hashes"] = supersedes_hashes[-20:]
-            metas[idx]["status"] = "active"
-            if source is not None:
-                metas[idx]["source"] = source
-            if confidence is not None:
-                metas[idx]["confidence"] = self._write_confidence(
-                    str(metas[idx].get("source", "")),
-                    confidence,
-                )
-            self._merge_meta_extra(metas[idx], meta_extra)
-
-        # Archive the superseded entry
-        superseded = self._meta.setdefault("_superseded", [])
-        superseded.append({
-            "text": old_entry, "hash": old_hash,
-            "superseded_by": new_hash, "superseded_at": _now_iso(),
-        })
-        if len(superseded) > 50:
-            self._meta["_superseded"] = superseded[-50:]
-        self._save_meta()
-
-        return {"ok": True, "entry_index": idx, "superseded": old_hash[:8]}
-
-    def remove(self, text: str, target: str = "memory") -> dict[str, Any]:
-        """Remove an entry containing the given text."""
-        file_path = self._memory_file if target == "memory" else self._user_file
-        entries = self._parse_entries(self._read_file(file_path))
-
-        matches = [i for i, e in enumerate(entries) if text in e]
-        if len(matches) == 0:
-            return {"ok": False, "error": f"No entry contains '{text[:50]}'"}
-        if len(matches) > 1:
-            return {"ok": False, "error": f"Ambiguous: {len(matches)} entries match."}
-
-        idx = matches[0]
-        entries.pop(idx)
-        new_content = ENTRY_DELIMITER.join(entries)
-        self._atomic_write(file_path, new_content)
-
-        metas = self._meta.get(target, [])
-        if idx < len(metas):
-            metas.pop(idx)
-        self._save_meta()
-
-        return {"ok": True, "remaining": len(entries)}
-
-    def reinforce(self, text: str, target: str = "memory") -> dict[str, Any]:
-        """Reinforce a memory entry (called by background review on access).
-
-        Low-trust sources can accumulate usage signal, but cannot cross the
-        injection confidence threshold without promotion/user/curator review.
-        """
-        entries = self.memory_entries if target == "memory" else self.user_entries
-        matches = [i for i, e in enumerate(entries) if text in e]
-        if not matches:
-            return {"ok": False, "error": "Entry not found"}
-
-        idx = matches[0]
-        metas = self._meta.get(target, [])
-        if idx < len(metas):
-            if metas[idx].get("status", "active") == "archived":
-                return {"ok": False, "error": "Entry is archived"}
-            metas[idx]["access_count"] = metas[idx].get("access_count", 0) + 1
-            metas[idx]["last_accessed"] = _now_iso()
-            current = float(metas[idx].get("confidence", 1.0))
-            next_confidence = min(1.0, current + 0.1)
-            if not self.is_trusted_source(str(metas[idx].get("source", ""))):
-                cap = max(0.0, self._min_inject_confidence - _CONFIDENCE_EPSILON)
-                next_confidence = min(next_confidence, cap)
-            metas[idx]["confidence"] = max(current, next_confidence)
+            if not self.is_trusted_source(source):
+                return self._receipt(row, target, changed=False, duplicate=True)
+            if row["source"] == "user_pin" and source != "user_pin":
+                return self._receipt(row, target, changed=False, duplicate=True)
+            new["entry_id"], new["version"] = row["entry_id"], row["version"] + 1
+            new["source_obs_ids"] = sorted(set(row.get("source_obs_ids", []) + new["source_obs_ids"]))
+            proposed = [new if r is row else r for r in self._meta[target]]
+            if not self._fits(target, proposed):
+                if source == "user_pin" or row["status"] == "active":
+                    return self._error("Core capacity unavailable; existing record preserved", "capacity_blocked", **self.capacity(target))
+                new.update(status="candidate", reason="capacity_review_required")
+            if all(new[k] == row.get(k) for k in ("text", "source", "confidence", "status", "source_obs_ids")):
+                return self._receipt(row, target, changed=False, duplicate=True)
+            self._remember(row, target, "admission_updated", new["entry_id"])
+            self._meta[target] = proposed
             self._save_meta()
-            return {"ok": True, "confidence": metas[idx]["confidence"]}
-        return {"ok": True}
+            return self._receipt(new, target, duplicate=True)
+        # Similarity is a review hint, never proof that longer wording is better.
+        if self._write_gate and source != "user_pin":
+            admitted, reason = self._write_gate.should_admit(entry, target, [r["text"] for r in self._core(target)])
+            if not admitted:
+                new["status"], new["reason"] = "candidate", f"review_similarity: {reason}"
+        if not self._fits(target, self._meta[target] + [new]):
+            if source == "user_pin":
+                return self._error("Pinned content would exceed core capacity", "capacity_blocked", **self.capacity(target))
+            new["status"], new["reason"] = "candidate", "capacity_review_required"
+        self._meta[target].append(new)
+        self._save_meta()
+        return self._receipt(new, target, entries=len(self._meta[target]))
 
-    def archive_stale(self, target: str = "memory") -> list[str]:
-        """Archive entries with confidence below threshold. Returns archived texts."""
-        threshold = ARCHIVE_CONFIDENCE_USER if target == "user" else ARCHIVE_CONFIDENCE_KNOWLEDGE
-        entries_meta = self.get_entries_with_meta(target)
-        to_archive = [m for m in entries_meta if m.status != "archived" and m.confidence < threshold]
+    def _locate(self, target, text="", entry_id=None, expected_version=None):
+        self._limit(target)
+        matches = [r for r in self._meta[target]
+                   if (r["entry_id"] == entry_id if entry_id else bool(text) and text in r["text"])]
+        if len(matches) != 1:
+            return None, self._error("Entry not found" if not matches else "Ambiguous entry; use entry_id")
+        row = matches[0]
+        if expected_version is not None and row["version"] != expected_version:
+            return None, self._error("Entry changed; read the current version before retrying", "version_conflict",
+                                     entry_id=row["entry_id"], version=row["version"])
+        return row, None
+
+    def _remember(self, row, target, reason, successor=""):
+        old = deepcopy(row)
+        old.update(target=target, status="archived", reason=reason, retired_at=_now_iso(), successor_id=successor)
+        self._meta.setdefault("history", []).append(old)
+
+    @_live
+    def replace(self, old_text, new_text, target="memory", *, source=None, confidence=None,
+                meta_extra=None, entry_id=None, expected_version=None, actor="curator", reason="revision"):
+        error = self._validate_text(new_text)
+        if error:
+            return self._error(error)
+        row, error = self._locate(target, old_text, entry_id, expected_version)
+        if error:
+            return error
+        if row["source"] == "user_pin" and actor != "user":
+            return self._error("Pinned memory can only be changed by the user", "protected")
+        new = self._new_row(new_text.strip(), source or row["source"],
+                            confidence if confidence is not None else row["confidence"], meta_extra)
+        new.update(entry_id=row["entry_id"], version=row["version"] + 1,
+                   supersedes_hashes=list(dict.fromkeys(row.get("supersedes_hashes", []) + [row["content_hash"]])),
+                   reason=reason)
+        proposed = [new if r is row else r for r in self._meta[target]]
+        if not self._fits(target, proposed):
+            return self._error("Replacement would exceed core capacity; original preserved", "capacity_blocked", **self.capacity(target))
+        self._remember(row, target, reason, new["entry_id"])
+        self._meta[target] = proposed
+        self._save_meta()
+        return self._receipt(new, target, superseded=row["content_hash"])
+
+    @_live
+    def archive_entry(self, text_prefix="", target="memory", *, entry_id=None, expected_version=None,
+                      actor="curator", reason="retired", evidence=None):
+        row, error = self._locate(target, text_prefix, entry_id, expected_version)
+        if error:
+            return error
+        if row["source"] == "user_pin" and actor != "user":
+            return self._error("Pinned memory can only be changed by the user", "protected")
+        if row["status"] == "archived":
+            return self._receipt(row, target, changed=False)
+        self._remember(row, target, reason)
+        row.update(status="archived", reason=reason, version=row["version"] + 1)
+        row["evidence"] = list(dict.fromkeys(row.get("evidence", []) + list(evidence or [])))
+        self._save_meta()
+        return self._receipt(row, target, text=row["text"])
+
+    def remove(self, text, target="memory", **kwargs):
+        """Compatibility alias for soft retirement; history is always accessible."""
+        return self.archive_entry(text, target, **kwargs)
+
+    @_live
+    def commit_revision(self, *, replacements, content, reason, evidence, target="memory",
+                        expected_revision=None, actor="curator", source_obs_ids=None, source="curator"):
+        """Atomically adopt/merge/replace a proposed set after external evaluation.
+
+        replacements contains entry_id/version pairs. The evaluator runs outside
+        this lock; a stale proposal can never delete or overwrite newer knowledge.
+        """
+        if expected_revision is not None and self._meta["revision"] != expected_revision:
+            return self._error("Core changed; re-evaluate the proposal", "version_conflict", revision=self._meta["revision"])
+        if not reason.strip() or not evidence:
+            return self._error("A revision requires a reason and traceable evidence")
+        error = self._validate_text(content)
+        if error:
+            return self._error(error)
+        selected = []
+        for item in replacements:
+            row, error = self._locate(target, entry_id=item.get("entry_id"), expected_version=item.get("version"))
+            if error:
+                return error
+            if row["source"] == "user_pin" and actor != "user":
+                return self._error("Pinned memory cannot be replaced by the agent", "protected")
+            if row in selected:
+                return self._error("Duplicate replacement identity")
+            selected.append(row)
+        new = self._new_row(content.strip(), source, meta_extra={"reason": reason, "evidence": evidence,
+                           "source_obs_ids": sorted(set(source_obs_ids or []).union(*(set(r.get("source_obs_ids", [])) for r in selected)))})
+        new["supersedes_hashes"] = [r["content_hash"] for r in selected]
+        selected_ids = {r["entry_id"] for r in selected}
+        kept = [r for r in self._meta[target] if r["entry_id"] not in selected_ids]
+        if any(r["content_hash"] == new["content_hash"] and r["status"] == "active" for r in kept):
+            return self._error("An effective record already contains this content", "duplicate")
+        if not self._fits(target, kept + [new]):
+            return self._error("Proposal exceeds core capacity; originals preserved", "capacity_blocked", **self.capacity(target))
+        for row in selected:
+            self._remember(row, target, reason, new["entry_id"])
+        self._meta[target] = kept + [new]
+        self._save_meta()
+        return self._receipt(new, target, disposition="merged" if len(selected) > 1 else "replaced" if selected else "adopted",
+                             retired_ids=list(selected_ids))
+
+    @_live
+    def adjust_confidence(self, *, entry_hash=None, text_prefix=None, delta, reason, run_id=None,
+                          target="memory", archive_after_disproofs=2):
+        matches = [r for r in self._meta[target] if r["content_hash"] == entry_hash] if entry_hash else []
+        row, error = self._locate(target, text_prefix or "", matches[0]["entry_id"] if len(matches) == 1 else None)
+        if error:
+            return error
+        if row["source"] == "user_pin":
+            return self._error("Pinned memory cannot be adjusted by feedback", "protected")
+        previous = row["confidence"]
+        # Idempotence: one feedback event cannot repeatedly punish/reward an entry.
+        if run_id and any(a.get("run_id") == run_id and a.get("reason") == reason for a in row.get("adjustments", [])):
+            return self._receipt(row, target, changed=False, previous_confidence=previous)
+        new = self._write_confidence(row["source"], previous + delta)
+        row["adjustments"].append({"at": _now_iso(), "delta": delta, "reason": reason,
+                                   "run_id": run_id, "previous": previous, "new": new})
+        row.update(confidence=new, version=row["version"] + 1)
+        if delta < 0:
+            row["disproof_count"] += 1
+            if row["disproof_count"] >= archive_after_disproofs:
+                row.update(status="archived", reason=f"disproved: {reason}", confidence=0.0)
+            elif new < self._min_inject_confidence:
+                row.update(status="candidate", reason=f"reassessment: {reason}")
+        self._save_meta()
+        return self._receipt(row, target, previous_confidence=previous, disproof_count=row["disproof_count"], entry_hash=row["content_hash"])
+
+    @_live
+    def reinforce(self, text, target="memory"):
+        row, error = self._locate(target, text)
+        if error:
+            return error
+        if row["status"] == "archived":
+            return self._error("Entry is archived")
+        # Reading one's own conclusion is usage, not independent evidence.
+        row["access_count"] += 1
+        row["last_accessed"] = _now_iso()
+        self._save_meta()
+        return self._receipt(row, target)
+
+    @_live
+    def archive_stale(self, target="memory"):
         archived = []
-        for m in to_archive:
-            result = self.archive_entry(m.text[:50], target)
-            if result.get("ok"):
-                archived.append(m.text)
-                logger.info("Archived stale memory (confidence=%.2f): %s", m.confidence, m.text[:40])
-        return archived
-
-    def archive_inactive(self, target: str = "memory", stale_days: int = 90) -> list[str]:
-        """Soft-archive entries not accessed within *stale_days*. Skips user_pin."""
-        cutoff = datetime.now(timezone.utc) - timedelta(days=stale_days)
-        archived: list[str] = []
-        for row in self._meta.get(target, []):
-            if row.get("status", "active") == "archived":
-                continue
-            if row.get("source") == "user_pin":
-                continue
-            last_str = row.get("last_accessed") or row.get("created_at") or ""
-            try:
-                last_dt = datetime.fromisoformat(last_str)
-                if last_dt.tzinfo is None:
-                    last_dt = last_dt.replace(tzinfo=timezone.utc)
-            except (ValueError, TypeError):
-                continue
-            if last_dt >= cutoff:
-                continue
-            text = row.get("text") or ""
-            if not text:
-                continue
-            result = self.archive_entry(text[:50], target)
-            if result.get("ok"):
-                archived.append(text[:80])
-                logger.info("Archived inactive memory (%d days): %s", stale_days, text[:40])
-        return archived
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
-    # _reinforce_all_on_inject removed: blanket access bumping on every session
-    # nullified Ebbinghaus decay. Entries are now only reinforced when explicitly
-    # accessed via reinforce() or search_memory recall.
-
-    def _is_recent_dup(self, h: str) -> bool:
-        now = datetime.now(timezone.utc)
-        # Cleanup old entries
-        self._recent_hashes = {
-            k: v for k, v in self._recent_hashes.items()
-            if (now - v) < timedelta(minutes=DEDUP_WINDOW_MINUTES)
-        }
-        return h in self._recent_hashes
-
-    def _record_hash(self, h: str) -> None:
-        self._recent_hashes[h] = datetime.now(timezone.utc)
-
-    def _read_file(self, path: Path) -> str:
-        if not path.is_file():
-            return ""
-        return path.read_text(encoding="utf-8").strip()
-
-    def _parse_entries(self, content: str) -> list[str]:
-        if not content:
-            return []
-        return [e.strip() for e in content.split("§") if e.strip()]
-
-    def _atomic_write(self, path: Path, content: str) -> None:
-        fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-        try:
-            os.write(fd, content.encode("utf-8"))
-            os.close(fd)
-            os.replace(tmp, path)
-        except Exception:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-            if os.path.exists(tmp):
-                os.unlink(tmp)
-            raise
-
-    def _scan_threats(self, text: str) -> bool:
-        lower = text.lower()
-        for pattern in _INJECTION_PATTERNS:
-            if re.search(pattern, lower):
-                logger.warning("Memory injection attempt blocked: %s", text[:60])
-                return True
-        return False
-
-    def _load_meta(self) -> None:
-        if self._meta_file.is_file():
-            try:
-                self._meta = json.loads(self._meta_file.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                self._meta = {"memory": [], "user": []}
-
-    def _save_meta(self) -> None:
-        self._atomic_write(
-            self._meta_file,
-            json.dumps(self._meta, indent=2, ensure_ascii=False),
-        )
-
-    def _reconcile_meta(self) -> None:
-        """Align .memory_meta.json with actual file entries to fix drift."""
+        threshold = ARCHIVE_CONFIDENCE_USER if target == "user" else ARCHIVE_CONFIDENCE_KNOWLEDGE
         changed = False
-        for target, file_path in [("memory", self._memory_file), ("user", self._user_file)]:
-            entries = self._parse_entries(self._read_file(file_path))
-            metas = self._meta.get(target, [])
-            if len(metas) == len(entries):
+        for row in self._meta[target]:
+            if row["status"] == "archived" or row["source"] == "user_pin":
                 continue
-            if not entries:
-                if metas:
-                    self._meta[target] = []
-                    changed = True
-                continue
-            entry_hashes = [_content_hash(e) for e in entries]
-            meta_by_hash = {m.get("dedup_hash", ""): m for m in metas}
-            new_metas = []
-            for i, e in enumerate(entries):
-                h = entry_hashes[i]
-                if h in meta_by_hash:
-                    new_metas.append(meta_by_hash[h])
-                else:
-                    new_metas.append(asdict(EntryMeta(text=e, source="reconciled", confidence=0.85)))
-            self._meta[target] = new_metas
-            changed = True
-            logger.info(
-                "Reconciled %s meta: %d entries in file, was %d in meta",
-                target, len(entries), len(metas),
-            )
+            if row["confidence"] < threshold:
+                row.update(status="archived", reason="insufficient_confidence", version=row["version"] + 1)
+                archived.append(row["text"])
+                changed = True
+            elif _compute_confidence(_entry_meta_from_dict(row), target) < threshold and not row.get("needs_review"):
+                row["needs_review"] = True
+                changed = True
         if changed:
             self._save_meta()
+        return archived
 
-    def _maybe_migrate_legacy(self) -> None:
-        """Migrate legacy §-delimited entries to have metadata if none exists."""
-        if self._meta.get("memory") or self._meta.get("user"):
-            return
-        for target, file_path in [("memory", self._memory_file), ("user", self._user_file)]:
-            entries = self._parse_entries(self._read_file(file_path))
-            if entries and not self._meta.get(target):
-                self._meta[target] = [
-                    asdict(EntryMeta(text=e, source="legacy", confidence=0.85))
-                    for e in entries
-                ]
-        if self._meta.get("memory") or self._meta.get("user"):
+    @_live
+    def archive_inactive(self, target="memory", stale_days=90):
+        """Legacy name: inactivity requests review; it does not prove invalidity."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=stale_days)).isoformat()
+        changed = False
+        for row in self._meta[target]:
+            if row["status"] != "archived" and row["source"] != "user_pin" and row["last_accessed"] < cutoff and not row.get("needs_review"):
+                row["needs_review"] = True
+                changed = True
+        if changed:
             self._save_meta()
-            logger.info("Migrated legacy memory entries to metadata format")
+        return []
+
+    @_live
+    def maintenance_marker(self, key, value=None):
+        if value is None:
+            return self._meta.get(key)
+        self._meta[key] = value
+        self._save_meta()
+
+    def _scan_threats(self, text):
+        return any(re.search(pattern, text.lower()) for pattern in _INJECTION_PATTERNS)
+
+    def _read_file(self, path):
+        return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+
+    def _parse_entries(self, content):
+        return [e.strip() for e in content.split("§") if e.strip()]
+
+    def _atomic_write(self, path, content):
+        fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, path)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+    def _load_meta(self):
+        raw = self._read_file(self._meta_file)
+        if not raw and self._previous_file.exists():
+            raise ValueError("Memory metadata missing; restore a verified backup before writing")
+        try:
+            data = json.loads(raw) if raw else {"memory": [], "user": []}
+            if not isinstance(data, dict):
+                raise ValueError("Invalid memory ledger")
+        except (ValueError, OSError) as exc:
+            # Atomic replacement makes interrupted writes old-or-new. Malformed
+            # committed data is a different fault: silently restoring an older
+            # version could discard a newly pinned record. Preserve both files.
+            raise ValueError("Memory metadata unreadable; restore a verified backup before writing") from exc
+        self._meta = data
+        if int(data.get("schema_version", 0)) > 3:
+            raise ValueError("Memory ledger requires a newer application version")
+        if data.get("schema_version") != 3:
+            self._migrate_legacy()
+        for target in ("memory", "user"):
+            if not self._fits(target, self._meta[target]):
+                raise ValueError(f"Effective {target} exceeds configured limit; review before reducing capacity")
+        self._sync_projections()
+
+    def _migrate_legacy(self):
+        # One durable snapshot before changing meaning or derived files.
+        backup = self._memory_dir / ".memory-migration-v2.json"
+        if not backup.exists():
+            self._atomic_write(backup, json.dumps({"metadata": self._meta,
+                "KNOWLEDGE.md": self._read_file(self._memory_file), "USER.md": self._read_file(self._user_file)}, ensure_ascii=False, indent=2))
+        for target, path in (("memory", self._memory_file), ("user", self._user_file)):
+            old = deepcopy(self._meta.get(target, []))
+            entries = self._parse_entries(self._read_file(path))
+            rows = []
+            for text in entries:
+                match = next((r for r in old if _content_hash(r.get("text", "")) == _content_hash(text)), None)
+                if match is not None:
+                    old.remove(match)
+                    row = asdict(_entry_meta_from_dict({**match, "text": text}))
+                else:
+                    row = self._new_row(text, "reconciled", .4, {"reason": "unverified_provenance"})
+                rows.append(row)
+            # Metadata also contains authoritative text: never discard it on a count mismatch.
+            rows += [asdict(_entry_meta_from_dict(r)) for r in old if r.get("text")]
+            for row in rows:
+                if row["status"] == "archived":
+                    row["reason"] = row["reason"] or "legacy_archived"
+                elif row["source"] == "user_pin":
+                    row.update(status="active", confidence=1.0)
+                elif row["source"] not in _TRUSTED_WRITE_SOURCES or row["confidence"] < self._min_inject_confidence:
+                    row.update(status="candidate", reason="unverified_provenance" if row["source"] in ("reconciled", "legacy") else "awaiting_evidence")
+                    if row["source"] not in _TRUSTED_WRITE_SOURCES:
+                        row["confidence"] = min(row["confidence"], .4)
+                else:
+                    row["status"] = "active"
+                    row["reason"] = row["reason"] or "legacy_admitted"
+                    if _compute_confidence(_entry_meta_from_dict(row), target) < self._min_inject_confidence:
+                        row["needs_review"] = True
+            # Exact duplicates keep their audit identities, with one live representative.
+            by_hash = {}
+            for row in sorted(rows, key=lambda r: (r["source"] != "user_pin", r["status"] != "active", r["status"] == "archived")):
+                h = row["content_hash"]
+                if h in by_hash and row["status"] != "archived":
+                    winner = by_hash[h]
+                    winner["source_obs_ids"] = sorted(set(winner["source_obs_ids"] + row["source_obs_ids"]))
+                    row.update(status="archived", reason=f"duplicate_of:{winner['entry_id']}")
+                elif row["status"] != "archived":
+                    by_hash[h] = row
+            self._meta[target] = rows
+            if not self._fits(target, rows):
+                raise ValueError("Legacy effective core exceeds limit; migration requires explicit review")
+        # Preserve older supersession history through normal API access too.
+        history = self._meta.setdefault("history", [])
+        for old in self._meta.pop("_superseded", []):
+            if old.get("text"):
+                history.append({**asdict(EntryMeta(text=old["text"], source="legacy", confidence=0,
+                                                  status="archived", reason="legacy_superseded")), "target": "memory"})
+        self._meta.update(schema_version=3, revision=int(self._meta.get("revision", 0)))
+        self._save_meta()
+
+    def _save_meta(self):
+        # This private compatibility hook is used by older tests. Production callers
+        # mutate only inside _transaction. Reject stale direct writers rather than clobber.
+        if not getattr(self._local, "depth", 0):
+            with file_transaction(self._lock_file):
+                disk = json.loads(self._read_file(self._meta_file) or "{}")
+                if disk.get("revision") != self._meta.get("revision"):
+                    raise ValueError("Stale memory metadata; reload before updating")
+                self._commit()
+        else:
+            self._commit()
+
+    def _commit(self):
+        guard = getattr(self, "_commit_guard", None)
+        if guard:
+            guard()
+        for target in ("memory", "user"):
+            self._meta[target] = [asdict(_entry_meta_from_dict(r)) for r in self._meta[target]]
+        for target in ("memory", "user"):
+            if not self._fits(target, self._meta[target]):
+                raise ValueError("Commit exceeds effective memory capacity")
+        previous = self._read_file(self._meta_file)
+        if previous:
+            self._atomic_write(self._previous_file, previous)
+        self._meta["revision"] = int(self._meta.get("revision", 0)) + 1
+        self._atomic_write(self._meta_file, json.dumps(self._meta, ensure_ascii=False, indent=2))
+        # Ledger commit is authoritative. Projection failure cannot roll it back or
+        # claim the mutation failed; the next locked read repairs the projection.
+        try:
+            self._sync_projections()
+        except OSError:
+            logger.exception("Memory committed; Markdown projection will recover on next read")
+
+    def _sync_projections(self):
+        for target, path in (("memory", self._memory_file), ("user", self._user_file)):
+            content = ENTRY_DELIMITER.join(r["text"] for r in self._core(target))
+            if self._read_file(path) != content:
+                self._atomic_write(path, content)

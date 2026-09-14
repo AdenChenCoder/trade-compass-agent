@@ -58,9 +58,11 @@ class TestSearchStockNews:
         mock_resp.raise_for_status = MagicMock()
         mock_resp.text = fake_jsonp
 
-        with patch("requests.get", return_value=mock_resp):
+        with patch("requests.get", return_value=mock_resp) as get:
             result = json.loads(tool_search_stock_news(stack, symbol="600519", limit=5))
 
+        request = json.loads(get.call_args.kwargs["params"]["param"])
+        assert request["param"]["cmsArticleWebOld"]["sort"] == "time"
         assert result["symbol"] == "600519"
         assert result["count"] == 2
         assert result["news"][0]["title"] == "贵州茅台业绩超预期"
@@ -138,90 +140,122 @@ class TestWebSearch:
             {"title": "A股分析", "href": "https://example.com", "body": "市场近期表现..."},
         ]
         mock_module.DDGS.return_value = mock_ddgs_instance
-        sys.modules["duckduckgo_search"] = mock_module
+        sys.modules["ddgs"] = mock_module
+        engines = MagicMock()
+        engines.ENGINES = {"text": {"brave": object}}
+        sys.modules["ddgs.engines"] = engines
 
         try:
-            with patch.dict("os.environ", {"TAVILY_API_KEY": ""}, clear=False):
+            with patch.dict("os.environ", {"TAVILY_API_KEY": "", "WEB_SEARCH_PROVIDER": "auto"}, clear=False):
                 result = json.loads(tool_web_search(query="A股市场趋势", limit=3))
         finally:
-            del sys.modules["duckduckgo_search"]
+            del sys.modules["ddgs"]
+            del sys.modules["ddgs.engines"]
 
-        assert result["provider"] == "duckduckgo"
+        assert result["provider"] == "brave"
         assert result["count"] == 1
         assert result["results"][0]["title"] == "A股分析"
 
-    def test_uses_tavily_with_api_key(self):
-        import sys
-
-        mock_module = MagicMock()
-        mock_client_instance = MagicMock()
-        mock_client_instance.search.return_value = {
+    def test_uses_tavily_with_api_key_without_optional_sdk(self):
+        response = MagicMock()
+        response.json.return_value = {
             "answer": "A股市场近期震荡上行",
             "results": [
-                {"title": "A股市场分析", "url": "https://example.com/analysis", "content": "近期市场表现良好..."},
+                {
+                    "title": "A股市场分析", "url": "https://example.com/analysis",
+                    "content": "近期市场表现良好...", "published_date": "2026-09-11",
+                },
             ],
         }
-        mock_module.TavilyClient.return_value = mock_client_instance
-        sys.modules["tavily"] = mock_module
-
-        try:
-            with patch.dict("os.environ", {"TAVILY_API_KEY": "test-key"}, clear=False):
-                result = json.loads(tool_web_search(query="A股趋势", limit=3))
-        finally:
-            del sys.modules["tavily"]
+        with (
+            patch.dict("sys.modules", {"tavily": None, "ddgs": None}),
+            patch.dict("os.environ", {"TAVILY_API_KEY": "test-key", "WEB_SEARCH_PROVIDER": "tavily"}, clear=False),
+            patch("requests.post", return_value=response) as post,
+        ):
+            result = json.loads(tool_web_search(query="A股趋势", limit=3))
 
         assert result["provider"] == "tavily"
         assert result["query"] == "A股趋势"
         assert result["answer"] == "A股市场近期震荡上行"
         assert result["count"] == 1
+        assert result["results"][0]["published_date"] == "2026-09-11"
+        assert post.call_args.args == ("https://api.tavily.com/search",)
+        assert post.call_args.kwargs["headers"]["Authorization"] == "Bearer test-key"
+        assert post.call_args.kwargs["timeout"] == (2, 7)
 
-    def test_tavily_import_fails_falls_to_ddg(self):
-        import sys
+    @pytest.mark.parametrize("rows", [[], [{"title": "no source link"}]])
+    def test_tavily_does_not_report_empty_response_as_success(self, rows):
+        response = MagicMock()
+        response.json.return_value = {"answer": "unverified answer", "results": rows}
+        with (
+            patch.dict("os.environ", {"TAVILY_API_KEY": "test-key", "WEB_SEARCH_PROVIDER": "tavily"}),
+            patch("requests.post", return_value=response),
+        ):
+            result = json.loads(tool_web_search(query="test"))
+        assert "no usable search results" in result["error"]
+        assert result["provider"] == "tavily"
+        assert result["results"] == []
+        assert "answer" not in result
 
-        sys.modules["tavily"] = None  # type: ignore
+    @pytest.mark.parametrize("status", [401, 429, 500])
+    def test_tavily_http_failure_is_visible_to_agent(self, status):
+        import requests
 
-        mock_ddg = MagicMock()
-        mock_ddgs_instance = MagicMock()
-        mock_ddgs_instance.__enter__ = MagicMock(return_value=mock_ddgs_instance)
-        mock_ddgs_instance.__exit__ = MagicMock(return_value=False)
-        mock_ddgs_instance.text.return_value = [
-            {"title": "Result", "href": "https://x.com", "body": "content"},
-        ]
-        mock_ddg.DDGS.return_value = mock_ddgs_instance
-        sys.modules["duckduckgo_search"] = mock_ddg
+        response = requests.Response()
+        response.status_code = status
+        response.url = "https://api.tavily.com/search"
+        with (
+            patch.dict("os.environ", {"TAVILY_API_KEY": "test-key", "WEB_SEARCH_PROVIDER": "tavily"}),
+            patch("requests.post", return_value=response),
+        ):
+            result = json.loads(tool_web_search(query="test"))
+        assert str(status) in result["error"]
+        assert result["provider"] == "tavily"
+        assert result["results"] == []
+        assert "test-key" not in json.dumps(result)
 
-        try:
-            with patch.dict("os.environ", {"TAVILY_API_KEY": "key"}, clear=False):
+    def test_tavily_hung_request_has_total_deadline(self):
+        import threading
+        import time
+        from trade_compass_agent.data.network import run_with_timeout
+
+        release = threading.Event()
+        def fetch(*args, **kwargs):
+            release.wait(1)
+
+        with (
+            patch.dict("os.environ", {"TAVILY_API_KEY": "test-key", "WEB_SEARCH_PROVIDER": "tavily"}),
+            patch("requests.post", side_effect=fetch),
+            patch(
+                "trade_compass_agent.runtime.tools.search.run_with_timeout",
+                side_effect=lambda fn, timeout, label: run_with_timeout(fn, 0.02, label),
+            ) as guard,
+        ):
+            start = time.monotonic()
+            try:
                 result = json.loads(tool_web_search(query="test"))
-        finally:
-            del sys.modules["tavily"]
-            del sys.modules["duckduckgo_search"]
-
-        assert result["provider"] == "duckduckgo"
+            finally:
+                release.set()
+        assert time.monotonic() - start < 0.5
+        assert guard.call_args.args[1] == 10
+        assert "error" in result
 
 
 class TestMarketFlash:
     def test_returns_alerts(self):
-        import pandas as pd
-
-        fake_df = pd.DataFrame([
-            {"时间": "2024-03-15 10:30:00", "快讯信息": "【快讯：白酒板块集体走强】贵州茅台涨3%"},
-            {"时间": "2024-03-15 10:25:00", "快讯信息": "【快讯：半导体板块异动】中芯国际拉升"},
-        ])
-
-        with patch("trade_compass_agent.runtime.tools.search.run_with_timeout", return_value=fake_df):
+        items = [
+            {"time": "2024-03-15 10:30:00", "content": "白酒板块集体走强"},
+            {"time": "2024-03-15 10:25:00", "content": "半导体板块异动"},
+        ]
+        with patch("trade_compass_agent.runtime.tools.search._fetch_cls_flash", return_value=items):
             result = json.loads(tool_search_market_flash(limit=5))
-
         assert result["count"] == 2
+        assert result["source"] == "cls"
         assert "白酒" in result["alerts"][0]["content"]
 
     def test_returns_empty_on_error(self):
-        with (
-            patch("trade_compass_agent.runtime.tools.search.run_with_timeout", side_effect=TimeoutError("timeout")),
-            patch("requests.get", side_effect=Exception("fallback failed")),
-        ):
+        with patch("requests.get", side_effect=TimeoutError("timeout")):
             result = json.loads(tool_search_market_flash())
-
         assert result["alerts"] == []
         assert "error" in result
 

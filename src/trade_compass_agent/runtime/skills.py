@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+import json
+from functools import wraps
+from trade_compass_agent.concurrency import file_transaction
 
 from trade_compass_agent.config import PACKAGE_ROOT, PROJECT_ROOT, is_source_checkout
 from trade_compass_agent.memory.skill_quality import parse_skill_frontmatter, read_quality_file
@@ -112,6 +115,19 @@ def _parse_skill_md(path: Path) -> tuple[str, str]:
     return name, description
 
 
+
+def _discovery_locked(fn):
+    @wraps(fn)
+    def call(*, memory_dir, **kwargs):
+        from trade_compass_agent.memory.skill_store import recover_skill_transaction
+        with file_transaction(memory_dir / "skills" / ".skills.lock"):
+            recover_skill_transaction(memory_dir / "skills")
+            return fn(memory_dir=memory_dir, **kwargs)
+    return call
+
+
+@_discovery_locked
+
 def discover_skills(
     *,
     memory_dir: Path,
@@ -124,11 +140,15 @@ def discover_skills(
         ("project", _external_skills_root(project_root)),
         ("memory_vault", memory_dir / "skills"),
     ]
+    usage_path = memory_dir / "skills" / ".usage.json"
+    usage = json.loads(usage_path.read_text(encoding="utf-8")) if usage_path.is_file() else {}
     found: dict[str, SkillInfo] = {}
     for source, root in roots:
         if not root.is_dir():
             continue
         for skill_md in sorted(root.glob("*/SKILL.md")):
+            if skill_md.parent.name.startswith(".") or usage.get(skill_md.parent.name, {}).get("state") == "archived":
+                continue
             name, description = _parse_skill_md(skill_md)
             found[name] = SkillInfo(
                 name=name,
@@ -146,14 +166,35 @@ def _external_skills_root(project_root: Path) -> Path:
     return project_skills if project_skills.is_dir() else BUILTIN_SKILLS_ROOT
 
 
+
+def _skill_read_locked(fn):
+    @wraps(fn)
+    def call(skill, *args, **kwargs):
+        if skill.source != "memory_vault":
+            return fn(skill, *args, **kwargs)
+        from trade_compass_agent.memory.skill_store import recover_skill_transaction
+        root = skill.path.parent.parent
+        with file_transaction(root / ".skills.lock"):
+            recover_skill_transaction(root)
+            if not skill.path.is_file():
+                return json.dumps({"error": "Skill changed or archived; discover again"})
+            return fn(skill, *args, **kwargs)
+    return call
+
+
+@_skill_read_locked
+
 def load_skill_body(skill: SkillInfo) -> str:
     body = skill.path.read_text(encoding="utf-8")
     quality = read_quality_file(skill.path.parent)
     warnings = ", ".join(quality.warnings) if quality.warnings else "none"
-    header = f"Quality: {quality.quality}\nStatic status: {quality.static_status}\nWarnings: {warnings}\n\n"
+    from trade_compass_agent.memory.skill_store import SkillStore
+    version = SkillStore._version(skill.path)
+    header = f"Skill: {skill.name}\nVersion: {version}\nSource: {skill.source}\nQuality: {quality.quality}\nStatic status: {quality.static_status}\nWarnings: {warnings}\n\n"
     return header + body
 
 
+@_skill_read_locked
 def load_skill_reference(skill: SkillInfo, reference: str) -> str:
     """Load a reference sub-document from the skill's references/ directory."""
     import json as _json

@@ -39,6 +39,8 @@ def extract_analysis_from_artifact(path: str | None, *, run_id: str | None = Non
             payload = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(payload, dict):
+            continue
         if run_id and str(payload.get("run_id", "")) != run_id:
             continue
         analysis = _extract_analysis(payload)

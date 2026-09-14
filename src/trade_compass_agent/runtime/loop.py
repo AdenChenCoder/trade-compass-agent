@@ -30,7 +30,7 @@ from trade_compass_agent.runtime.learning import curate_turn_insight
 from trade_compass_agent.runtime.mcp.client import get_mcp_registry
 from trade_compass_agent.runtime.tools.registry import PARALLEL_SAFE_TOOLS, ToolRegistry
 from trade_compass_agent.runtime.types import TurnEvent, TurnResponse, TurnSection
-from trade_compass_agent.runtime.background_review import ReviewNudgeTracker, spawn_background_review
+from trade_compass_agent.runtime.background_review import ReviewNudgeTracker, spawn_background_review, is_committed_mutation, resume_background_reviews
 from trade_compass_agent.memory.memory_store import MemoryStore
 from trade_compass_agent.memory.skill_store import SkillStore
 from trade_compass_agent.memory.observation_store import ObservationStore
@@ -46,6 +46,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_PARALLEL_WORKERS = 6
 _PARALLEL_TOOL_TIMEOUT_SECONDS = 15.0
+_BATCH_TOOL_TIMEOUT_SECONDS = 60.0
+_SEARCH_TOOL_TIMEOUT_SECONDS = 40.0
 TOOL_ROUND_LIMIT_MESSAGE = "已达到分析轮次上限，基于已获取数据总结如下：请查看上方工具输出。"
 
 _DSML_BLOCK_RE = re.compile(
@@ -118,7 +120,7 @@ def _execute_tool_calls(
         try:
             result = run_with_timeout(
                 lambda: tools.execute(tc.name, tc.arguments),
-                timeout=_PARALLEL_TOOL_TIMEOUT_SECONDS,
+                timeout=_SEARCH_TOOL_TIMEOUT_SECONDS if tc.name in {"search_x", "search_x_kol"} else _PARALLEL_TOOL_TIMEOUT_SECONDS,
                 description=f"tool:{tc.name}",
             )
         except TimeoutError as exc:
@@ -145,7 +147,16 @@ def _execute_tool_calls(
     for _, tc in sequential:
         if is_cancelled and is_cancelled():
             break
-        results[tc.id] = tools.execute(tc.name, tc.arguments)
+        if tc.name in {"batch_get_bars", "batch_get_fundamentals", "batch_search_news"}:
+            try:
+                results[tc.id] = run_with_timeout(
+                    lambda tc=tc: tools.execute(tc.name, tc.arguments),
+                    _BATCH_TOOL_TIMEOUT_SECONDS, f"tool:{tc.name}",
+                )
+            except TimeoutError as exc:
+                results[tc.id] = json.dumps({"error": str(exc), "timed_out": True}, ensure_ascii=False)
+        else:
+            results[tc.id] = tools.execute(tc.name, tc.arguments)
 
     for tc in tool_calls:
         if tc.id not in results:
@@ -161,7 +172,7 @@ class AgentLoop:
     session_store: SessionStore
     on_event: Callable[[TurnEvent], None] | None = None
     memory_actor: str = "agent"
-    skill_actor: str = "user"
+    skill_actor: str = "agent"
     _tools: ToolRegistry = field(init=False)
     _event_seq: int = field(init=False, default=0)
     _nudge: ReviewNudgeTracker = field(init=False)
@@ -233,9 +244,13 @@ class AgentLoop:
                 )
             )
 
-    def _maybe_background_review(self, messages: list) -> None:
+    def _maybe_background_review(self, messages: list, *, source_session_id="", source_turn_id="") -> None:
         """Check nudge thresholds and spawn background review if needed."""
+        if self.memory_actor == "background_review":
+            return
+        resume_background_reviews(self.config)
         review_memory, review_skills = self._nudge.should_review()
+        review_memory = review_memory or self._memory_store.review_due()
         if not review_memory and not review_skills:
             return
 
@@ -266,12 +281,13 @@ class AgentLoop:
             kwargs.pop("actor", None)
             return tool_skill_manage(self._skill_store, action, actor="background_review", **kwargs)
 
-        snapshot = [
-            {"role": getattr(m, "role", "user"), "content": getattr(m, "content", str(m))}
-            for m in messages[-20:]
-            if getattr(m, "role", "user") != "tool"
-            and not (getattr(m, "role", "") == "assistant" and not getattr(m, "content", ""))
-        ]
+        # Keep this turn's original user request and final decision plus actual tool
+        # receipts. Full source transcript remains addressable by session/turn ID.
+        start = max((i for i, m in enumerate(messages) if getattr(m, "role", "") == "user"), default=0)
+        snapshot = [{"role": getattr(m, "role", "user"), "content": getattr(m, "content", "") or "",
+                     "name": getattr(m, "name", None), "tool_call_id": getattr(m, "tool_call_id", None),
+                     "tool_calls": getattr(m, "tool_calls", [])}
+                    for m in messages[start:]]
 
         spawn_background_review(
             messages_snapshot=snapshot,
@@ -281,9 +297,9 @@ class AgentLoop:
             memory_write=memory_write,
             skill_manage=skill_manage,
             memory_store=self._memory_store,
-            config=self.config,
+            config=self.config, source_session_id=source_session_id, source_turn_id=source_turn_id,
+            on_complete=self._nudge.reset_after_review,
         )
-        self._nudge.reset_after_review(review_memory, review_skills)
 
     def _update_session_summary(
         self,
@@ -328,6 +344,10 @@ class AgentLoop:
         self._nudge.reset_turn_flags()
         skills_cfg = load_agent_skills_config()
         skills = discover_skills(memory_dir=self.config.memory_dir, skills_config=skills_cfg)
+        from trade_compass_agent.portfolio.trading_policy import AutonomousTradingStore
+        from trade_compass_agent.runtime.bootstrap import build_trading_policy
+
+        self._tools.set_trade_context(message)
         context = ContextBuilder(
             memory_dir=self.config.memory_dir,
             skills=skills,
@@ -336,6 +356,10 @@ class AgentLoop:
             rules_enabled=self.config.rules.enabled,
             rules_char_limit=self.config.rules.char_limit,
             compression_config=self.config.context_compression,
+            trading_policy=build_trading_policy(
+                AutonomousTradingStore(self.config.data_dir).read(),
+                interactive=self.memory_actor == "agent",
+            ),
         )
         session = self.session_store.get_or_create(session_id)
         if turn_id:
@@ -548,9 +572,9 @@ class AgentLoop:
                                 importance=estimate_importance(tc.name, summary),
                                 concepts=extract_concepts(summary),
                             )
-                        if tc.name == "write_knowledge":
+                        if tc.name == "write_knowledge" and is_committed_mutation(tc.name, tc.arguments, result):
                             self._nudge.on_memory_write()
-                        elif tc.name == "skill_manage":
+                        elif tc.name == "skill_manage" and is_committed_mutation(tc.name, tc.arguments, result):
                             self._nudge.on_skill_write()
                         section = _section_from_tool(tc.name, result)
                         if section:
@@ -606,12 +630,7 @@ class AgentLoop:
             if not final_text:
                 final_text = TOOL_ROUND_LIMIT_MESSAGE
 
-            gap_warning = _check_data_gap(final_text, tool_calls_log)
-            if gap_warning:
-                final_text += gap_warning
-            provenance = _build_provenance_footer(tool_calls_log)
-            if provenance:
-                final_text += provenance
+            final_text += "".join(build_report_evidence(final_text, tool_calls_log))
 
             section_payload = [_section_to_dict(s) for s in sections]
             self.session_store.append(
@@ -631,7 +650,11 @@ class AgentLoop:
             )
             curate_turn_insight(config=self.config, user_message=message, response=response)
             self._nudge.on_user_turn()
-            self._maybe_background_review(messages)
+            review_messages = messages + [ChatMessage(role="assistant", content=final_text)]
+            try:
+                self._maybe_background_review(review_messages, source_session_id=session.session_id, source_turn_id=turn_id)
+            except Exception:
+                logger.exception("Analysis completed; background review dispatch failed")
             self._update_session_summary(session, tool_calls_log, final_text)
             self._emit(
                 "done",
@@ -846,7 +869,14 @@ import re
 _DIRECTIONAL_PATTERN = re.compile(
     r"(买入|卖出|加仓|减仓|建仓|清仓|做多|做空|追涨|抄底|建议介入|可以买|适合买|建议卖)",
 )
-_SYMBOL_PATTERN = re.compile(r"\b(\d{6})\b")
+_SYMBOL_PATTERN = re.compile(r"(?<![A-Za-z0-9_])(\d{6})(?![A-Za-z0-9_])")
+
+
+def build_report_evidence(analysis_text: str, tool_calls_log: list[tuple[str, str]]) -> list[str]:
+    """Check the selected analysis before adding factual receipts to its text."""
+    from trade_compass_agent.runtime.verifier import trade_receipt_section
+    return [part for part in (trade_receipt_section(tool_calls_log),
+            _check_data_gap(analysis_text, tool_calls_log), _build_provenance_footer(tool_calls_log)) if part]
 
 
 def _check_data_gap(final_text: str, tool_calls_log: list[tuple[str, str]]) -> str | None:
@@ -858,13 +888,22 @@ def _check_data_gap(final_text: str, tool_calls_log: list[tuple[str, str]]) -> s
         return None
     symbols_with_bars = set()
     for tool_name, result in tool_calls_log:
-        if tool_name in ("get_bars", "kline_forecast"):
+        if tool_name in ("get_bars", "kline_forecast", "batch_get_bars"):
             try:
                 payload = json.loads(result)
-                sym = str(payload.get("symbol", ""))
-                if sym and not payload.get("error"):
-                    symbols_with_bars.add(sym.strip())
-            except (json.JSONDecodeError, AttributeError):
+                if not isinstance(payload, dict) or payload.get("error") or payload.get("ok") is False:
+                    continue
+                if tool_name == "batch_get_bars":
+                    for sym, item in (payload.get("results") or {}).items():
+                        if sym not in (payload.get("errors") or {}) and _has_bar_evidence(item):
+                            symbols_with_bars.add(str(sym).strip())
+                else:
+                    sym = str(payload.get("symbol", "")).strip()
+                    if sym and (_has_bar_evidence(payload) or (
+                        tool_name == "kline_forecast" and payload.get("forecast_bars")
+                    )):
+                        symbols_with_bars.add(sym)
+            except (json.JSONDecodeError, AttributeError, TypeError):
                 pass
         elif tool_name == "dispatch_specialists":
             # Specialists internally fetch bars; extract covered symbols from output
@@ -876,6 +915,23 @@ def _check_data_gap(final_text: str, tool_calls_log: list[tuple[str, str]]) -> s
             f"上述方向性建议仅供参考：{'、'.join(sorted(ungrounded))}"
         )
     return None
+
+
+def _has_bar_evidence(payload: object) -> bool:
+    if not isinstance(payload, dict) or payload.get("error") or payload.get("ok") is False:
+        return False
+    if payload.get("bars_count", payload.get("count")) == 0:
+        return False
+    bars = payload.get("bars")
+    if isinstance(bars, list):
+        return bool(bars) and all(isinstance(b, dict) and _positive_price(b.get("close", b.get("C"))) for b in bars)
+    count = payload.get("bars_count", 0)
+    return isinstance(count, int) and count > 0 and _positive_price(payload.get("close"))
+
+
+def _positive_price(value: object) -> bool:
+    import math
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
 
 
 def _extract_symbols_from_specialist_result(result: str) -> set[str]:
@@ -926,6 +982,14 @@ def _build_provenance_footer(tool_calls_log: list[tuple[str, str]]) -> str:
         try:
             payload = json.loads(result)
             if isinstance(payload, dict):
+                if tool_name == "batch_get_bars":
+                    for item in (payload.get("results") or {}).values():
+                        if _has_bar_evidence(item):
+                            if item.get("source"):
+                                providers.add(str(item["source"]))
+                            ts = item.get("as_of")
+                            if ts and (latest_ts is None or str(ts) > latest_ts):
+                                latest_ts = str(ts)
                 prov = payload.get("provider") or payload.get("provider_name")
                 if prov:
                     providers.add(str(prov))

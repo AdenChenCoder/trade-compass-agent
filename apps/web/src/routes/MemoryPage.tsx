@@ -26,7 +26,7 @@ function CapacityBar({ used, limit }: { used: number; limit: number }) {
         <div
           className={cn(
             "h-full rounded-full transition-all",
-            pct > 80 ? "bg-orange-500" : pct > 95 ? "bg-destructive" : "bg-primary",
+            pct > 95 ? "bg-destructive" : pct > 80 ? "bg-orange-500" : "bg-primary",
           )}
           style={{ width: `${pct}%` }}
         />
@@ -39,13 +39,15 @@ function CapacityBar({ used, limit }: { used: number; limit: number }) {
 }
 
 function MemoryEntries({ target }: { target: "memory" | "user" }) {
-  const { data, isLoading } = useQuery<MemoryResponse>({
+  const { data, isLoading, error } = useQuery<MemoryResponse>({
     queryKey: ["memory", target],
     queryFn: () => fetchMemory(target),
   });
   const [filter, setFilter] = useState("");
+  const [memoryStatus, setMemoryStatus] = useState("active");
 
   if (isLoading) return <Skeleton className="h-40 w-full" />;
+  if (error) return <p role="alert" className="py-4 text-sm text-destructive">记忆读取失败：{error.message}</p>;
   if (!data || data.entries.length === 0) {
     return (
       <p className="py-8 text-center text-sm text-muted-foreground">
@@ -54,13 +56,31 @@ function MemoryEntries({ target }: { target: "memory" | "user" }) {
     );
   }
 
-  const filtered = filter
-    ? data.entries.filter((e) => e.text.toLowerCase().includes(filter.toLowerCase()))
-    : data.entries;
+  const filtered = data.entries.filter((entry) =>
+    (memoryStatus === "all" || entry.status === memoryStatus) &&
+    (!filter || entry.text.toLowerCase().includes(filter.toLowerCase())));
+  const stateLabels = { active: "有效", candidate: "候选", archived: "历史", all: "全部" };
+  const reasons: Record<string, string> = {
+    admitted: "已采纳", legacy_admitted: "此前已采纳", awaiting_evidence: "等待更多证据", unverified_provenance: "来源待核实",
+    capacity_review_required: "等待容量整理与价值比较", legacy_archived: "此前已停用",
+    user_forgotten: "用户已停用", legacy_superseded: "已被新版本替代", insufficient_confidence: "依据不足，已退出",
+    provenance_recovered: "来源已核实并更正", recovered_capacity_rejection: "此前因满额保存失败，已补回待评估",
+  };
 
   return (
     <div className="space-y-4">
-      <CapacityBar used={data.chars_used} limit={data.char_limit} />
+      <div className="space-y-2">
+        <p className="text-xs text-muted-foreground">有效记忆 · 候选和历史不占额度</p>
+        <CapacityBar used={data.chars_used} limit={data.char_limit} />
+      </div>
+      <div className="flex flex-wrap gap-2" aria-label="记忆状态">
+        {Object.entries(stateLabels).map(([status, label]) => (
+          <Button key={status} size="sm" variant={memoryStatus === status ? "default" : "outline"}
+            aria-pressed={memoryStatus === status} onClick={() => setMemoryStatus(status)}>
+            {label} {status === "all" ? data.entries.length : data.entries.filter((entry) => entry.status === status).length}
+          </Button>
+        ))}
+      </div>
       <div className="relative">
         <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
         <Input
@@ -71,15 +91,26 @@ function MemoryEntries({ target }: { target: "memory" | "user" }) {
         />
       </div>
       <div className="space-y-2">
-        {filtered.map((entry, i) => (
+        {filtered.map((entry) => (
           <div
-            key={i}
+            key={`${entry.entry_id}:${entry.version}:${entry.index}`}
             className="group rounded-md border bg-muted/30 px-3 py-2.5 text-sm transition-colors hover:bg-muted/60"
           >
             <div className="flex items-start justify-between gap-3">
-              <p className="flex-1 leading-relaxed">{entry.text}</p>
+              <div className="min-w-0 flex-1 space-y-1">
+                <p className="leading-relaxed">{entry.text}</p>
+                <p className="text-xs text-muted-foreground">
+                  {entry.pinned ? "用户固定 · " : ""}{entry.source} · v{entry.version}
+                  {entry.reason ? ` · ${reasons[entry.reason] ?? (entry.reason.startsWith("duplicate_of:") ? "重复条目已合并" : entry.reason)}` : ""}
+                  {entry.needs_review ? " · 待复评" : ""}
+                </p>
+                {entry.evidence?.length > 0 && <details className="text-xs text-muted-foreground">
+                  <summary className="cursor-pointer">查看依据</summary>
+                  <p className="mt-1 whitespace-pre-wrap break-words">{entry.evidence.join("\n")}</p>
+                </details>}
+              </div>
               <div className="flex shrink-0 items-center gap-2">
-                <NewBadge createdAt={entry.created_at} />
+                {entry.status !== "archived" && <NewBadge createdAt={entry.created_at} />}
                 <div className="flex items-center gap-2 opacity-60 transition-opacity group-hover:opacity-100">
                   <span
                     className={cn(
@@ -100,7 +131,7 @@ function MemoryEntries({ target }: { target: "memory" | "user" }) {
             </div>
           </div>
         ))}
-        {filtered.length === 0 && filter && (
+        {filtered.length === 0 && (
           <p className="py-4 text-center text-xs text-muted-foreground">无匹配结果</p>
         )}
       </div>

@@ -609,7 +609,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "analyze_portfolio",
-            "description": "Get comprehensive portfolio analysis: all positions, P&L, win rate, concentration, recent closed trades.",
+            "description": "Get portfolio positions, consistent account valuations, cash and recent_trades (actual ledger executions with quantity, timestamp and trade_id). recent_closed_trades are FIFO lot settlements, not separate executions.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -650,6 +650,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "user_instruction": {"type": "string", "description": "Exact quote from the CURRENT interactive user message explicitly requesting this trade. Omit for autonomous decisions. Analysis requests are not trade instructions; scheduled tasks cannot use this field."},
                     "symbol": {"type": "string", "description": "Stock code"},
                     "side": {"type": "string", "enum": ["buy", "sell"]},
                     "quantity": {"type": "integer", "description": "Number of shares"},
@@ -676,6 +677,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "user_instruction": {"type": "string", "description": "Exact quote from the CURRENT interactive user message explicitly requesting external trade/position synchronization. Never use this tool for autonomous trades."},
                     "trades": {
                         "type": "array",
                         "description": "List of trades to execute",
@@ -705,7 +707,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "search_decisions",
-            "description": "Search past trade decisions from the Decision Journal. Use to recall why you bought/sold a stock, review past wins/losses for a symbol, or get context before making a new trade.",
+            "description": "Search past trade decisions with their execution_trades from the ledger. Use execution_trades for each fill's exact quantity, price, timestamp and trade_id; decision quantity/resolved_quantity describe entry or cumulative settlement, not one sell.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1025,7 +1027,7 @@ class ToolRegistry:
         observation_store=None,
         exclude_tools: set[str] | None = None,
         memory_actor: str = "agent",
-        skill_actor: str = "user",
+        skill_actor: str = "agent",
     ) -> None:
         self.stack = stack
         self.on_event = on_event
@@ -1038,6 +1040,25 @@ class ToolRegistry:
         self._consecutive_failures: dict[str, int] = {}
         self._memory_actor: str = memory_actor
         self._skill_actor: str = skill_actor
+        self._trade_user_message = ""
+        self.trade_execution_guard = None
+
+    def set_trade_context(self, message: str) -> None:
+        self._trade_user_message = message if self._memory_actor == "agent" else ""
+
+    def _is_autonomous_trade(self, args: dict, *, importing: bool = False) -> bool:
+        from trade_compass_agent.portfolio.trading_policy import AutonomousTradingStore, TradeRejected
+
+        quote = args.get("user_instruction")
+        if quote is not None:
+            if not isinstance(quote, str) or not quote.strip() or quote not in self._trade_user_message:
+                raise TradeRejected("交易指令引用必须来自本轮用户明确要求，不能引用历史或后台任务", "invalid_user_instruction")
+            return False
+        if importing:
+            raise TradeRejected("同步外部成交需要引用本轮用户的明确同步指令", "user_instruction_required")
+        if not AutonomousTradingStore(self.stack.config.data_dir).read():
+            raise TradeRejected("自主交易已关闭；可继续分析，或执行用户明确的交易指令", "autonomous_trading_disabled")
+        return True
 
     @property
     def schemas(self) -> list[dict[str, Any]]:
@@ -1059,12 +1080,17 @@ class ToolRegistry:
         return schemas
 
     def execute(self, name: str, arguments: str | dict | None) -> str:
+        from trade_compass_agent.portfolio.trading_policy import TradeRejected
+
         if name in self._exclude_tools:
             return json.dumps({"error": f"Tool '{name}' is not available in this context"}, ensure_ascii=False)
         try:
             result = self._execute(name, arguments)
             self._consecutive_failures.pop(name, None)
             return result
+        except TradeRejected as exc:
+            self._consecutive_failures.pop(name, None)
+            return json.dumps(exc.payload, ensure_ascii=False)
         except Exception as exc:
             error_payload: dict[str, Any] = {"error": str(exc), "tool": name}
             if name in _CRITICAL_TOOLS:
@@ -1147,6 +1173,11 @@ class ToolRegistry:
         if name == "write_knowledge" and self._memory_store:
             from trade_compass_agent.runtime.tools.self_improve import tool_memory_write
             legacy_source = str(args.get("source", "") or args.get("scope", "") or "")
+            def evaluate_memory(system, user):
+                from trade_compass_agent.llm import create_chat_client
+                from trade_compass_agent.llm.providers import ChatMessage
+                return create_chat_client(self.stack.config).complete([
+                    ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]).content or ""
             return tool_memory_write(
                 self._memory_store,
                 action=str(args.get("action", "")),
@@ -1156,6 +1187,9 @@ class ToolRegistry:
                 source=legacy_source,
                 actor=self._memory_actor,
                 governance=self.stack.config.memory.governance,
+                entry_id=args.get("entry_id"), expected_version=args.get("expected_version"),
+                reason=str(args.get("reason", "")), evidence=args.get("evidence", []),
+                replacements=args.get("replacements", []), llm_call=evaluate_memory, status=str(args.get("status", "all")),
             )
         if name == "skill_manage" and self._skill_store:
             from trade_compass_agent.runtime.tools.self_improve import tool_skill_manage
@@ -1167,6 +1201,8 @@ class ToolRegistry:
                 old_text=str(args.get("old_text", "")),
                 new_text=str(args.get("new_text", "")),
                 actor=self._skill_actor,
+                expected_version=args.get("expected_version"), reason=str(args.get("reason", "")),
+                evidence=args.get("evidence", []), reference=str(args.get("reference", "")), version=str(args.get("version", "")),
             )
         if name == "session_search" and self._session_summary_store:
             query = str(args.get("query", ""))
@@ -1323,11 +1359,20 @@ class ToolRegistry:
         if name == "analyze_portfolio":
             return tool_analyze_portfolio(self.stack)
         if name == "place_paper_trade":
+            if self.trade_execution_guard is not None:
+                self.trade_execution_guard()
+            quantity = int(args.get("quantity") or 0)
+            autonomous = self._is_autonomous_trade(args)
+            if autonomous and args.get("price_source", "market_quote") != "market_quote":
+                from trade_compass_agent.portfolio.trading_policy import TradeRejected
+                raise TradeRejected("自主模拟交易必须使用市场成交价", "market_quote_required")
             return tool_place_paper_trade(
                 self.stack,
                 symbol=args.get("symbol"),
                 side=args.get("side"),
-                quantity=args.get("quantity"),
+                quantity=quantity,
+                _autonomous=autonomous,
+                _execution_guard=self.trade_execution_guard,
                 price=args.get("price"),
                 price_source=args.get("price_source", "market_quote"),
                 record_decision=args.get("record_decision", True),
@@ -1340,6 +1385,7 @@ class ToolRegistry:
                 price_limit_pct=args.get("price_limit_pct"),
             )
         if name == "batch_paper_trades":
+            self._is_autonomous_trade(args, importing=True)
             from trade_compass_agent.runtime.tools.portfolio import tool_batch_paper_trades
             return tool_batch_paper_trades(self.stack, trades=args.get("trades", []))
         if name == "search_decisions":
@@ -1348,7 +1394,14 @@ class ToolRegistry:
             reconcile_decisions(self.stack.config.data_dir, self.stack.config.trading_costs)
             store = DecisionStore(self.stack.config.data_dir)
             results = store.search(symbol=args.get("symbol"), status=args.get("status"), limit=args.get("limit", 10))
-            return json.dumps([r.__dict__ for r in results], ensure_ascii=False, default=str)
+            from trade_compass_agent.runtime.tools.portfolio import _get_portfolio
+            portfolio = _get_portfolio(self.stack)
+            return json.dumps([
+                {**r.__dict__, "execution_trades": portfolio.trade_history(
+                    trade_ids={r.entry_trade_id, *r.outcome_trade_ids}),
+                 "execution_note": "决策的 quantity/resolved_quantity 是买入及累计结算数量，逐笔成交以 execution_trades 的数量、时间、trade_id 为准。"}
+                for r in results
+            ], ensure_ascii=False, default=str)
         if name == "recall_timeline":
             from trade_compass_agent.memory.time_tree import TimeTree
             tt = TimeTree(self.stack.config.data_dir / "time_tree.db")
@@ -1503,6 +1556,7 @@ class ToolRegistry:
         account_store = AccountStore(config.data_dir / "accounts.json")
         accounts = account_store.list()
         total_capital = sum(a.capital for a in accounts)
+        from trade_compass_agent.portfolio.trading_policy import account_balances
 
         is_st = any(
             t.is_st for t in portfolio.trades if t.symbol == symbol
@@ -1521,6 +1575,7 @@ class ToolRegistry:
                 "is_min_lot": is_min_lot,
                 "is_t0": rules.is_t0,
                 "total_capital": total_capital,
+                "account_balances": account_balances(portfolio, config.data_dir),
                 "lot_note": (
                     f"持仓{position_qty}股=最小手数{rules.min_lot}股，无法部分减仓，只能全部卖出或继续持有"
                     if is_min_lot

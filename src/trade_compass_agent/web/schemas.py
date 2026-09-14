@@ -20,6 +20,11 @@ class _AttrBase(BaseModel):
 # --- Primitive payloads -----------------------------------------------------
 
 
+class AutonomousTradingSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = Field(strict=True)
+
+
 class BarPayload(_AttrBase):
     symbol: str
     timestamp: datetime
@@ -30,6 +35,7 @@ class BarPayload(_AttrBase):
     volume: float
     amount: float | None = None
     adjusted: bool = False
+    source: str | None = None
 
 
 class SectorStrengthPayload(_AttrBase):
@@ -291,6 +297,12 @@ class SkillPinRequest(BaseModel):
 
 class MemoryEntryPayload(BaseModel):
     index: int
+    entry_id: str = ""
+    version: int = 1
+    reason: str = ""
+    evidence: list[str] = Field(default_factory=list)
+    pinned: bool = False
+    needs_review: bool = False
     text: str
     confidence: float = 1.0
     access_count: int = 0
@@ -306,6 +318,10 @@ class MemoryResponse(BaseModel):
     entries: list[MemoryEntryPayload]
     chars_used: int
     char_limit: int
+    revision: int = 0
+    active_count: int = 0
+    candidate_count: int = 0
+    archived_count: int = 0
 
 
 class MemoryActionRequest(BaseModel):

@@ -14,6 +14,7 @@ import logging
 import re
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime
 
 from trade_compass_agent.config import AppConfig, load_app_config
@@ -142,7 +143,12 @@ class TickScheduler:
         logger.info("TickScheduler reloaded")
 
     def list_jobs(self) -> list[JobDefinition]:
-        return self.registry.all()
+        from trade_compass_agent.ops.autonomous_trading import JOB_ID
+        from trade_compass_agent.portfolio.trading_policy import AutonomousTradingStore
+
+        enabled = AutonomousTradingStore(self.config.data_dir).read()
+        return [replace(job, enabled=enabled) if job.id == JOB_ID else job
+                for job in self.registry.all()]
 
     def run_job_now(self, job_id: str, trigger: str = "api") -> None:
         """Manually trigger a job; api/cli triggers bypass schedule and trading-day gates."""
@@ -178,9 +184,17 @@ class TickScheduler:
         except Exception:
             logger.exception("Watch-plan monitor tick failed")
         # Built-in jobs
-        for job in self.registry.all():
+        for job in self.list_jobs():
             if not job.enabled:
                 continue
+            # Earlier workflows may take minutes; do not use their stale start time.
+            now = datetime.now()
+            from trade_compass_agent.ops.autonomous_trading import JOB_ID, skip_reason
+            if job.id == JOB_ID:
+                from trade_compass_agent.runtime.tools.portfolio import _market_now
+                now = _market_now()
+                if skip_reason(self.config.data_dir):
+                    continue
             slot = _compute_slot(job, now)
             if slot is None:
                 continue
@@ -244,6 +258,10 @@ def _parse_schedule_slot(schedule: str, now: datetime) -> datetime | None:
     - "cron M H D MON DOW"    — standard 5-field cron (minute hour day month weekday)
     """
     schedule = schedule.strip()
+
+    if schedule == "trading_session 30m":
+        from trade_compass_agent.ops.autonomous_trading import latest_slot
+        return latest_slot(now)
 
     # "trading_day HH:MM"
     m = re.match(r"trading_day\s+(\d{1,2}:\d{2})", schedule)
