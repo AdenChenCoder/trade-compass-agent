@@ -43,6 +43,7 @@ def test_editable_build_skips_frontend_bundle(monkeypatch: pytest.MonkeyPatch) -
     build_frontend = Mock(side_effect=AssertionError("must not build frontend"))
     monkeypatch.setattr(module, "_frontend_dependencies_available", dependencies_available)
     monkeypatch.setattr(module, "_build_frontend", build_frontend)
+    monkeypatch.setattr(module, "_build_mobile_helper", Mock())
 
     build_data = {"artifacts": []}
     module.CustomBuildHook().initialize("editable", build_data)
@@ -70,16 +71,23 @@ def test_standard_build_bundles_frontend(
 ) -> None:
     module = _load_hatch_build(monkeypatch)
     web_dist = tmp_path / "web_dist"
+    mobile_dist = tmp_path / "mobile_dist"
     monkeypatch.setattr(module, "WEB_DIST", web_dist)
+    monkeypatch.setattr(module, "MOBILE_DIST", mobile_dist)
     monkeypatch.setattr(module, "_frontend_dependencies_available", lambda: True)
+    monkeypatch.setattr(module, "_build_mobile_helper", Mock())
 
     def build_frontend() -> None:
         web_dist.mkdir()
         (web_dist / "index.html").write_text("<!doctype html>", encoding="utf-8")
+        mobile_dist.mkdir()
+        (mobile_dist / "index.html").write_text("<!doctype html>", encoding="utf-8")
 
     monkeypatch.setattr(module, "_build_frontend", build_frontend)
 
     build_data = {"artifacts": []}
     module.CustomBuildHook().initialize("standard", build_data)
 
-    assert build_data["artifacts"] == ["src/trade_compass_agent/web_dist/**"]
+    assert build_data["artifacts"] == ["src/trade_compass_agent/web_dist/**", "src/trade_compass_agent/mobile_dist/**",
+                                       "src/trade_compass_agent/mobile_bin/**"]
+    module._build_mobile_helper.assert_called_once()

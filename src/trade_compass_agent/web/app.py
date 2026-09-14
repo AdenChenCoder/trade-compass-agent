@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from pathlib import PurePosixPath
+from contextlib import AsyncExitStack, asynccontextmanager
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -80,35 +80,49 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     config = load_app_config()
+    from trade_compass_agent.mobile.server import MobileController
 
-    scheduler = None
-    skip = os.getenv("TRADE_COMPASS_NO_SCHEDULER", "").lower() in {"1", "true", "yes"}
-    if not skip and get_active_scheduler() is None:
-        if config.scheduler.enabled:
-            scheduler = TickScheduler(config)
-            scheduler.start_background()
-            set_active_scheduler(scheduler)
-            logger.info("Scheduler started via lifespan")
+    async with AsyncExitStack() as stack:
+        controller = MobileController(app, config)
+        app.state.mobile_controller = controller
+        app.state.mobile_service = None
+        stack.push_async_callback(controller.close)
+        if config.mobile.enabled:
+            try:
+                await controller.start()
+            except (OSError, RuntimeError, ValueError):
+                if config.mobile.provider != "tailscale":
+                    raise
+                logger.warning("Mobile connection unavailable; desktop workbench remains available")
+        scheduler = None
+        try:
+            skip = os.getenv("TRADE_COMPASS_NO_SCHEDULER", "").lower() in {"1", "true", "yes"}
+            if not skip and get_active_scheduler() is None and config.scheduler.enabled:
+                scheduler = TickScheduler(config)
+                scheduler.start_background()
+                set_active_scheduler(scheduler)
+                logger.info("Scheduler started via lifespan")
 
-    # Start messaging gateway if enabled
-    if config.channels.gateway_enabled:
-        _gateway_daemon = await _start_gateway(config)
-        from trade_compass_agent.channels.gateway import set_active_gateway
-        set_active_gateway(_gateway_daemon)
+            if config.channels.gateway_enabled:
+                _gateway_daemon = await _start_gateway(config)
+                from trade_compass_agent.channels.gateway import set_active_gateway
+                set_active_gateway(_gateway_daemon)
 
-    yield
-
-    if _gateway_daemon is not None:
-        from trade_compass_agent.channels.gateway import set_active_gateway
-        set_active_gateway(None)
-        await _gateway_daemon.stop()
-        _gateway_daemon = None
-        logger.info("Gateway stopped via lifespan")
-
-    if scheduler is not None:
-        scheduler.shutdown(wait=False)
-        set_active_scheduler(None)
-        logger.info("Scheduler stopped via lifespan")
+            yield
+        finally:
+            app.state.mobile_service = None
+            try:
+                if _gateway_daemon is not None:
+                    from trade_compass_agent.channels.gateway import set_active_gateway
+                    set_active_gateway(None)
+                    await _gateway_daemon.stop()
+                    _gateway_daemon = None
+                    logger.info("Gateway stopped via lifespan")
+            finally:
+                if scheduler is not None:
+                    scheduler.shutdown(wait=False)
+                    set_active_scheduler(None)
+                    logger.info("Scheduler stopped via lifespan")
 
 
 async def _start_gateway(config) -> Any:
@@ -179,6 +193,8 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
     application.include_router(api_router)
+    from trade_compass_agent.mobile.api import admin_router
+    application.include_router(admin_router)
 
     @application.get("/health")
     def health() -> dict:
@@ -193,6 +209,16 @@ def create_app() -> FastAPI:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+    # The mobile UI ships with the same package. Serving its assets grants no
+    # device permissions and does not enable the mobile listener or scheduler.
+    mobile_dist = Path(__file__).resolve().parents[1] / "mobile_dist"
+    if (mobile_dist / "index.html").is_file():
+        application.mount("/mobile", StaticFiles(directory=str(mobile_dist), html=True), name="mobile-ui")
+    else:
+        @application.get("/mobile/{asset:path}")
+        def mobile_placeholder(asset: str) -> HTMLResponse:
+            return HTMLResponse("移动端资源尚未构建，请运行 pnpm --dir apps/mobile build 后重启。", status_code=503)
 
     web_dist = web_dist_module.resolve_web_dist()
     if web_dist is not None:

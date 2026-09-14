@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import runpy
 from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 ROOT = Path(__file__).resolve().parent
 WEB_DIST = ROOT / "src" / "trade_compass_agent" / "web_dist"
+MOBILE_DIST = ROOT / "src" / "trade_compass_agent" / "mobile_dist"
 WEB_NODE_BIN = ROOT / "apps" / "web" / "node_modules" / ".bin"
 
 
@@ -22,15 +24,23 @@ class CustomBuildHook(BuildHookInterface):
 
         if _frontend_dependencies_available():
             _build_frontend()
-        elif not (WEB_DIST / "index.html").is_file():
+        elif not all((bundle / "index.html").is_file() for bundle in (WEB_DIST, MOBILE_DIST)):
             raise RuntimeError(
                 "frontend dependencies are unavailable and no prebuilt web_dist/index.html exists"
             )
 
-        if not (WEB_DIST / "index.html").is_file():
+        if not all((bundle / "index.html").is_file() for bundle in (WEB_DIST, MOBILE_DIST)):
             raise RuntimeError("frontend build completed without web_dist/index.html")
 
         build_data["artifacts"].append("src/trade_compass_agent/web_dist/**")
+        build_data["artifacts"].append("src/trade_compass_agent/mobile_dist/**")
+        _build_mobile_helper()
+        build_data["artifacts"].append("src/trade_compass_agent/mobile_bin/**")
+
+
+def _build_mobile_helper() -> None:
+    builder = runpy.run_path(str(ROOT / "scripts/build_mobile_helper.py"))
+    builder["build"]()
 
 
 def _build_frontend() -> None:
@@ -45,6 +55,8 @@ def _build_frontend() -> None:
             capture_output=True,
             text=True,
         )
+        subprocess.run(["pnpm", "--dir", "apps/mobile", "build"], cwd=ROOT,
+                       check=True, capture_output=True, text=True)
     except FileNotFoundError as exc:
         raise RuntimeError("pnpm is required to build the release web bundle") from exc
     except subprocess.CalledProcessError as exc:
@@ -53,4 +65,5 @@ def _build_frontend() -> None:
 
 
 def _frontend_dependencies_available() -> bool:
-    return all((WEB_NODE_BIN / command).is_file() for command in ("tsc", "vite"))
+    return all((directory / command).is_file() for command in ("tsc", "vite")
+               for directory in (WEB_NODE_BIN, ROOT / "apps/mobile/node_modules/.bin"))

@@ -30,6 +30,10 @@ jobs:
           pnpm install --frozen-lockfile
           python -m pip install "uv==0.11.32"
           uv sync --locked --extra dev
+      - name: Prepare and test mobile UI
+        run: |
+          pnpm --dir apps/mobile test
+          pnpm --dir apps/mobile build
       - name: Verify project
         run: |
           scripts/ci_check.sh
@@ -37,6 +41,13 @@ jobs:
           pnpm --dir apps/web typecheck
         env:
           PYTHONPATH: src
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.27.1"
+          cache-dependency-path: scripts/mobile-funnel-probe/go.sum
+      - name: Verify mobile connection component
+        working-directory: scripts/mobile-funnel-probe
+        run: go test -race ./...
       - name: Build distributions
         run: |
           uv build --no-sources

@@ -13,6 +13,11 @@ fi
 "$PYTHON" -m ruff check \
   scripts/check_assets.py \
   scripts/check_dist.py \
+  scripts/mobile_probe.py \
+  tests/test_mobile_access.py \
+  tests/test_mobile_pwa.py \
+  tests/test_mobile_peer.py \
+  src/trade_compass_agent/mobile \
   tests/test_workflow_governance.py \
   tests/test_fetch_url_tool.py \
   tests/test_install_script.py \

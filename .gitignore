@@ -15,8 +15,11 @@ memory_vault/
 node_modules/
 .pnpm-store/
 apps/web/dist/
+apps/mobile/dist/
 apps/web/node_modules/
 src/trade_compass_agent/web_dist/
+src/trade_compass_agent/mobile_dist/
+src/trade_compass_agent/mobile_bin/
 graphify-out/
 .codegraph/
 .vite

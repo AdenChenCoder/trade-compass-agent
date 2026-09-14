@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import sys
 import threading
-import time
 import webbrowser
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from trade_compass_agent import __version__
 from trade_compass_agent.command_catalog import (
@@ -698,9 +699,22 @@ def _resolve_port(explicit: int | None) -> int:
     return DEFAULT_PORT
 
 
-def _open_browser_later(url: str) -> None:
-    time.sleep(1)
-    webbrowser.open(url)
+def _open_browser_when_ready(url: str, startup_id: str, stopped: threading.Event) -> None:
+    address = urlsplit(url)
+    while not stopped.wait(0.2):
+        # Connect directly to loopback, independent of HTTP proxy environment settings.
+        connection = http.client.HTTPConnection(address.hostname, address.port, timeout=1)
+        try:
+            connection.request("GET", "/health")
+            response = connection.getresponse()
+            ready = response.status == 200 and response.getheader("x-compass-startup") == startup_id
+        except (OSError, http.client.HTTPException):
+            ready = False
+        finally:
+            connection.close()
+        if ready and not stopped.is_set():
+            webbrowser.open(url)
+            return
 
 
 def run_serve(
@@ -752,9 +766,8 @@ def run_serve(
         else:
             print("Scheduler: disabled in config")
 
-    url = f"http://{host}:{port}"
-    if open_browser:
-        threading.Thread(target=_open_browser_later, args=(url,), daemon=True).start()
+    url_host = f"[{host}]" if ":" in host else host
+    url = f"http://{url_host}:{port}"
 
     if dev:
         print(f"API dev server: {url}")
@@ -766,13 +779,30 @@ def run_serve(
 
     import uvicorn
 
-    uvicorn.run(
-        "trade_compass_agent.web.app:app",
-        host=host,
-        port=port,
-        reload=dev,
-        reload_dirs=["src"] if dev else None,
-    )
+    stopped = threading.Event()
+    browser_thread = None
+    options = {}
+    if open_browser:
+        # Distinguish this launch from another process already using the requested port.
+        # Uvicorn carries these headers into reload workers as well.
+        startup_id = os.urandom(16).hex()
+        options["headers"] = [("x-compass-startup", startup_id)]
+        browser_thread = threading.Thread(target=_open_browser_when_ready,
+            args=(url, startup_id, stopped), daemon=True)
+        browser_thread.start()
+    try:
+        uvicorn.run(
+            "trade_compass_agent.web.app:app",
+            host=host,
+            port=port,
+            reload=dev,
+            reload_dirs=["src"] if dev else None,
+            **options,
+        )
+    finally:
+        stopped.set()
+        if browser_thread is not None:
+            browser_thread.join(timeout=2)
 
 
 def run_setup(*, force: bool = False, interactive: bool | None = None) -> None:

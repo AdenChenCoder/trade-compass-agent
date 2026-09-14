@@ -368,6 +368,7 @@ class NotificationPayload(_AttrBase):
     title: str
     message: str
     severity: str = "info"
+    task_status: str | None = None
 
 
 class SchedulerConfigPayload(_AttrBase):

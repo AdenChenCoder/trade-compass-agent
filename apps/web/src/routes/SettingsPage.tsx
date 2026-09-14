@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { fetchAgentMcp, fetchAgentSkills } from "@/lib/agent-api";
+import { MobileConnection } from "@/components/MobileConnection";
 
 export function SettingsPage() {
   const skillsQuery = useQuery({
@@ -39,9 +40,11 @@ export function SettingsPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">设置</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            只读展示当前 Agent 已加载的 Skills 与 MCP 服务状态（由后端配置提供）。
+            管理手机连接，查看 Agent 的 Skills 与 MCP 服务状态。
           </p>
         </div>
+
+        <MobileConnection />
 
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">

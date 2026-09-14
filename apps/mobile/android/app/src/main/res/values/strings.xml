@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">交易罗盘</string>
+    <string name="title_activity_main">交易罗盘</string>
+    <string name="package_name">com.tradecompass.mobile.dev</string>
+    <string name="custom_url_scheme">com.tradecompass.mobile.dev</string>
+</resources>
