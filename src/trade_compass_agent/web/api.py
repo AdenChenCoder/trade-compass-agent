@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from trade_compass_agent.config import load_app_config, update_scheduler_config
 from trade_compass_agent.data import ChainProvider, DataQualityLayer
+from trade_compass_agent.data.providers import ProviderError
 from trade_compass_agent.domain import AccountKind, PaperTrade
 from trade_compass_agent.evaluation import RulePerformanceEvaluator
 from trade_compass_agent.memory.rules_store import RulesStore
@@ -259,7 +260,10 @@ def get_bars(
     limit: int = Query(120, ge=1, le=1000),
 ) -> s.BarsResponse:
     stack = _stack()
-    bars = stack.provider.get_bars(symbol.strip(), timeframe=timeframe, limit=limit)
+    try:
+        bars = stack.provider.get_bars(symbol.strip(), timeframe=timeframe, limit=limit)
+    except ProviderError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     quality = DataQualityLayer().check_bars(bars)
     warnings = [f"{symbol}: {warning}" for warning in quality.warnings]
     if isinstance(stack.provider, ChainProvider):
@@ -422,6 +426,25 @@ def get_portfolio() -> s.PortfolioResponse:
     return ser.to_portfolio_response(portfolio_store, costs=config.trading_costs, live_positions=positions)
 
 
+@router.get("/portfolio/autonomous-trading", response_model=s.AutonomousTradingSettings)
+def get_autonomous_trading():
+    from trade_compass_agent.portfolio.trading_policy import AutonomousTradingStore
+
+    try:
+        enabled = AutonomousTradingStore(load_app_config().data_dir).read()
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="无法读取自主交易设置，请重新保存设置") from exc
+    return {"enabled": enabled}
+
+
+@router.put("/portfolio/autonomous-trading", response_model=s.AutonomousTradingSettings)
+def update_autonomous_trading(body: s.AutonomousTradingSettings):
+    from trade_compass_agent.portfolio.trading_policy import AutonomousTradingStore
+
+    enabled = AutonomousTradingStore(load_app_config().data_dir).set_enabled(body.enabled)
+    return {"enabled": enabled}
+
+
 @router.post(
     "/portfolio/trades",
     response_model=s.PortfolioResponse,
@@ -509,11 +532,13 @@ def get_cooldown_status():
 @router.get("/accounts")
 def list_accounts():
     from trade_compass_agent.portfolio.accounts import AccountStore
+    from trade_compass_agent.portfolio.trading_policy import account_balances
     config = load_app_config()
     store = AccountStore(config.data_dir / "accounts.json")
     portfolio = JsonPaperPortfolio(config.data_dir / "paper_trades.jsonl", costs=config.trading_costs)
     positions = portfolio.positions()
     accounts = store.list()
+    balances = {item["id"]: item for item in account_balances(portfolio, config.data_dir)}
     result = []
     for a in accounts:
         used = sum(p.market_value for p in positions if p.account.value == a.id or p.account.value == a.kind.value)
@@ -523,6 +548,8 @@ def list_accounts():
             "name": a.name,
             "description": a.description,
             "capital": a.capital,
+            "available_cash": balances[a.id]["available_cash"],
+            "cash_error": balances[a.id].get("cash_error"),
             "used": round(used, 2),
             "utilization_pct": round(used / a.capital * 100, 1) if a.capital > 0 else 0,
             "created_at": a.created_at,
@@ -533,24 +560,27 @@ def list_accounts():
 @router.post("/accounts")
 def create_account(body: s.AccountCreate):
     from trade_compass_agent.portfolio.accounts import AccountStore
+    from trade_compass_agent.portfolio.trading_policy import portfolio_transaction
     config = load_app_config()
     store = AccountStore(config.data_dir / "accounts.json")
     try:
         AccountKind(body.kind)
     except ValueError:
         return JSONResponse({"error": f"无效账户类型: {body.kind}"}, status_code=400)
-    account = store.create(
-        kind=AccountKind(body.kind),
-        name=body.name,
-        description=body.description or "",
-        capital=body.capital,
-    )
+    with portfolio_transaction(config.data_dir / "paper_trades.jsonl"):
+        account = store.create(
+            kind=AccountKind(body.kind),
+            name=body.name,
+            description=body.description or "",
+            capital=body.capital,
+        )
     return {"id": account.id, "kind": account.kind.value, "name": account.name, "capital": account.capital}
 
 
 @router.put("/accounts/{account_id}")
 def update_account(account_id: str, body: s.AccountUpdate):
     from trade_compass_agent.portfolio.accounts import AccountStore
+    from trade_compass_agent.portfolio.trading_policy import portfolio_transaction
     config = load_app_config()
     store = AccountStore(config.data_dir / "accounts.json")
     updates = {}
@@ -564,7 +594,8 @@ def update_account(account_id: str, body: s.AccountUpdate):
         updates["kind"] = body.kind
     if not updates:
         return JSONResponse({"error": "无更新字段"}, status_code=400)
-    account = store.update(account_id, **updates)
+    with portfolio_transaction(config.data_dir / "paper_trades.jsonl"):
+        account = store.update(account_id, **updates)
     if account is None:
         raise HTTPException(status_code=404, detail=f"账户不存在: {account_id}")
     return {"id": account.id, "kind": account.kind.value, "name": account.name, "capital": account.capital}
@@ -573,14 +604,16 @@ def update_account(account_id: str, body: s.AccountUpdate):
 @router.delete("/accounts/{account_id}")
 def delete_account(account_id: str):
     from trade_compass_agent.portfolio.accounts import AccountStore
+    from trade_compass_agent.portfolio.trading_policy import portfolio_transaction
     config = load_app_config()
     store = AccountStore(config.data_dir / "accounts.json")
-    portfolio = JsonPaperPortfolio(config.data_dir / "paper_trades.jsonl", costs=config.trading_costs)
-    positions = portfolio.positions()
-    has_positions = any(p.account.value == account_id for p in positions)
-    if has_positions:
-        return JSONResponse({"error": "该账户仍有持仓，无法删除"}, status_code=400)
-    ok = store.delete(account_id)
+    with portfolio_transaction(config.data_dir / "paper_trades.jsonl"):
+        portfolio = JsonPaperPortfolio(config.data_dir / "paper_trades.jsonl", costs=config.trading_costs)
+        positions = portfolio.positions()
+        has_positions = any(p.account.value == account_id for p in positions)
+        if has_positions:
+            return JSONResponse({"error": "该账户仍有持仓，无法删除"}, status_code=400)
+        ok = store.delete(account_id)
     if not ok:
         raise HTTPException(status_code=404, detail=f"账户不存在: {account_id}")
     return {"deleted": True}
@@ -755,9 +788,12 @@ def pin_skill(name: str, body: s.SkillPinRequest):
 
 
 def _memory_response(target: str, store) -> s.MemoryResponse:
-    entries_meta = store.get_entries_with_meta(target)
-    char_limit = store._memory_char_limit if target == "memory" else store._user_char_limit
-    content = "\n§\n".join(m.text for m in entries_meta)
+    from trade_compass_agent.memory.lineage import memory_lineage
+
+    snapshot = store.snapshot(target)
+    entries_meta = snapshot["entries"]
+    lineage = memory_lineage(entries_meta)
+    char_limit = snapshot["limit"]
     return s.MemoryResponse(
         target=target,
         entries=[
@@ -768,14 +804,19 @@ def _memory_response(target: str, store) -> s.MemoryResponse:
                 access_count=m.access_count,
                 source=m.source,
                 status=m.status,
+                entry_id=m.entry_id, version=m.version, reason=m.reason, evidence=m.evidence,
+                pinned=m.source == "user_pin", needs_review=m.needs_review,
                 content_hash=m.content_hash or m.dedup_hash,
                 created_at=m.created_at,
                 last_accessed=m.last_accessed,
+                **lineage[(m.entry_id, m.version)],
             )
             for i, m in enumerate(entries_meta)
         ],
-        chars_used=len(content),
-        char_limit=char_limit,
+        chars_used=snapshot["chars_used"],
+        char_limit=char_limit, revision=snapshot["revision"],
+        active_count=snapshot["active_count"], candidate_count=snapshot["candidate_count"],
+        archived_count=sum(m.status == "archived" for m in entries_meta),
     )
 
 
@@ -1223,6 +1264,13 @@ def get_run_detail(run_id: str):
                     if item.get("started_at") is None:
                         item["started_at"] = event.get("recorded_at")
 
+        if run.status not in {"queued", "running"}:
+            for item in states.values():
+                if item["status"] in {"running", "pending"}:
+                    item["status"] = "failed"
+                    item["finished_at"] = run.finished_at.isoformat() if run.finished_at else None
+                    item["error"] = run.error or "任务已结束，此步骤未完成"
+                    item["output"] = item["error"]
         return list(states.values())
 
     def _analysis_from_steps() -> str | None:

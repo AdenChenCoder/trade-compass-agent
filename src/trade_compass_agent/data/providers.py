@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
+from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
     from trade_compass_agent.config import DataConfig
@@ -16,6 +19,7 @@ from trade_compass_agent.domain import Bar, Instrument, InstrumentKind
 from .network import (
     extend_no_proxy_for_eastmoney,
     patch_requests_for_eastmoney,
+    rate_limit_domain,
     run_with_timeout,
     short_error_message,
 )
@@ -44,37 +48,69 @@ def _is_trading_hours(now: datetime) -> bool:
     if now.weekday() >= 5:
         return False
     t = now.hour * 100 + now.minute
-    return 930 <= t <= 1500
+    return 930 <= t <= 1130 or 1300 <= t <= 1500
 
 
 def _prev_trading_date(today: date, hour: int) -> date:
+    from trade_compass_agent.ops.trading_calendar import is_trading_day
+
     d = today
-    if hour < 16:
+    if hour < 15:
         d -= timedelta(days=1)
-    while d.weekday() >= 5:
+    while not is_trading_day(d):
         d -= timedelta(days=1)
     return d
 
 
+def _market_now() -> datetime:
+    return datetime.now(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+
+
+def split_symbol(symbol: str) -> tuple[str, str]:
+    """Resolve a provider code without changing the caller's instrument identity."""
+    value = symbol.strip().lower()
+    match = re.fullmatch(r"(sh|sz|bj)\.?([0-9]{6})", value)
+    if match:
+        return match.group(1), match.group(2)
+    match = re.fullmatch(r"([0-9]{6})\.(sh|sz|bj)", value)
+    if match:
+        return match.group(2), match.group(1)
+    if not re.fullmatch(r"[0-9]{6}", value):
+        raise ProviderError(f"invalid A-share symbol: {symbol}")
+    market = "sh" if value.startswith(("5", "6", "9")) else "sz"
+    if value.startswith(("4", "8")) or value.startswith("920"):
+        market = "bj"
+    return market, value
+
+
+def is_index_symbol(symbol: str) -> bool:
+    market, code = split_symbol(symbol)
+    return (market == "sh" and code.startswith("000")) or (market == "sz" and code.startswith("399"))
+
+
+def is_lof_symbol(symbol: str) -> bool:
+    return split_symbol(symbol)[1].startswith(("16", "50"))
+
+
 def infer_instrument_kind(symbol: str) -> InstrumentKind:
-    s = symbol.strip()
-    etf_prefixes = ("510", "511", "512", "513", "515", "516", "518", "159", "588")
+    try:
+        s = split_symbol(symbol)[1]
+    except ProviderError:
+        s = symbol.strip()
+    etf_prefixes = ("510", "511", "512", "513", "515", "516", "518", "159", "56", "588")
     if s.startswith(etf_prefixes):
         return InstrumentKind.ETF
     return InstrumentKind.STOCK
 
 
 def to_baostock_code(symbol: str) -> str:
-    normalized = symbol.strip()
-    if normalized.startswith(("5", "6", "9")):
-        return f"sh.{normalized}"
-    return f"sz.{normalized}"
+    market, code = split_symbol(symbol)
+    return f"{market}.{code}"
 
 
 def to_sina_code(symbol: str) -> str:
-    normalized = symbol.strip()
-    prefix = "sh" if normalized.startswith(("5", "6", "9")) else "sz"
-    return f"{prefix}{normalized}"
+    market, code = split_symbol(symbol)
+    return f"{market}{code}"
 
 
 def _date_window(limit: int) -> tuple[str, str]:
@@ -110,7 +146,7 @@ def _akshare_period(timeframe: str) -> str:
     return str(_timeframe_minutes(timeframe))
 
 
-def _dataframe_to_bars(symbol: str, df, limit: int) -> list[Bar]:
+def _dataframe_to_bars(symbol: str, df, limit: int, *, adjusted: bool = True) -> list[Bar]:
     if df is None or getattr(df, "empty", True):
         raise ProviderError(f"no bars for {symbol}")
 
@@ -143,7 +179,7 @@ def _dataframe_to_bars(symbol: str, df, limit: int) -> list[Bar]:
                 close=float(close_value),
                 volume=float(volume_value),
                 amount=float(amount_value),
-                adjusted=True,
+                adjusted=adjusted,
                 turnover_pct=turnover_pct,
             )
         )
@@ -223,6 +259,9 @@ def create_market_data_provider(
         )
     if normalized == "sina_daily":
         return SinaDailyProvider(timeout=request_timeout)
+    if normalized == "tencent":
+        from .tencent_provider import TencentProvider
+        return TencentProvider(timeout=request_timeout)
     raise ValueError(f"Unknown data provider: {name}")
 
 
@@ -230,28 +269,45 @@ def create_bulk_daily_provider(
     *,
     cache_dir: Path | None = None,
     request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
+    data: DataConfig | None = None,
 ) -> MarketDataProvider:
     """Cache-first daily bars optimized for parallel bulk screening."""
-    return BulkDailyBarProvider(cache_dir=cache_dir, request_timeout=request_timeout)
+    return BulkDailyBarProvider(cache_dir=cache_dir, request_timeout=request_timeout, data=data)
 
 
 def _maybe_tushare_provider(
     *,
     data: DataConfig | None,
     request_timeout: float,
-    allow_without_flag: bool = False,
 ) -> MarketDataProvider | None:
-    token_env = data.tushare_token_env if data else "TUSHARE_TOKEN"
-    if data is not None and not data.tushare_enabled and not allow_without_flag:
+    if data is None or not data.tushare_enabled:
         return None
+    token_env = data.tushare_token_env
     if not os.getenv(token_env, "").strip():
         return None
     try:
         from .tushare_provider import TushareProvider
 
-        return TushareProvider(token_env=token_env, timeout=request_timeout)
+        return TushareProvider(token_env=token_env, timeout=max(request_timeout, 3.0))
     except Exception:
         return None
+
+
+def _with_preferred_provider(
+    providers: list[MarketDataProvider], preferred: MarketDataProvider,
+) -> list[MarketDataProvider]:
+    """Reuse this source's cache first; other cached sources remain fallbacks."""
+    ordered = [preferred, *providers]
+    cache = next((p for p in providers if isinstance(p, LocalBarCacheProvider)), None)
+    if cache is not None:
+        preferred_cache = LocalBarCacheProvider(
+            cache.root,
+            closed_daily_only=cache.closed_daily_only or getattr(preferred, "closed_daily_only", False),
+            required_source=preferred.name,
+        )
+        preferred_cache.supported_timeframes = getattr(preferred, "supported_timeframes", ALL_TIMEFRAMES)
+        ordered.insert(0, preferred_cache)
+    return ordered
 
 
 def _available_providers(
@@ -265,14 +321,15 @@ def _available_providers(
     request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
 ) -> list[MarketDataProvider]:
     providers: list[MarketDataProvider] = []
-    # Cache first: instant return when fresh bars are already available
+    # Free defaults; an explicitly enabled source takes precedence below.
     if cache_dir:
         providers.append(LocalBarCacheProvider(cache_dir))
-    if tushare:
-        tushare_provider = _maybe_tushare_provider(data=data, request_timeout=request_timeout)
-        if tushare_provider is not None:
-            providers.append(tushare_provider)
-    # SinaDailyProvider preferred: direct HTTP, 24/7 stable, fast (~0.5s)
+    if sina:
+        # Raw minute bars with turnover; daily requests skip this provider.
+        providers.append(SinaMinuteProvider(timeout=request_timeout))
+    if sina or akshare:
+        from .tencent_provider import TencentProvider
+        providers.append(TencentProvider(timeout=request_timeout))
     if sina:
         try:
             providers.append(SinaDailyProvider())
@@ -289,11 +346,10 @@ def _available_providers(
             providers.append(AkshareProvider())
         except Exception:
             pass
-    if sina:
-        try:
-            providers.append(SinaMinuteProvider())
-        except Exception:
-            pass
+    if tushare:
+        tushare_provider = _maybe_tushare_provider(data=data, request_timeout=request_timeout)
+        if tushare_provider is not None:
+            providers = _with_preferred_provider(providers, tushare_provider)
     if not providers:
         raise RuntimeError(
             "No market data providers available. "
@@ -380,29 +436,24 @@ class AkshareProvider:
 
         def fetch():
             kind = infer_instrument_kind(symbol)
+            code = split_symbol(symbol)[1]
+            if is_index_symbol(symbol):
+                if timeframe != "1d":
+                    raise ProviderError("Akshare index minute bars require a supported fallback")
+                return self.ak.index_zh_a_hist(symbol=code, period="daily", start_date=start_date, end_date=end_date)
             if timeframe != "1d":
-                method = (
-                    self.ak.fund_etf_hist_min_em
-                    if kind == InstrumentKind.ETF
-                    else self.ak.stock_zh_a_hist_min_em
-                )
+                return self._minute_frame(symbol, timeframe, limit)
+            if kind == InstrumentKind.ETF or is_lof_symbol(symbol):
+                method = self.ak.fund_lof_hist_em if is_lof_symbol(symbol) else self.ak.fund_etf_hist_em
                 return method(
-                    symbol=symbol,
-                    start_date=start_date,
-                    end_date=end_date,
-                    period=_akshare_period(timeframe),
-                    adjust="",
-                )
-            if kind == InstrumentKind.ETF:
-                return self.ak.fund_etf_hist_em(
-                    symbol=symbol,
+                    symbol=code,
                     period="daily",
                     start_date=start_date,
                     end_date=end_date,
                     adjust="qfq",
                 )
             return self.ak.stock_zh_a_hist(
-                symbol=symbol,
+                symbol=code,
                 period="daily",
                 start_date=start_date,
                 end_date=end_date,
@@ -415,7 +466,43 @@ class AkshareProvider:
         except Exception as exc:
             raise ProviderError(f"akshare failed for {symbol}: {short_error_message(exc)}") from exc
 
-        return _dataframe_to_bars(symbol, df, limit)
+        return _dataframe_to_bars(symbol, df, limit, adjusted=timeframe == "1d")
+
+    def _minute_frame(self, symbol: str, timeframe: str, limit: int):
+        """Request one instrument, without the SDK's full fund-code lookup/retries."""
+        import pandas as pd
+        import requests
+
+        if timeframe not in MINUTE_TIMEFRAMES:
+            raise ProviderError(f"unsupported timeframe: {timeframe}")
+        market, code = split_symbol(symbol)
+        params = {
+            "fields1": "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13",
+            "ut": "7eea3edcaed734bea9cbfc24409ed989",
+            "secid": f"{1 if market == 'sh' else 0}.{code}",
+        }
+        columns = ["时间", "开盘", "收盘", "最高", "最低", "成交量", "成交额"]
+        if timeframe == "1m":
+            url = "https://push2his.eastmoney.com/api/qt/stock/trends2/get"
+            params.update(fields2="f51,f52,f53,f54,f55,f56,f57,f58", ndays="5", iscr="0")
+            key = "trends"
+            columns += ["均价"]
+        else:
+            url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+            params.update(fields2="f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+                          klt=_akshare_period(timeframe), fqt="0", beg="0", end="20500000", lmt=str(limit))
+            key = "klines"
+            columns += ["振幅", "涨跌幅", "涨跌额", "换手率"]
+        rate_limit_domain(url)
+        response = requests.get(url, params=params,
+                                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"},
+                                timeout=self.timeout)
+        response.raise_for_status()
+        payload = response.json()
+        rows = (payload.get("data") or {}).get(key) or []
+        if not rows:
+            raise ProviderError(f"empty Eastmoney {key} response (rc={payload.get('rc')})")
+        return pd.DataFrame([row.split(",") for row in rows], columns=columns)
 
 
 class SinaMinuteProvider:
@@ -423,11 +510,6 @@ class SinaMinuteProvider:
     supported_timeframes = MINUTE_TIMEFRAMES
 
     def __init__(self, timeout: float = DEFAULT_REQUEST_TIMEOUT) -> None:
-        try:
-            import akshare as ak  # type: ignore
-        except Exception as exc:  # pragma: no cover
-            raise RuntimeError("akshare is not available; SinaMinuteProvider uses akshare wrappers") from exc
-        self.ak = ak
         self.timeout = timeout
 
     def get_instrument(self, symbol: str) -> Instrument:
@@ -437,21 +519,33 @@ class SinaMinuteProvider:
     def get_bars(self, symbol: str, timeframe: str = "1d", limit: int = 120) -> list[Bar]:
         if timeframe not in MINUTE_TIMEFRAMES:
             raise ProviderError("SinaMinuteProvider only supports minute bars")
-        if infer_instrument_kind(symbol) != InstrumentKind.STOCK:
-            raise ProviderError("SinaMinuteProvider currently supports A-share stocks only")
 
         def fetch():
-            return self.ak.stock_zh_a_minute(
-                symbol=to_sina_code(symbol),
-                period=_akshare_period(timeframe),
-                adjust="",
+            import pandas as pd
+            import requests
+
+            # The public endpoint also serves exchange-traded funds and indices.
+            # The SDK fetches 1970 rows and probes daily adjustment data even when
+            # adjust=""; neither extra request is needed for raw minute bars.
+            response = requests.get(
+                "https://quotes.sina.cn/cn/api/jsonp_v2.php/=/CN_MarketDataService.getKLineData",
+                params={"symbol": to_sina_code(symbol), "scale": _akshare_period(timeframe),
+                        "ma": "no", "datalen": str(max(1, min(limit, 1970)))},
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn/"},
+                timeout=self.timeout,
             )
+            response.raise_for_status()
+            text = response.text
+            if "=(" not in text or ");" not in text:
+                raise ProviderError("invalid Sina minute JSONP response")
+            data = json.loads(text.split("=(", 1)[1].rsplit(");", 1)[0])
+            return pd.DataFrame(data)
 
         try:
             df = run_with_timeout(fetch, self.timeout + 2, f"sina {symbol}")
+            return _dataframe_to_bars(symbol, df, limit, adjusted=False)
         except Exception as exc:
             raise ProviderError(f"sina failed for {symbol}: {short_error_message(exc)}") from exc
-        return _dataframe_to_bars(symbol, df, limit)
 
 
 class SinaDailyProvider:
@@ -459,6 +553,9 @@ class SinaDailyProvider:
 
     name = "sina_daily"
     supported_timeframes = {"1d"}
+    _cooldown_until = 0.0
+    _cooldown_status = 0
+    _cooldown_lock = threading.Lock()
 
     def __init__(self, timeout: float = DEFAULT_REQUEST_TIMEOUT) -> None:
         self.timeout = timeout
@@ -470,15 +567,22 @@ class SinaDailyProvider:
     def get_bars(self, symbol: str, timeframe: str = "1d", limit: int = 120) -> list[Bar]:
         if timeframe != "1d":
             raise ProviderError("SinaDailyProvider only supports daily bars")
+        with self._cooldown_lock:
+            remaining = type(self)._cooldown_until - time.monotonic()
+            if remaining > 0:
+                raise ProviderError(f"Sina daily HTTP {type(self)._cooldown_status}; retry after {remaining:.0f}s")
 
-        prefix = "sz" if symbol.startswith(("0", "3")) else "sh"
         url = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
-        params = {"symbol": f"{prefix}{symbol}", "scale": "240", "ma": "no", "datalen": str(min(limit + 10, 300))}
+        params = {"symbol": to_sina_code(symbol), "scale": "240", "ma": "no", "datalen": str(min(limit + 10, 300))}
         headers = {"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
 
         import requests
         try:
             resp = requests.get(url, params=params, headers=headers, timeout=self.timeout)
+            if resp.status_code in {429, 456}:
+                with self._cooldown_lock:
+                    type(self)._cooldown_until = time.monotonic() + 60
+                    type(self)._cooldown_status = resp.status_code
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:
@@ -502,30 +606,7 @@ class SinaDailyProvider:
         return bars
 
 
-class _BaostockSession:
-    _lock = threading.Lock()
-    _active = False
-
-    @classmethod
-    def ensure_login(cls, bs_module) -> None:
-        with cls._lock:
-            if cls._active:
-                return
-            import io, contextlib
-            with contextlib.redirect_stdout(io.StringIO()):
-                login_result = bs_module.login()
-            if login_result.error_code != "0":
-                raise ProviderError(f"baostock login failed: {login_result.error_msg}")
-            cls._active = True
-
-    @classmethod
-    def reset(cls, bs_module) -> None:
-        with cls._lock:
-            if cls._active:
-                import io, contextlib
-                with contextlib.redirect_stdout(io.StringIO()):
-                    bs_module.logout()
-            cls._active = False
+_BAOSTOCK_SLOTS = threading.BoundedSemaphore(4)
 
 
 class BaostockProvider:
@@ -533,11 +614,9 @@ class BaostockProvider:
     supported_timeframes = {"1d"}
 
     def __init__(self, timeout: float = DEFAULT_BAOSTOCK_TIMEOUT) -> None:
-        try:
-            import baostock as bs  # type: ignore
-        except Exception as exc:  # pragma: no cover
-            raise RuntimeError("baostock is not available") from exc
-        self.bs = bs
+        from importlib.util import find_spec
+        if find_spec("baostock") is None:
+            raise RuntimeError("baostock is not available")
         self.timeout = timeout
 
     def get_instrument(self, symbol: str) -> Instrument:
@@ -547,55 +626,72 @@ class BaostockProvider:
     def get_bars(self, symbol: str, timeframe: str = "1d", limit: int = 120) -> list[Bar]:
         if timeframe != "1d":
             raise ProviderError("BaostockProvider only supports daily bars in this MVP")
+        import subprocess
+        import sys
 
         start_date, end_date = _baostock_date_window(limit)
-        bs_code = to_baostock_code(symbol)
-        fields = "date,open,high,low,close,volume,amount,turn"
-
-        def fetch_rows() -> list[list[str]]:
-            import io, contextlib
-            with contextlib.redirect_stdout(io.StringIO()):
-                _BaostockSession.ensure_login(self.bs)
-                result = self.bs.query_history_k_data_plus(
-                    bs_code,
-                    fields,
-                    start_date=start_date,
-                    end_date=end_date,
-                    frequency="d",
-                    adjustflag="2",
-                )
-            if result.error_code != "0":
-                raise ProviderError(f"baostock query failed for {symbol}: {result.error_msg}")
-            rows: list[list[str]] = []
-            with contextlib.redirect_stdout(io.StringIO()):
-                while result.error_code == "0" and result.next():
-                    rows.append(result.get_row_data())
-            return rows
-
+        request = {
+            "symbol": to_baostock_code(symbol), "start_date": start_date,
+            "end_date": end_date, "timeout": self.timeout,
+        }
+        deadline = time.monotonic() + self.timeout
+        if not _BAOSTOCK_SLOTS.acquire(timeout=self.timeout):
+            raise ProviderError(f"baostock {symbol} timed out waiting for an available connection")
         try:
-            rows = run_with_timeout(fetch_rows, self.timeout, f"baostock {symbol}")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ProviderError(f"baostock {symbol} timed out waiting for an available connection")
+            request["timeout"] = remaining
+            result = subprocess.run(
+                [sys.executable, str(Path(__file__).with_name("_baostock_worker.py"))],
+                input=json.dumps(request), capture_output=True, text=True,
+                timeout=remaining, check=True,
+            )
+            response = json.loads(result.stdout)
+            if response.get("error"):
+                raise ProviderError(response["error"])
+            return _baostock_rows_to_bars(symbol, response["rows"], limit)
+        except subprocess.TimeoutExpired as exc:
+            raise ProviderError(f"baostock {symbol} timed out after {self.timeout:.1f}s") from exc
         except Exception as exc:
-            err_msg = str(exc)
-            if "decompressing" in err_msg or "接收数据异常" in err_msg:
-                _BaostockSession.reset(self.bs)
-                try:
-                    rows = run_with_timeout(fetch_rows, self.timeout, f"baostock {symbol} retry")
-                except Exception as retry_exc:
-                    _BaostockSession.reset(self.bs)
-                    raise ProviderError(f"baostock failed for {symbol}: {short_error_message(retry_exc)}") from retry_exc
-            else:
-                _BaostockSession.reset(self.bs)
-                raise ProviderError(f"baostock failed for {symbol}: {short_error_message(exc)}") from exc
+            raise ProviderError(f"baostock failed for {symbol}: {short_error_message(exc)}") from exc
+        finally:
+            _BAOSTOCK_SLOTS.release()
 
-        return _baostock_rows_to_bars(symbol, rows, limit)
+
+def _bars_are_fresh(bars: list[Bar], timeframe: str = "1d", path: Path | None = None) -> bool:
+    from trade_compass_agent.ops.trading_calendar import is_trading_day
+
+    now = _market_now()
+    latest = bars[-1].timestamp.date()
+    today = now.date()
+    opened = is_trading_day(today) and now.hour * 100 + now.minute >= 930
+    min_date = today if opened else _prev_trading_date(today, now.hour)
+    if latest < min_date:
+        return False
+    session_close = datetime.combine(min_date, datetime.min.time()).replace(hour=15)
+    if timeframe in MINUTE_TIMEFRAMES:
+        endpoint = min(now, session_close) if opened else session_close
+        if opened and 1130 <= now.hour * 100 + now.minute < 1300:
+            endpoint = now.replace(hour=11, minute=30, second=0, microsecond=0)
+        return bars[-1].timestamp >= endpoint - timedelta(minutes=_timeframe_minutes(timeframe), seconds=60)
+    if timeframe == "1d" and path is not None:
+        written = datetime.fromtimestamp(path.stat().st_mtime, ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+        if not opened or now.hour >= 15:
+            return written >= session_close
+        return now - written <= timedelta(minutes=1)
+    return True
 
 
 class LocalBarCacheProvider:
     name = "cache"
+    _write_lock = threading.Lock()
     supported_timeframes = ALL_TIMEFRAMES
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, closed_daily_only: bool = False, required_source: str | None = None) -> None:
         self.root = root
+        self.closed_daily_only = closed_daily_only
+        self.required_source = required_source
         self.root.mkdir(parents=True, exist_ok=True)
 
     def get_instrument(self, symbol: str) -> Instrument:
@@ -607,10 +703,15 @@ class LocalBarCacheProvider:
         if not path.exists():
             raise ProviderError(f"no cache for {symbol} {timeframe}")
         bars: list[Bar] = []
+        requested_limit = 0
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
-            raw = json.loads(line)
+            try:
+                raw = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ProviderError(f"invalid bar cache for {symbol} {timeframe}") from exc
+            requested_limit = max(requested_limit, int(raw.get("requested_limit", 0)))
             bars.append(
                 Bar(
                     symbol=str(raw["symbol"]),
@@ -622,63 +723,95 @@ class LocalBarCacheProvider:
                     volume=float(raw["volume"]),
                     amount=float(raw["amount"]) if raw.get("amount") is not None else None,
                     adjusted=bool(raw.get("adjusted", False)),
+                    turnover_pct=raw.get("turnover_pct"),
+                    source=raw.get("source"),
                 )
             )
+        if timeframe == "1d" and self.closed_daily_only:
+            now = _market_now()
+            last_closed = _prev_trading_date(now.date(), now.hour)
+            bars = [bar for bar in bars if bar.timestamp.date() <= last_closed]
         if not bars:
             raise ProviderError(f"empty cache for {symbol} {timeframe}")
-        if timeframe == "1d" and not self._is_fresh(bars):
+        if self.required_source is not None and any(bar.source != self.required_source for bar in bars):
+            raise ProviderError(f"cache is not from preferred source {self.required_source}")
+        if not self._is_fresh(bars, timeframe, path):
             raise ProviderError(f"stale cache for {symbol} {timeframe}")
-        if len(bars) < limit:
+        if len(bars) < limit and requested_limit < limit:
             raise ProviderError(
                 f"cache has {len(bars)} bars for {symbol} {timeframe}, need {limit}"
             )
         return bars[-limit:]
 
-    def _is_fresh(self, bars: list[Bar]) -> bool:
-        now = datetime.now()
-        latest = bars[-1].timestamp.date()
-        today = now.date()
-        if _is_trading_hours(now):
-            # During trading hours, cache must include today's partial bar
-            return latest >= today
-        # Outside trading hours, accept previous trading day
-        min_date = _prev_trading_date(today, now.hour)
-        return latest >= min_date
+    def _is_fresh(self, bars: list[Bar], timeframe: str = "1d", path: Path | None = None) -> bool:
+        if timeframe == "1d" and self.closed_daily_only:
+            now = _market_now()
+            last_closed = _prev_trading_date(now.date(), now.hour)
+            if path is not None:
+                written = datetime.fromtimestamp(path.stat().st_mtime, ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+                if written < datetime.combine(last_closed, datetime.min.time()).replace(hour=15):
+                    return False
+            return bool(bars) and bars[-1].timestamp.date() >= last_closed
+        return _bars_are_fresh(bars, timeframe, path)
 
-    def write_bars(self, symbol: str, timeframe: str, bars: list[Bar]) -> None:
+    def write_bars(self, symbol: str, timeframe: str, bars: list[Bar], *, requested_limit: int = 0) -> None:
         if not bars:
             return
-        path = self._path(symbol, timeframe)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        existing_count = sum(1 for _ in path.read_text(encoding="utf-8").splitlines() if _.strip()) if path.exists() else 0
-        if len(bars) < existing_count:
-            return
-        with path.open("w", encoding="utf-8") as handle:
-            for bar in bars[-1000:]:
-                handle.write(
-                    json.dumps(
-                        {
-                            "symbol": bar.symbol,
-                            "timestamp": bar.timestamp.isoformat(),
-                            "open": bar.open,
-                            "high": bar.high,
-                            "low": bar.low,
-                            "close": bar.close,
-                            "volume": bar.volume,
-                            "amount": bar.amount,
-                            "adjusted": bar.adjusted,
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                )
+        with self._write_lock:
+            path = self._path(symbol, timeframe)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            existing = {}
+            if path.exists():
+                try:
+                    for line in path.read_text(encoding="utf-8").splitlines():
+                        if line.strip():
+                            row = json.loads(line)
+                            key = row["timestamp"][:10] if timeframe == "1d" else row["timestamp"]
+                            existing[key] = row
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    import shutil
+                    from uuid import uuid4
+                    shutil.copy2(path, path.with_suffix(f".corrupt-{uuid4().hex}"))
+                    existing.clear()
+            if any(bool(row.get("adjusted", False)) != bars[0].adjusted or row.get("source") != bars[0].source for row in existing.values()):
+                existing.clear()
+            # A changed adjustment basis invalidates older, non-overlapping prices.
+            if timeframe == "1d" and bars[0].adjusted:
+                for bar in bars:
+                    previous = existing.get(bar.timestamp.date().isoformat())
+                    if previous and float(previous["close"]) != bar.close:
+                        existing.clear()
+                        break
+            for bar in bars:
+                key = bar.timestamp.date().isoformat() if timeframe == "1d" else bar.timestamp.isoformat()
+                existing[key] = {
+                    "symbol": bar.symbol, "timestamp": bar.timestamp.isoformat(),
+                    "open": bar.open, "high": bar.high, "low": bar.low,
+                    "close": bar.close, "volume": bar.volume, "amount": bar.amount,
+                    "adjusted": bar.adjusted,
+                    "turnover_pct": bar.turnover_pct, "source": bar.source,
+                    "requested_limit": requested_limit,
+                }
+            rows = [existing[key] for key in sorted(existing)[-1000:]]
+            # Readers must see either complete version, including while batch fetches run.
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, encoding="utf-8", delete=False) as handle:
+                temporary = Path(handle.name)
+                try:
+                    for row in rows:
+                        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+                    handle.flush()
+                    temporary.replace(path)
+                finally:
+                    temporary.unlink(missing_ok=True)
 
     def _path(self, symbol: str, timeframe: str) -> Path:
         return self.root / timeframe / f"{symbol}.jsonl"
 
 
 class BulkDailyBarProvider:
-    """Cache-first daily bars for bulk screening — Sina HTTP primary, baostock fallback.
+    """Daily screening bars using the same source preference as normal queries.
 
     Cache freshness: only use cached bars if the latest bar date >= the
     expected latest trading date (previous trading day). This prevents
@@ -693,18 +826,31 @@ class BulkDailyBarProvider:
         *,
         cache_dir: Path | None = None,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
+        data: DataConfig | None = None,
     ) -> None:
-        network: list[MarketDataProvider] = [SinaDailyProvider(timeout=request_timeout)]
+        from .tencent_provider import TencentProvider
+        network: list[MarketDataProvider] = [TencentProvider(timeout=request_timeout), SinaDailyProvider(timeout=request_timeout)]
         try:
             network.append(BaostockProvider(timeout=max(request_timeout, DEFAULT_BAOSTOCK_TIMEOUT)))
         except Exception:
             pass
-        self._cache = LocalBarCacheProvider(cache_dir) if cache_dir else None
+        self._cache = LocalBarCacheProvider(cache_dir, closed_daily_only=True) if cache_dir else None
+        if self._cache is not None:
+            network.insert(0, self._cache)
+        optional = _maybe_tushare_provider(data=data, request_timeout=request_timeout)
+        if optional is not None:
+            network = _with_preferred_provider(network, optional)
+            if self._cache is not None:
+                self._cache = network[0]
         self._network = ChainProvider(network, timeout=request_timeout)
-        self._min_date: datetime | None = None
 
     def get_instrument(self, symbol: str) -> Instrument:
         return self._network.get_instrument(symbol)
+
+    def prefetch_bars(self, symbols: list[str], *, timeframe: str = "1d", limit: int = 120, timeout: float = 20) -> None:
+        # The outer consumer still applies the same closed-day and fallback rules.
+        requested = limit + int(_market_now().date() > self._get_min_date())
+        self._network.prefetch_bars(symbols, timeframe=timeframe, limit=requested, timeout=timeout)
 
     def get_bars(self, symbol: str, timeframe: str = "1d", limit: int = 120) -> list[Bar]:
         if timeframe != "1d":
@@ -716,10 +862,10 @@ class BulkDailyBarProvider:
                     return bars
             except ProviderError:
                 pass
-        bars = self._network.get_bars(symbol, timeframe=timeframe, limit=limit)
-        if self._cache is not None:
-            self._cache.write_bars(symbol, timeframe, bars)
-        return bars
+        last_closed = self._get_min_date()
+        requested = limit + int(_market_now().date() > last_closed)
+        bars = self._network.get_bars(symbol, timeframe=timeframe, limit=requested)
+        return [bar for bar in bars if bar.timestamp.date() <= last_closed][-limit:]
 
     def _cache_is_fresh(self, bars: list[Bar]) -> bool:
         """Check if cached bars include data up to at least the previous trading day."""
@@ -729,20 +875,9 @@ class BulkDailyBarProvider:
         return bars[-1].timestamp.date() >= min_date
 
     def _get_min_date(self) -> date:
-        """Return the minimum acceptable latest-bar date (lazy, computed once per instance)."""
-        if self._min_date is not None:
-            return self._min_date.date()
-        now = datetime.now()
-        d = now.date()
-        # Before 09:30 on a weekday, the latest available data is from the
-        # previous trading day's close; after 15:00 it's today.
-        if now.hour < 16:
-            d -= timedelta(days=1)
-        # Skip weekends backwards
-        while d.weekday() >= 5:
-            d -= timedelta(days=1)
-        self._min_date = datetime.combine(d, datetime.min.time())
-        return d
+        """Recompute on every call; this provider lives across sessions and days."""
+        now = _market_now()
+        return _prev_trading_date(now.date(), now.hour)
 
 
 class ChainProvider:
@@ -764,6 +899,35 @@ class ChainProvider:
         self.total_timeout = total_timeout if total_timeout is not None else timeout * 4
         self.last_warnings: list[str] = []
         self.last_resolved_provider: str | None = None
+        self._prefetch_failures: dict[tuple[str, str, int], str] = {}
+
+    def prefetch_bars(self, symbols: list[str], *, timeframe: str = "1d", limit: int = 120, timeout: float = 20) -> None:
+        """Fill the existing preferred-source cache before a batch consumer reads it."""
+        if timeframe != "1d":
+            return
+        preferred = next((p for p in self.providers if p.name not in {"cache", "sample"}
+                          and self._supports_timeframe(p, timeframe)), None)
+        fetch = getattr(preferred, "get_bars_batch", None)
+        cache = next((p for p in self.providers if isinstance(p, LocalBarCacheProvider)
+                      and p.required_source == getattr(preferred, "name", None)), None)
+        if not callable(fetch) or cache is None:
+            return
+        pending = []
+        for symbol in dict.fromkeys(symbols):
+            self._prefetch_failures.pop((symbol, timeframe, limit), None)
+            try:
+                cache.get_bars(symbol, timeframe=timeframe, limit=limit)
+            except ProviderError:
+                pending.append(symbol)
+        if not pending:
+            return
+        try:
+            results, errors = fetch(pending, limit=limit, timeout=timeout)
+        except Exception as exc:
+            results, errors = {}, {symbol: short_error_message(exc) for symbol in pending}
+        for symbol, bars in results.items():
+            cache.write_bars(symbol, timeframe, bars, requested_limit=limit)
+        self._prefetch_failures.update({(symbol, timeframe, limit): error for symbol, error in errors.items()})
 
     def get_instrument(self, symbol: str) -> Instrument:
         for provider in self.providers:
@@ -788,18 +952,45 @@ class ChainProvider:
 
         deadline = time.monotonic() + self.total_timeout
         budget_exhausted = False
+        failures: list[str] = []
+        prefetch_error = self._prefetch_failures.pop((symbol, timeframe, limit), None)
         for provider in real_providers:
+            if prefetch_error and callable(getattr(provider, "get_bars_batch", None)):
+                failures.append(f"{provider.name}: {prefetch_error}")
+                self._record_failure(symbol, provider, ProviderError(prefetch_error))
+                continue
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 budget_exhausted = True
                 break
             try:
-                bars = provider.get_bars(symbol, timeframe=timeframe, limit=limit)
+                if isinstance(provider, LocalBarCacheProvider):
+                    bars = provider.get_bars(symbol, timeframe=timeframe, limit=limit)
+                else:
+                    call_timeout = min(remaining, max(self.timeout, getattr(provider, "timeout", self.timeout)) + 1)
+                    bars = run_with_timeout(
+                        lambda provider=provider: provider.get_bars(symbol, timeframe=timeframe, limit=limit),
+                        call_timeout, f"{provider.name} {symbol}",
+                    )
+                if time.monotonic() >= deadline:
+                    raise ProviderError("data provider timeout budget exhausted")
+                if not bars:
+                    raise ProviderError("empty bars response")
+                if timeframe == "1d":
+                    now = _market_now()
+                    expected = _prev_trading_date(now.date(), now.hour)
+                    if bars[-1].timestamp.date() < expected:
+                        raise ProviderError(f"stale daily bars: latest={bars[-1].timestamp.date()}, required={expected}")
+                if timeframe in MINUTE_TIMEFRAMES and not _bars_are_fresh(bars, timeframe):
+                    raise ProviderError(f"stale minute bars: latest={bars[-1].timestamp}")
                 self.last_resolved_provider = provider.name
+                if provider.name != "cache":
+                    bars = [replace(bar, source=provider.name) if bar.source is None else bar for bar in bars]
                 if provider.name not in {"cache", "sample"} and cache_provider is not None:
-                    cache_provider.write_bars(symbol, timeframe, bars)
+                    cache_provider.write_bars(symbol, timeframe, bars, requested_limit=limit)
                 return bars
             except Exception as exc:
+                failures.append(f"{provider.name}: {short_error_message(exc)}")
                 self._record_failure(symbol, provider, exc)
                 if time.monotonic() >= deadline:
                     budget_exhausted = True
@@ -808,13 +999,13 @@ class ChainProvider:
         if budget_exhausted:
             raise ProviderError(
                 f"{symbol}: data provider timeout budget exhausted after "
-                f"{self.total_timeout:.1f}s for timeframe={timeframe}."
+                f"{self.total_timeout:.1f}s for timeframe={timeframe}. {'; '.join(failures)}"
             )
 
         raise ProviderError(
             f"{symbol}: all data providers failed for timeframe={timeframe}. "
             f"Tried: {[p.name for p in real_providers]}. "
-            "Check network or API keys."
+            f"{' ; '.join(failures)}"
         )
 
     def _record_failure(self, symbol: str, provider: MarketDataProvider, exc: Exception) -> None:

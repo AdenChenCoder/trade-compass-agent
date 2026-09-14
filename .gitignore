@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .env
 /data/
+# Local dated diagnostic reports belong under data/, not in release documentation.
+/docs/*-20??-??-??.*
 memory_vault/
 *.duckdb
 *.sqlite

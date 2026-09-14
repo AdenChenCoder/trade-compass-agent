@@ -67,6 +67,13 @@ class WeixinBotAdapter(ChannelAdapter):
     def is_logged_in(self) -> bool:
         return bool(self._token)
 
+    def delivery_unavailable_reason(self, message: ChannelMessage) -> str | None:
+        if not message.metadata.get("user_id") and not self._subscriber_users:
+            return "微信尚无接收人，请先向已连接的微信机器人发送消息以建立接收会话。"
+        if not self.is_logged_in:
+            return "微信尚未登录，请在渠道设置中连接微信。"
+        return None
+
     async def send(self, message: ChannelMessage) -> bool:
         """Send a text reply to a WeChat user.
 

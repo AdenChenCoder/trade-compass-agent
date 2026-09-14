@@ -215,7 +215,7 @@ def test_scheduled_agent_session_uses_extended_llm_timeout(
     assert config.llm.timeout == 60.0
 
 
-def test_scheduler_response_prefers_substantive_pre_tool_report(tmp_path: Path) -> None:
+def test_scheduler_response_does_not_promote_a_longer_intermediate_draft(tmp_path: Path) -> None:
     from trade_compass_agent.ops.agent_session import _select_scheduler_response_text
 
     session_file = tmp_path / "scheduler-morning_plan-agent_plan-2026-06-29.jsonl"
@@ -242,7 +242,29 @@ def test_scheduler_response_prefers_substantive_pre_tool_report(tmp_path: Path) 
 
     selected = _select_scheduler_response_text("已记录交易信号。", session_file)
 
-    assert selected == full_report.strip()
+    assert selected == "已记录交易信号。"
+    assert full_report in session_file.read_text(encoding="utf-8").replace("\\n", "\n")
+
+
+@pytest.mark.parametrize("summary", [None, "", "tool_limit"])
+def test_scheduled_failure_cannot_be_hidden_by_a_long_draft(tmp_path, monkeypatch, summary):
+    from types import SimpleNamespace
+    from trade_compass_agent.ops.agent_session import ScheduledAgentSession
+    from trade_compass_agent.runtime.loop import TOOL_ROUND_LIMIT_MESSAGE
+
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "vault")
+    session = ScheduledAgentSession(config, job_id="eod_review")
+    path = config.data_dir / "agent_sessions" / f"{session.session_id}.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"role": "assistant", "content": "尚未核实的分析。" * 300}))
+    before = path.read_bytes()
+    final = TOOL_ROUND_LIMIT_MESSAGE if summary == "tool_limit" else summary
+    fake = SimpleNamespace(_tools=SimpleNamespace(schemas=[]),
+                           run_turn=lambda *a, **k: SimpleNamespace(summary=final, interrupted=False))
+    monkeypatch.setattr("trade_compass_agent.runtime.loop.AgentLoop.from_config", lambda *a, **k: fake)
+    with pytest.raises(AgentUnavailableError, match="tool round limit" if final else "empty response"):
+        session.run("复盘", timeout=5)
+    assert path.read_bytes() == before
 
 
 def test_scheduler_response_keeps_final_summary_when_no_better_report(tmp_path: Path) -> None:

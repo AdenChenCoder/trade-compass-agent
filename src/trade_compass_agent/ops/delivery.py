@@ -62,15 +62,39 @@ class DeliveryRouter:
             ))
 
         external_channels = [c for c in delivery.channels if c != "web_log"]
-        if external_channels and self.channel_router.adapters:
+        if external_channels:
+            router = self.channel_router
             msg = ChannelMessage(title=title, content=content, severity=severity)
             for ch in external_channels:
-                adapter = self.channel_router.get_adapter(ch)
+                adapter = router.get_adapter(ch)
+                channel_name = {"feishu": "飞书", "wecom": "企业微信", "weixin": "微信"}.get(ch, ch)
+                reason = adapter.delivery_unavailable_reason(msg) if adapter else f"{channel_name}未连接，请在渠道设置中完成配置。"
+                if isinstance(reason, str) and reason:
+                    step = self._run_store.create_step_run(run.id, f"{channel_name}消息发送")
+                    self._run_store.skip_step(step, reason + "任务结果可在运行记录中查看。")
+                    logger.warning("Delivery to %s skipped: %s", ch, reason)
+                    continue
                 if adapter:
                     try:
-                        adapter.send_sync(msg)
+                        sent = adapter.send_sync(msg)
                     except Exception as exc:
                         logger.warning("Delivery to %s failed: %s", ch, exc)
+                        sent = False
+                    # Record the terminal delivery result separately from analysis status.
+                    # Do not leave a running step on an already completed job during I/O.
+                    step = self._run_store.create_step_run(run.id, f"{channel_name}消息发送")
+                    if sent:
+                        self._run_store.complete_step(step, output=f"任务结果已发送到{channel_name}")
+                    if not sent:
+                        logger.warning("Job %s result delivery to %s failed", run.job_id, ch)
+                        error = f"未能将任务结果发送到{channel_name}。请检查渠道连接和配置。"
+                        self._run_store.fail_step(step, error=error)
+                        self._notifier.send(Notification(
+                            channel=f"scheduler:{run.job_id}",
+                            title=f"定时任务消息发送失败: {run.job_id}",
+                            message=error + "任务结果可在定时任务的运行记录中查看。",
+                            severity="warning",
+                        ))
                 else:
                     logger.warning("No adapter found for channel %r, skipping", ch)
 

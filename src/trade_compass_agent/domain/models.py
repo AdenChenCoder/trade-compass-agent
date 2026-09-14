@@ -57,6 +57,7 @@ class Bar:
     amount: float | None = None
     adjusted: bool = False
     turnover_pct: float | None = None
+    source: str | None = None
 
 
 @dataclass(frozen=True)

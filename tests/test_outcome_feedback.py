@@ -156,6 +156,9 @@ class TestApplyOutcomeFeedback:
         }
         apply_outcome_feedback(pending, actuals, "lesson", mem_store, config)
         apply_outcome_feedback(pending, actuals, "lesson", mem_store, config)
+        assert mem_store.get_active_meta()[0]["disproof_count"] == 1  # retry is not new evidence
+        pending.run_id = "r2"
+        apply_outcome_feedback(pending, actuals, "lesson", mem_store, config)
 
         assert mem_store.get_active_meta("memory") == []
         archived = mem_store._meta["memory"][0]

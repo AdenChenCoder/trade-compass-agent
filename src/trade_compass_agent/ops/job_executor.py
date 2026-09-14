@@ -52,15 +52,20 @@ class JobExecutor:
     ) -> RunRecord:
         run = self.run_store.create_run(job.id, trigger=trigger)
 
+        from trade_compass_agent.ops.autonomous_trading import JOB_ID, skip_reason
+        if job.id == JOB_ID:
+            reason = skip_reason(self.config.data_dir)
+            if reason:
+                self.run_store.skip_run(run, reason=reason)
+                return run
+
         if trigger not in {"api", "cli"} and job.trading_day_only and not _is_trading_day():
             self.run_store.skip_run(run, reason="非交易日")
             return run
 
-        if self.run_store.is_job_running(job.id):
+        if not self.run_store.start_run_if_idle(run):
             self.run_store.skip_run(run, reason="同一 Job 正在运行（overlap guard）")
             return run
-
-        self.run_store.start_run(run)
 
         # Resolve stale pending reflections, then inject past lessons
         if job.agent_session:

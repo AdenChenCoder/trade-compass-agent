@@ -32,7 +32,7 @@ dependencies = [
   "baostock>=0.8,<1",
   "python-dotenv>=1.0,<2",
   "questionary>=2.1,<3",
-  "duckduckgo-search>=7.0,<9",
+  "ddgs>=9.13,<10",
   "openai>=1.0,<3",
   "mplfinance>=0.12.10b0,<0.13",
   "matplotlib>=3.8",
@@ -113,6 +113,9 @@ packages = ["src/trade_compass_agent"]
 exclude = [
   "/.uv-cache",
   "/apps/web/*.tsbuildinfo",
+  "/data",
+  "/memory_vault",
+  "/docs/*-20??-??-??.*",
 ]
 
 [tool.hatch.build.hooks.custom]

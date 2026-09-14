@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import Any, Protocol
@@ -251,7 +252,7 @@ class OpenAIChatClient:
         except Exception as exc:
             from trade_compass_agent.runtime.exceptions import AgentTurnError
 
-            raise AgentTurnError(f"LLM request failed: {exc}") from exc
+            raise AgentTurnError(f"LLM request failed: {_request_error_detail(exc)}") from exc
         choice = response.choices[0].message
         tool_calls: list[ToolCall] = []
         if choice.tool_calls:
@@ -303,9 +304,14 @@ class OpenAIChatClient:
             kwargs["tools"] = tools
         attempt = 0
         while True:
+            if is_cancelled and is_cancelled():
+                from trade_compass_agent.runtime.exceptions import TurnInterruptedError
+
+                raise TurnInterruptedError("")
             content_parts: list[str] = []
             tool_calls_by_index: dict[int, dict[str, str]] = {}
             stream_created = False
+            stream = None
             try:
                 stream = self._client.chat.completions.create(**kwargs)
                 stream_created = True
@@ -355,8 +361,21 @@ class OpenAIChatClient:
                         self.max_retries,
                         exc,
                     )
+                    # Avoid hammering a recovering connection; honour cancellation
+                    # before replaying a request that produced no output.
+                    for _ in range(min(20, 5 * 2 ** (attempt - 1))):
+                        if is_cancelled and is_cancelled():
+                            raise TurnInterruptedError("")
+                        time.sleep(0.05)
                     continue
-                raise AgentTurnError(f"LLM request failed: {exc}") from exc
+                raise AgentTurnError(f"LLM request failed: {_request_error_detail(exc)}") from exc
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        logger.debug("Failed to close LLM response stream", exc_info=True)
 
         tool_calls: list[ToolCall] = []
         for idx in sorted(tool_calls_by_index):
@@ -376,6 +395,21 @@ class OpenAIChatClient:
             model=self.model,
             provider=self.name,
         )
+
+
+def _request_error_detail(exc: Exception) -> str:
+    import socket
+
+    cause: BaseException | None = exc
+    seen: set[int] = set()
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, socket.gaierror) or any(token in str(cause).lower() for token in (
+            "name or service not known", "nodename nor servname", "name resolution",
+        )):
+            return "DNS 解析失败，无法连接模型服务；请检查本机网络或 DNS。"
+        cause = cause.__cause__ or cause.__context__
+    return str(exc)
 
 
 def _is_transient_stream_error(exc: Exception) -> bool:

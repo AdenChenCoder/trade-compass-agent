@@ -307,7 +307,7 @@ def run_setup_wizard(
     use_tushare = False
     if data_provider in {"auto", "tushare"}:
         use_tushare = ui.confirm(
-            "启用 Tushare（需要安装 tushare extra）",
+            "启用 Tushare（需要 Token 和相应数据权限）",
             default=bool(data_raw.get("tushare_enabled", False)),
         )
         data_raw["tushare_enabled"] = use_tushare

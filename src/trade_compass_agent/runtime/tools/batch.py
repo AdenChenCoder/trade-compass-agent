@@ -1,7 +1,7 @@
 """Batch data retrieval tools for multi-symbol scenarios.
 
-- batch_get_bars: parallel get_bars via ThreadPoolExecutor (no upstream batch API)
-- batch_get_fundamentals: native East Money ulist.np/get API (single HTTP call)
+- batch_get_bars: preferred-source prefetch, then bounded parallel reads/fallbacks
+- batch_get_fundamentals: configured batch API, then per-symbol fallbacks
 - batch_search_news: parallel per-symbol news fetch
 """
 
@@ -14,6 +14,7 @@ from datetime import datetime
 
 import requests
 
+from trade_compass_agent.data.fundamentals import FundamentalsSnapshot
 from trade_compass_agent.data.network import (
     extend_no_proxy_for_eastmoney,
     rate_limit_domain,
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 _MAX_BARS_SYMBOLS = 20
 _MAX_FUNDAMENTALS_SYMBOLS = 30
 _MAX_NEWS_SYMBOLS = 10
+_BATCH_ITEM_TIMEOUT_SECONDS = 10.0
 
 
 def _parse_symbols(raw: str, max_count: int) -> list[str]:
@@ -62,13 +64,19 @@ def tool_batch_get_bars(
 
     results: dict[str, dict] = {}
     errors: dict[str, str] = {}
+    prefetch = getattr(stack.provider, "prefetch_bars", None)
+    if callable(prefetch):
+        prefetch(codes, timeframe=timeframe, limit=limit, timeout=20)
 
     def fetch_one(sym: str) -> tuple[str, list | None, str | None]:
         try:
-            bars = stack.provider.get_bars(sym, timeframe=timeframe, limit=limit)
+            bars = run_with_timeout(
+                lambda: stack.provider.get_bars(sym, timeframe=timeframe, limit=limit),
+                _BATCH_ITEM_TIMEOUT_SECONDS, f"batch bars {sym}",
+            )
             return sym, bars, None
         except Exception as exc:
-            return sym, None, short_error_message(exc)
+            return sym, None, str(exc) if isinstance(exc, TimeoutError) else short_error_message(exc)
 
     workers = min(8, len(codes))
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -90,11 +98,17 @@ def tool_batch_get_bars(
                     "volume": latest.volume,
                     "date": latest.timestamp.strftime("%Y-%m-%d"),
                     "bars_count": len(bars),
+                    "as_of": latest.timestamp.isoformat(),
+                    "source": latest.source,
+                    "adjusted": latest.adjusted,
                 }
             else:
                 tail = bars[-min(limit, 30):]
                 results[sym] = {
                     "bars_count": len(bars),
+                    "as_of": bars[-1].timestamp.isoformat(),
+                    "source": bars[-1].source,
+                    "adjusted": bars[-1].adjusted,
                     "bars": [
                         {
                             "date": b.timestamp.strftime("%Y-%m-%d"),
@@ -180,14 +194,17 @@ def _fetch_ulist_batch(secids: list[str]) -> list[dict] | None:
     return rows
 
 
-def _fallback_fundamentals(stack: MarketStack, codes: list[str]) -> dict[str, dict]:
+def _fallback_fundamentals(stack: MarketStack, codes: list[str], *, provider=None) -> dict[str, dict]:
     """Parallel per-symbol fallback via existing ChainFundamentalsProvider."""
     results: dict[str, dict] = {}
 
     def fetch_one(sym: str):
-        try:
+        def fetch():
             bars = stack.provider.get_bars(sym, timeframe="1d", limit=120)
-            snap = stack.fundamentals_provider.get_snapshot(sym, bars=bars)
+            return (provider or stack.fundamentals_provider).get_snapshot(sym, bars=bars)
+
+        try:
+            snap = run_with_timeout(fetch, _BATCH_ITEM_TIMEOUT_SECONDS, f"batch fundamentals {sym}")
             return sym, {
                 "symbol": sym,
                 "pe_ttm": snap.pe_ttm,
@@ -195,6 +212,9 @@ def _fallback_fundamentals(stack: MarketStack, codes: list[str]) -> dict[str, di
                 "total_market_cap": snap.market_cap,
                 "industry": snap.industry,
                 "provider": snap.provider_name,
+                "roe": getattr(snap, "roe", None),
+                "as_of": getattr(snap, "as_of", None),
+                "notes": list(getattr(snap, "notes", ())),
             }, None
         except Exception as exc:
             return sym, None, short_error_message(exc)
@@ -211,15 +231,70 @@ def _fallback_fundamentals(stack: MarketStack, codes: list[str]) -> dict[str, di
     return results
 
 
+def _fundamentals_payload(source: str, results: dict[str, dict], warnings: list[str] | None = None) -> str:
+    notices = list(warnings or [])
+    missing = []
+    for symbol, result in results.items():
+        snapshot = FundamentalsSnapshot(
+            symbol=symbol, pe_ttm=result.get("pe_ttm"), pb=result.get("pb"),
+            market_cap=result.get("total_market_cap"), roe=result.get("roe"),
+            industry=result.get("industry"), provider_name=result.get("provider", source),
+            as_of=result.get("as_of"), notes=tuple(result.get("notes") or ()),
+        )
+        result.update(pe_ttm=snapshot.pe_ttm, pb=snapshot.pb,
+                      total_market_cap=snapshot.market_cap, roe=snapshot.roe,
+                      industry=snapshot.industry, provider=snapshot.provider_name,
+                      as_of=snapshot.as_of, notes=list(snapshot.notes),
+                      has_real_fundamentals=snapshot.has_real_fundamentals,
+                      data_status=snapshot.data_status)
+        if "float_market_cap" in result:
+            result["float_market_cap"] = FundamentalsSnapshot(
+                symbol=symbol, market_cap=result["float_market_cap"],
+            ).market_cap
+        if not snapshot.has_real_fundamentals:
+            missing.append(symbol)
+    if missing:
+        notices.append(f"以下标的未取得真实基本面数据：{'、'.join(missing)}。")
+    return json.dumps({"source": source, "count": len(results),
+                       "timestamp": datetime.now().isoformat(timespec="seconds"), "results": results,
+                       **({"warnings": notices} if notices else {})}, ensure_ascii=False)
+
+
 def tool_batch_get_fundamentals(stack: MarketStack, *, symbols: str) -> str:
     """Fetch fundamentals (PE, PB, market cap, industry) for multiple symbols.
 
-    Uses East Money batch API (one HTTP call) with per-symbol fallback.
+    Uses the configured preferred source, then free batch/per-symbol fallbacks.
     symbols: comma-separated stock codes, e.g. "600519,300750,000001"
     """
     codes = _parse_symbols(symbols, _MAX_FUNDAMENTALS_SYMBOLS)
     if not codes:
         return json.dumps({"error": "no valid symbols"}, ensure_ascii=False)
+
+    chain = getattr(stack.fundamentals_provider, "providers", [])
+    preferred = chain[0] if chain else None
+    fetch_batch = getattr(preferred, "get_snapshots", None)
+    if getattr(preferred, "name", None) == "tushare" and callable(fetch_batch):
+        from trade_compass_agent.data.fundamentals import ChainFundamentalsProvider
+        results = {}
+        warnings = []
+        try:
+            for symbol, snap in fetch_batch(codes).items():
+                results[symbol] = {"symbol": symbol, "pe_ttm": snap.pe_ttm, "pb": snap.pb,
+                                   "total_market_cap": snap.market_cap, "industry": snap.industry,
+                                   "provider": snap.provider_name, "roe": snap.roe,
+                                   "as_of": snap.as_of, "notes": list(snap.notes)}
+        except Exception as exc:
+            warnings.append(f"Tushare: {short_error_message(exc)}")
+        missing = [c for c in codes if c not in results]
+        rows = _fetch_ulist_batch([_to_secid(c) for c in missing]) if missing else []
+        for row in rows or []:
+            symbol = str(row.get("symbol") or "")
+            if symbol in missing:
+                results[symbol] = {**row, "provider": "eastmoney_ulist_batch"}
+        missing = [c for c in codes if c not in results]
+        if missing:
+            results.update(_fallback_fundamentals(stack, missing, provider=ChainFundamentalsProvider(chain[1:])))
+        return _fundamentals_payload("configured_chain", results, warnings)
 
     secids = [_to_secid(c) for c in codes]
     rows = _fetch_ulist_batch(secids)
@@ -228,33 +303,17 @@ def tool_batch_get_fundamentals(stack: MarketStack, *, symbols: str) -> str:
         result_map: dict[str, dict] = {}
         for row in rows:
             sym = str(row.get("symbol") or "")
-            if sym:
+            if sym in codes:
                 result_map[sym] = row
         missing = [c for c in codes if c not in result_map]
         if missing:
             fallback = _fallback_fundamentals(stack, missing)
             result_map.update(fallback)
-        return json.dumps(
-            {
-                "source": "eastmoney_ulist_batch",
-                "count": len(result_map),
-                "timestamp": datetime.now().isoformat(timespec="seconds"),
-                "results": result_map,
-            },
-            ensure_ascii=False,
-        )
+        return _fundamentals_payload("eastmoney_ulist_batch", result_map)
 
     logger.info("ulist batch unavailable, falling back to parallel per-symbol fetch")
     fallback = _fallback_fundamentals(stack, codes)
-    return json.dumps(
-        {
-            "source": "fallback_parallel",
-            "count": len(fallback),
-            "timestamp": datetime.now().isoformat(timespec="seconds"),
-            "results": fallback,
-        },
-        ensure_ascii=False,
-    )
+    return _fundamentals_payload("fallback_parallel", fallback)
 
 
 # ---------------------------------------------------------------------------

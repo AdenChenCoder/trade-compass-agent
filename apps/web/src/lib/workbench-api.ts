@@ -9,6 +9,7 @@ export type {
 } from "@/lib/forecast";
 import type {
   Account,
+  AutonomousTradingSettings,
   AuditEvent,
   BarsResponse,
   CustomJob,
@@ -72,6 +73,18 @@ async function parseJson<T>(res: Response): Promise<T> {
 export async function fetchPortfolio(): Promise<PortfolioResponse> {
   const res = await fetch("/api/portfolio");
   return parseJson<PortfolioResponse>(res);
+}
+
+export async function fetchAutonomousTrading(): Promise<AutonomousTradingSettings> {
+  return parseJson<AutonomousTradingSettings>(await fetch("/api/portfolio/autonomous-trading"));
+}
+
+export async function updateAutonomousTrading(enabled: boolean): Promise<AutonomousTradingSettings> {
+  return parseJson<AutonomousTradingSettings>(await fetch("/api/portfolio/autonomous-trading", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  }));
 }
 
 export async function postTrade(body: PaperTradeCreate): Promise<PortfolioResponse> {

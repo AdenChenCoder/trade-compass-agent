@@ -12,6 +12,56 @@ import re
 from dataclasses import dataclass, field
 
 
+def trade_receipt_section(tool_results: list[tuple[str, str]]) -> str:
+    """Render today's queried ledger facts and current executions without an LLM.
+
+    A ledger query is not an order, and FIFO settlements are not executions.
+    Repeated portfolio queries must not turn one execution into several fills.
+    """
+    facts: dict[str, dict] = {}
+    executed = set()
+    for name, raw in tool_results:
+        if name not in {"analyze_portfolio", "place_paper_trade", "batch_paper_trades"}:
+            continue
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict) or payload.get("error"):
+            continue
+        if name == "analyze_portfolio":
+            day = str(payload.get("trades_as_of") or "")[:10]
+            rows = [r for r in payload.get("recent_trades", []) if isinstance(r, dict)
+                    and day and str(r.get("timestamp", ""))[:10] == day]
+        else:
+            rows = [payload] if name == "place_paper_trade" else payload.get("results", [])
+            rows = [r for r in rows if isinstance(r, dict) and r.get("status") == "executed"]
+        for row in rows:
+            identity = row.get("trade_id")
+            if not identity or row.get("side") not in {"buy", "sell"}:
+                continue
+            if not all(row.get(k) is not None for k in ("symbol", "quantity", "price", "account")):
+                continue
+            facts[str(identity)] = row
+            if name != "analyze_portfolio":
+                executed.add(str(identity))
+    if not facts:
+        return ""
+
+    def cell(value):
+        return str(value).replace("|", "\\|").replace("\n", " ")
+
+    lines = ["\n\n**成交核对**", "", "以下逐笔数据来自本轮成交回执或当日账本查询；账本记录不表示本轮新下单。",
+             "", "| 依据 | 时间 | 账户 | 标的 | 方向 | 数量 | 价格 | 成交 ID |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for identity, row in sorted(facts.items(), key=lambda pair: str(pair[1].get("timestamp", ""))):
+        values = ["本轮回执" if identity in executed else "当日账本", row.get("timestamp") or "未提供",
+                  row["account"], row["symbol"], "买入" if row["side"] == "buy" else "卖出",
+                  row["quantity"], row["price"], identity]
+        lines.append("| " + " | ".join(cell(v) for v in values) + " |")
+    return "\n".join(lines)
+
+
 _PRICE_PATTERN = re.compile(
     r"(?:当前价|收盘价?|现价|最新价|开盘价?)[^\d]{0,5}(\d+\.?\d*)"
 )

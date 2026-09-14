@@ -16,37 +16,6 @@ from typing import Any
 
 import yaml
 
-KNOWN_TOOL_NAMES = frozenset(
-    {
-        "analyze_portfolio",
-        "batch_get_bars",
-        "chart_pattern",
-        "compute_bollinger",
-        "compute_ma",
-        "compute_macd",
-        "compute_rsi",
-        "compute_volume_ratio",
-        "eastmoney_news",
-        "emit_signal",
-        "get_bars",
-        "get_fund_flow",
-        "get_market_constraints",
-        "get_market_pulse",
-        "get_risk_status",
-        "load_skill",
-        "map_intent_to_sell",
-        "search_concept_boards",
-        "search_industry_boards",
-        "search_lhb",
-        "search_market_flash",
-        "search_memory",
-        "session_search",
-        "sina_realtime_quote",
-        "skill_manage",
-        "write_knowledge",
-    }
-)
-
 QUALITY_STATES = frozenset({"draft", "active", "verified", "needs_patch", "deprecated"})
 STATIC_STATUSES = frozenset({"pass", "warning", "fail"})
 
@@ -63,7 +32,7 @@ _DANGEROUS_PATTERNS = (
     r"(?:BEGIN|END) (?:RSA|OPENSSH|PRIVATE) KEY",
     r"(?i)(?:api[_-]?key|secret|password|token)\s*[:=]\s*[A-Za-z0-9_\-]{16,}",
     r"ignore (?:previous|all) instructions",
-    r"越权|外泄|泄露密钥|持久化后门",
+    r"(?:执行|安装|植入)持久化后门",
 )
 
 _BOUNDARY_WORDS = ("只在", "适用", "不适用", "边界", "条件", "除非", "当")
@@ -169,6 +138,7 @@ def evaluate_skill_content(
     content: str,
     existing: dict[str, str] | None = None,
     usage: Any | None = None,
+    reference_evidence: bool = False,
 ) -> SkillQuality:
     meta, body, parse_error = parse_skill_frontmatter(content)
     hard_errors: list[str] = []
@@ -191,8 +161,13 @@ def evaluate_skill_content(
     elif len(description) > 220:
         warnings.append("description too long for retrieval")
 
+    from trade_compass_agent.runtime.tools.policy import default_tool_policy
+
+    known_tools = default_tool_policy().names()
     known_skills = set((existing or {}).keys()) | {name}
-    for target in re.findall(r"\bload_skill\s*\(\s*['\"]?([a-z0-9._-]+)", content):
+    for target in re.findall(r"\bload_skill\s*\(\s*(?:name\s*=\s*)?['\"]?([a-z0-9._-]+)", content):
+        if target in {"...", "skill_name", "name"}:
+            continue
         if target not in known_skills:
             hard_errors.append(f"load_skill target not found: {target}")
 
@@ -201,17 +176,19 @@ def evaluate_skill_content(
             continue
         if tool in {"load_skill"}:
             continue
-        if tool.startswith(("compute_", "get_", "search_", "analyze_", "emit_", "map_")) and tool not in KNOWN_TOOL_NAMES:
+        if tool.startswith(("compute_", "get_", "search_", "analyze_", "emit_", "map_")) and tool not in known_tools:
             hard_errors.append(f"unknown tool reference: {tool}")
 
-    for pattern in _ONE_OFF_PATTERNS:
+    for pattern in (() if reference_evidence else _ONE_OFF_PATTERNS):
         if re.search(pattern, content):
             hard_errors.append("one-off market data or transient conclusion written as reusable skill")
             break
 
     for pattern in _DANGEROUS_PATTERNS:
-        if re.search(pattern, content, flags=re.IGNORECASE | re.DOTALL):
-            hard_errors.append("dangerous command, secret, or prompt-injection content")
+        match = re.search(pattern, content, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            line = content[:match.start()].count("\n") + 1
+            hard_errors.append(f"dangerous command, secret, or prompt-injection content (line {line})")
             break
 
     normalized_body = _fingerprint(body)

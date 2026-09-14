@@ -34,6 +34,9 @@ def tool_get_bars(stack: MarketStack, *, symbol: str, timeframe: str = "1d", lim
                 "low": bar.low,
                 "close": bar.close,
                 "volume": bar.volume,
+                "amount": bar.amount,
+                "adjusted": bar.adjusted,
+                **({"source": bar.source} if bar.source else {}),
                 **({"turnover_pct": bar.turnover_pct} if bar.turnover_pct is not None else {}),
             }
             for bar in bars[-min(limit, 30) :]
@@ -109,6 +112,7 @@ def tool_get_fundamentals(stack: MarketStack, *, symbol: str) -> str:
         "industry": snapshot.industry,
         "turnover_pct": latest_turnover,
         "has_real_fundamentals": snapshot.has_real_fundamentals,
+        "data_status": snapshot.data_status, "as_of": snapshot.as_of,
         "notes": list(snapshot.notes),
     }
     return json.dumps(payload, ensure_ascii=False)

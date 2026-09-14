@@ -29,6 +29,8 @@ class ConflictReport:
     reason: str
     refined_text: str = ""
     conflicts_with: str = ""
+    entry_id: str = ""
+    expected_version: int | None = None
 
 
 CURATOR_SCAN_PROMPT = """\
@@ -202,12 +204,21 @@ def scan_active_conflicts(
         prefix = str(item.get("entry_prefix", "") or item.get("conflicts_with", "")).strip()
         if len(prefix) < 3:
             continue
+        conflicts_with = str(item.get("conflicts_with", prefix))[:120]
+        locator = conflicts_with if verdict == "SUPERSEDE" else prefix
+        # Bind to the snapshot sent to the evaluator, never to a later disk read.
+        matches = [m for m in entries if locator and locator in m.text]
+        if len(matches) != 1:
+            logger.warning("Curator target is absent or ambiguous in the reviewed snapshot: %s", locator)
+            continue
         reports.append(ConflictReport(
             verdict=verdict,
             entry_prefix=prefix,
             reason=str(item.get("reason", "")),
             refined_text=str(item.get("refined", ""))[:120],
-            conflicts_with=str(item.get("conflicts_with", prefix))[:120],
+            conflicts_with=conflicts_with,
+            entry_id=matches[0].entry_id,
+            expected_version=matches[0].version,
         ))
     return reports
 
@@ -221,13 +232,18 @@ def apply_conflict_reports(
     """Apply curator scan results via replace (SUPERSEDE) or archive_entry (ARCHIVE)."""
     applied: list[dict[str, str]] = []
     for report in reports:
+        if not report.entry_id or report.expected_version is None:
+            logger.warning("Curator proposal has no reviewed version; rescan before applying")
+            continue
         if report.verdict == "SUPERSEDE" and report.refined_text and report.conflicts_with:
             result = mem_store.replace(
                 report.conflicts_with,
                 report.refined_text,
                 target,
                 source="curator",
-                confidence=0.85,
+                confidence=0.85, reason=report.reason,
+                entry_id=report.entry_id, expected_version=report.expected_version,
+                meta_extra={"evidence": [f"memory:{report.entry_id}:{report.expected_version}"]},
             )
             if result.get("ok"):
                 applied.append({
@@ -239,7 +255,9 @@ def apply_conflict_reports(
             else:
                 logger.warning("Curator SUPERSEDE failed: %s", result.get("error"))
         elif report.verdict == "ARCHIVE":
-            result = mem_store.archive_entry(report.entry_prefix, target)
+            result = mem_store.archive_entry(report.entry_prefix, target, reason=report.reason,
+                entry_id=report.entry_id, expected_version=report.expected_version,
+                evidence=[f"memory:{report.entry_id}:{report.expected_version}"])
             if result.get("ok"):
                 applied.append({
                     "action": "ARCHIVE",
@@ -247,4 +265,6 @@ def apply_conflict_reports(
                     "text": report.entry_prefix[:80],
                 })
                 logger.info("Curator ARCHIVE: %s", report.entry_prefix[:40])
+            else:
+                logger.warning("Curator ARCHIVE failed: %s", result.get("error"))
     return applied

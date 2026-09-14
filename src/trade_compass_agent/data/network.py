@@ -154,26 +154,22 @@ def patch_requests_default_timeout(default_timeout: float = 8.0) -> None:
 
 
 def run_with_timeout(func: Callable[[], T], timeout: float, description: str) -> T:
-    """Run func in a daemon thread with a hard timeout.
+    """Bound caller wait time; the callable must bound its own network requests.
 
-    Uses shutdown(wait=False) so the caller never blocks on a hung thread.
+    Python cannot stop the daemon worker when the caller's deadline expires.
+    Never change the process-wide socket timeout from concurrent workers.
     """
     if timeout <= 0:
         return func()
     import queue
-    import socket
 
     outcome: queue.Queue[tuple[bool, T | BaseException]] = queue.Queue(maxsize=1)
 
     def _guarded():
-        old = socket.getdefaulttimeout()
-        socket.setdefaulttimeout(timeout)
         try:
             outcome.put((True, func()))
         except BaseException as exc:
             outcome.put((False, exc))
-        finally:
-            socket.setdefaulttimeout(old)
 
     worker = threading.Thread(
         target=_guarded,

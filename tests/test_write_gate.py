@@ -158,9 +158,9 @@ category: trading
 
 
 class TestMemoryStoreSupersede:
-    """MemoryStore.add() should supersede or reinforce similar entries."""
+    """Similarity prompts review and cannot prove a longer statement is better."""
 
-    def test_similar_shorter_entry_reinforces(self, tmp_path: Path):
+    def test_similar_shorter_entry_waits_for_review(self, tmp_path: Path):
         from trade_compass_agent.memory.memory_store import MemoryStore
 
         store = MemoryStore(tmp_path, write_gate=SemanticWriteGate())
@@ -178,11 +178,11 @@ class TestMemoryStoreSupersede:
             source="curator",
             confidence=0.85,
         )
-        assert not r2["ok"]
-        assert r2.get("merged") is True
-        assert len(store.memory_entries) == 1
+        assert r2["ok"] and not r2["accepted"]
+        assert len(store.list_active()) == 1
+        assert store.list_active()[0].text == "涨停家数超过三十家可作为市场情绪偏强的参考指标"
 
-    def test_similar_longer_entry_supersedes(self, tmp_path: Path):
+    def test_similar_longer_entry_preserves_original_until_review(self, tmp_path: Path):
         from trade_compass_agent.memory.memory_store import MemoryStore
 
         store = MemoryStore(tmp_path, write_gate=SemanticWriteGate())
@@ -192,8 +192,8 @@ class TestMemoryStoreSupersede:
         long = "涨停家数超过三十家可作为市场情绪偏强的参考指标，结合成交额放大更可靠"
         r2 = store.add(long, target="memory", source="curator", confidence=0.85)
         assert r2.get("ok") or r2.get("superseded")
-        assert len(store.memory_entries) == 1
-        assert "结合成交额" in store.memory_entries[0]
+        assert not r2["accepted"]
+        assert [m.text for m in store.list_active()] == [short]
 
     def test_different_entry_added_normally(self, tmp_path: Path):
         from trade_compass_agent.memory.memory_store import MemoryStore

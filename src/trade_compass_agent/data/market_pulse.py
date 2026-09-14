@@ -8,6 +8,7 @@ from trade_compass_agent.domain import LimitUpSummary, MarketPulse, SectorStreng
 
 from .network import extend_no_proxy_for_eastmoney, patch_requests_for_eastmoney, run_with_timeout, short_error_message
 from .providers import DEFAULT_REQUEST_TIMEOUT, ProviderError
+from .sector_boards import fetch_eastmoney_board_rows, fetch_sina_board_rows
 
 
 class MarketPulseProvider(Protocol):
@@ -83,8 +84,23 @@ class AkshareMarketPulseProvider:
 
         try:
             sectors = self._fetch_sector_strength()
+            if not sectors:
+                raise ProviderError("empty industry ranking")
         except Exception as exc:
-            warnings.append(f"行业强度暂不可用：{short_error_message(exc)}")
+            primary_error = short_error_message(exc)
+            try:
+                rows = fetch_sina_board_rows(board_type="industry", limit=8)
+                if not rows:
+                    raise ProviderError("empty Sina industry ranking")
+                sectors = [SectorStrength(
+                    name=str(row["f14"]), change_pct=float(row["f3"]),
+                    turnover_pct=_optional_float(row.get("f8")),
+                    up_count=None, down_count=None,
+                    leader=row.get("f128") or None, leader_change_pct=None,
+                ) for row in rows]
+                warnings.append(f"东方财富行业强度不可用（{primary_error}）；已使用新浪行业排名，分类口径可能不同，缺失字段不作零值处理。")
+            except Exception as fallback_exc:
+                warnings.append(f"行业强度暂不可用：东方财富 {primary_error}；新浪 {short_error_message(fallback_exc)}")
 
         try:
             limit_up = self._fetch_limit_up_summary()
@@ -105,27 +121,22 @@ class AkshareMarketPulseProvider:
         )
 
     def _fetch_sector_strength(self) -> list[SectorStrength]:
-        def fetch():
-            return self.ak.stock_board_industry_name_em()
-
-        df = run_with_timeout(fetch, self.timeout + 2, "akshare industry board")
-        if df is None or getattr(df, "empty", True):
-            return []
-
-        sectors: list[SectorStrength] = []
-        for _, row in df.sort_values("涨跌幅", ascending=False).head(8).iterrows():
-            sectors.append(
-                SectorStrength(
-                    name=str(row.get("板块名称", "")),
-                    change_pct=_float(row.get("涨跌幅")),
-                    turnover_pct=_optional_float(row.get("换手率")),
-                    up_count=_optional_int(row.get("上涨家数")),
-                    down_count=_optional_int(row.get("下跌家数")),
-                    leader=str(row.get("领涨股票", "")) or None,
-                    leader_change_pct=_optional_float(row.get("领涨股票-涨跌幅")),
-                )
-            )
-        return sectors
+        # The SDK paginates every board and retries in the background after our
+        # deadline. The existing shared HTTP reader requests only the top eight.
+        rows = run_with_timeout(
+            lambda: fetch_eastmoney_board_rows(board_type="industry", limit=8),
+            self.timeout + 2,
+            "eastmoney industry board",
+        )
+        return [SectorStrength(
+            name=str(row["f14"]),
+            change_pct=float(row["f3"]),
+            turnover_pct=_optional_float(row.get("f8")),
+            up_count=_optional_int(row.get("f104")),
+            down_count=_optional_int(row.get("f105")),
+            leader=row.get("f128") or None,
+            leader_change_pct=_optional_float(row.get("f136")),
+        ) for row in rows if row.get("f14") and _optional_float(row.get("f3")) is not None]
 
     def _fetch_limit_up_summary(self) -> LimitUpSummary:
         today = datetime.now().strftime("%Y%m%d")

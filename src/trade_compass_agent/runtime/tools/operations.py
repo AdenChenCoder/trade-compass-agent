@@ -10,6 +10,7 @@ from trade_compass_agent.ops.job_definition import StepContext, StepOutput
 
 
 _OPERATIONS: dict[str, str] = {
+    "builtin.agent_autonomous_trading": "agent_autonomous_trading",
     "builtin.scan_portfolio_exits": "scan_portfolio_exits",
     "builtin.reconcile_portfolio_memory": "reconcile_portfolio_memory",
     "builtin.scan_overnight_news": "scan_overnight_news",

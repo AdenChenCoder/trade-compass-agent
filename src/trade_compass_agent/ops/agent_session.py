@@ -7,7 +7,6 @@ Agent failure raises instead of silently degrading.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import replace
 from datetime import date
@@ -27,11 +26,13 @@ SCHEDULER_OUTPUT_RULES = (
     "- 只用陈述/总结语气输出结论与建议，禁止向用户提问或请求确认\n"
     "- 禁止「需要你确认」「是否同意」「请告诉我」等反问句式\n"
     "- 不确定项写「待核实：…」或「数据缺口：…」，不要抛给用户\n"
-    "- 操作建议用「建议…」「计划…」「关注…」表述\n"
+    "- 最终答复必须是一份完整报告，先写最终结论，再写依据、执行结果与数据缺口；工具调用前的中间稿仅保留在过程记录中\n"
+    "- 完成工具调用后，将仍有效的分析和后续更正整合进最终答复，删除已撤回的结论，不要仅回复「已记录」「已完成」\n"
+    "- 遵守本轮模拟交易权限：允许自主交易且作出买卖决策时，调用交易工具执行，不停留在建议或等待用户确认\n"
+    "- 未执行的建议才用「建议…」「计划…」「关注…」；已成交须依据工具回执，失败与继续持有须说明原因\n"
     "- 任何卖出/减仓建议须给出可执行 sell_qty（100股整数倍）；100股持仓禁止「减1/3」「减半仓」\n\n"
 )
 
-_SUBSTANTIVE_RESPONSE_MIN_CHARS = 200
 SCHEDULED_LLM_TIMEOUT_SECONDS = 180.0
 
 
@@ -89,6 +90,22 @@ class ScheduledAgentSession:
         from trade_compass_agent.data.network import run_with_timeout
         from trade_compass_agent.runtime.exceptions import AgentUnavailableError
         from trade_compass_agent.runtime.loop import AgentLoop, TOOL_ROUND_LIMIT_MESSAGE
+        from trade_compass_agent.ops.autonomous_trading import JOB_ID
+        import threading
+        import time
+
+        stopped = threading.Event()
+        deadline = time.monotonic() + timeout
+
+        def cancelled() -> bool:
+            from trade_compass_agent.portfolio.trading_policy import AutonomousTradingStore
+            return (stopped.is_set() or time.monotonic() >= deadline
+                    or (self.job_id == JOB_ID and not AutonomousTradingStore(self.config.data_dir).read()))
+
+        def guard_execution() -> None:
+            from trade_compass_agent.portfolio.trading_policy import TradeRejected
+            if cancelled():
+                raise TradeRejected("本轮自主交易已停止或超时，本次未成交", "execution_inactive")
 
         def _turn() -> str:
             agent = AgentLoop.from_config(
@@ -104,7 +121,16 @@ class ScheduledAgentSession:
                 }
                 excluded |= all_tools - self._tool_whitelist
             agent._tools._exclude_tools = excluded
-            response = agent.run_turn(wrap_scheduler_prompt(prompt), session_id=self.session_id)
+            agent._tools.trade_execution_guard = guard_execution
+            for store_name in ("_memory_store", "_skill_store"):
+                store = getattr(agent, store_name, None)
+                if store is not None:
+                    store._commit_guard = guard_execution
+            turn_options = {"is_cancelled": cancelled}
+            response = agent.run_turn(wrap_scheduler_prompt(prompt), session_id=self.session_id,
+                                      **turn_options)
+            if getattr(response, "interrupted", False) is True:
+                raise AgentUnavailableError(f"Agent interrupted for job {self.job_id}")
             text = _select_scheduler_response_text(
                 response.summary,
                 self.config.data_dir / "agent_sessions" / f"{self.session_id}.jsonl",
@@ -115,7 +141,10 @@ class ScheduledAgentSession:
                 raise AgentUnavailableError(f"Agent reached tool round limit for job {self.job_id}")
             return text
 
-        return run_with_timeout(_turn, timeout, f"scheduler-agent-{self.job_id}")
+        try:
+            return run_with_timeout(_turn, timeout, f"scheduler-agent-{self.job_id}")
+        finally:
+            stopped.set()
 
 
 async def run_agent_step(
@@ -143,48 +172,9 @@ async def run_agent_step(
 
 
 def _select_scheduler_response_text(summary: str | None, session_file: Path) -> str:
-    """Return the best user-facing text from the latest scheduled agent turn.
+    """Publish the final reply; intermediate drafts remain in session history.
 
-    AgentLoop returns only the final assistant message. In scheduled jobs, an
-    agent may draft the full report before calling side-effect tools such as
-    emit_signal/write_memory, then finish with a short confirmation. The full
-    report is still persisted in the session, so recover it for artifacts and
-    notifications when it is clearly more substantial than the final summary.
+    Length cannot establish whether a draft is still valid after tool results
+    or corrections. AgentLoop already attaches evidence to the final reply.
     """
-    final_text = (summary or "").strip()
-    try:
-        lines = session_file.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return final_text
-
-    records: list[dict] = []
-    for line in lines:
-        if not line.strip():
-            continue
-        try:
-            raw = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(raw, dict) and raw.get("type") != "meta":
-            records.append(raw)
-
-    latest_user_idx = -1
-    for idx, record in enumerate(records):
-        if record.get("role") == "user":
-            latest_user_idx = idx
-
-    candidates: list[str] = []
-    for record in records[latest_user_idx + 1 :]:
-        if record.get("role") != "assistant":
-            continue
-        content = str(record.get("content") or "").strip()
-        if len(content) >= _SUBSTANTIVE_RESPONSE_MIN_CHARS:
-            candidates.append(content)
-
-    if not candidates:
-        return final_text
-
-    best = max(candidates, key=len)
-    if len(best) > max(len(final_text) * 2, len(final_text) + _SUBSTANTIVE_RESPONSE_MIN_CHARS):
-        return best
-    return final_text
+    return (summary or "").strip()

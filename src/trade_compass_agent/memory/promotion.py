@@ -400,8 +400,6 @@ def apply_promotions(
         logger.info("No clusters formed (need >= 2 observations with shared concepts)")
         return []
 
-    existing_active = mem_store.list_active("memory", min_confidence=gov.min_inject_confidence)
-    existing_knowledge = "\n".join(m.text for m in existing_active) if existing_active else "（暂无）"
     skills_summary = "（暂无）"
     if skill_store:
         skills = skill_store.list_skills(include_stale=False)
@@ -413,6 +411,9 @@ def apply_promotions(
     for cluster in clusters:
         if len(results) >= max_promote:
             break
+
+        existing_active = mem_store.list_active("memory", min_confidence=gov.min_inject_confidence)
+        existing_knowledge = "\n".join(m.text for m in existing_active) if existing_active else "（暂无）"
 
         # Gate 3: LLM refine
         refined = _llm_refine(cluster, llm_call)
@@ -443,6 +444,12 @@ def apply_promotions(
         promo_confidence = promo_cfg.default_confidence
 
         if result.verdict == "SUPERSEDE" and promo_cfg.auto_supersede and result.conflicts_with:
+            matches = [m for m in existing_active if result.conflicts_with in m.text]
+            if len(matches) != 1:
+                result.verdict = "REJECT"
+                result.reason += "; SUPERSEDE target absent or ambiguous in reviewed snapshot"
+                results.append(result)
+                continue
             replace_result = mem_store.replace(
                 result.conflicts_with,
                 result.refined_text,
@@ -450,8 +457,11 @@ def apply_promotions(
                 source="promotion",
                 confidence=promo_confidence,
                 meta_extra=promo_meta,
+                entry_id=matches[0].entry_id,
+                expected_version=matches[0].version,
+                reason=result.reason,
             )
-            if replace_result.get("ok"):
+            if replace_result.get("ok") and replace_result.get("accepted", True):
                 obs_store.mark_promoted(result.source_obs_ids)
                 results.append(result)
             else:
@@ -468,12 +478,12 @@ def apply_promotions(
                 confidence=promo_confidence,
                 meta_extra=promo_meta,
             )
-            if write_result.get("ok"):
+            if write_result.get("ok") and write_result.get("accepted", True):
                 obs_store.mark_promoted(result.source_obs_ids)
                 results.append(result)
             else:
                 logger.debug("MemoryStore rejected KNOWLEDGE write: %s", write_result.get("error"))
-                result.verdict = "REJECT"
+                result.verdict = "ARCHIVE" if write_result.get("ok") else "REJECT"
                 result.reason += f"; MemStore: {write_result.get('error', '')}"
                 results.append(result)
 
@@ -485,12 +495,12 @@ def apply_promotions(
                 confidence=promo_confidence,
                 meta_extra=promo_meta,
             )
-            if write_result.get("ok"):
+            if write_result.get("ok") and write_result.get("accepted", True):
                 obs_store.mark_promoted(result.source_obs_ids)
                 results.append(result)
             else:
                 logger.debug("MemoryStore rejected USER write: %s", write_result.get("error"))
-                result.verdict = "REJECT"
+                result.verdict = "ARCHIVE" if write_result.get("ok") else "REJECT"
                 result.reason += f"; MemStore: {write_result.get('error', '')}"
                 results.append(result)
 
@@ -512,7 +522,7 @@ def _apply_legacy(
         if len(results) >= max_promote:
             break
         write_result = mem_store.add(c.observation.summary, target="memory", source="promotion", confidence=0.85)
-        if write_result.get("ok"):
+        if write_result.get("ok") and write_result.get("accepted", True):
             obs_store.mark_promoted([c.observation.id])
             results.append(PromotionResult(
                 verdict="KNOWLEDGE",

@@ -21,6 +21,30 @@ from trade_compass_agent.runtime.tools.artifact_tracking import update_artifact_
 logger = logging.getLogger(__name__)
 
 
+async def agent_autonomous_trading(ctx: StepContext) -> StepOutput:
+    """Reassess the market and execute the agent's own paper-trading decisions."""
+    from uuid import uuid4
+    from trade_compass_agent.ops.autonomous_trading import JOB_ID, skip_reason
+    from trade_compass_agent.runtime.tools.portfolio import _market_now
+
+    reason = skip_reason(ctx.config.data_dir)
+    if reason:
+        return StepOutput(message=reason, data={"skipped": True, "reason": reason})
+    step_id = f"execution-{ctx.run_id or uuid4().hex}"
+    prompt = (
+        f"当前上海时间 {_market_now().isoformat(timespec='seconds')}。执行本轮盘中自主模拟交易。\n"
+        "先 load_skill(name=autonomous-paper-trading)，按该流程查看当前账户、"
+        "读取今日晨间计划与近期执行记录、刷新市场热点和行情，判断买入、卖出或持有。\n"
+        "这是已授权的执行任务：形成当前可执行的买卖决策后直接 place_paper_trade，"
+        "不要只发信号或等待用户确认；无需为产生交易而强行下单。"
+        "收尾报告必须区分已成交（含 trade_id）、拒单及处理结果、未交易原因。"
+    )
+    output = await run_agent_step(ctx, prompt, JOB_ID, step_id=step_id)
+    output.message = output.data["analysis"]
+    output.data["session_id"] = f"scheduler-{JOB_ID}-{step_id}-{ctx.date.isoformat()}"
+    return output
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # premarket operations
 # ═══════════════════════════════════════════════════════════════════════════
@@ -150,6 +174,11 @@ async def agent_premarket_briefing(ctx: StepContext) -> StepOutput:
 # morning_plan operations
 # ═══════════════════════════════════════════════════════════════════════════
 
+# Enough for a cold universe at the free source's paced 20 requests/second.
+_SCREENING_FETCH_TIMEOUT_SECONDS = 300.0
+_SCREENING_SYMBOL_TIMEOUT_SECONDS = 10.0
+
+
 async def run_screening_engine(ctx: StepContext) -> StepOutput:
     """L1-L4 screening engine. Pure computation, no LLM."""
     return await asyncio.to_thread(_run_screening_engine_sync, ctx)
@@ -175,38 +204,71 @@ def _run_screening_engine_sync(ctx: StepContext) -> StepOutput:
 
         provider = create_bulk_daily_provider(
             cache_dir=ctx.config.data_dir / "market_cache",
+            data=ctx.config.data,
         )
         df_map: dict[str, pd.DataFrame] = {}
         symbols = [s.symbol for s in stocks]
+        errors: dict[str, str] = {}
+        t0 = time.monotonic()
+        deadline = t0 + _SCREENING_FETCH_TIMEOUT_SECONDS
+        from trade_compass_agent.data.network import run_with_timeout, short_error_message
 
-        def _fetch_one(symbol: str) -> tuple[str, pd.DataFrame | None]:
+        prefetch = getattr(provider, "prefetch_bars", None)
+        if callable(prefetch):
+            prefetch(symbols, limit=cfg.trading_days, timeout=_SCREENING_FETCH_TIMEOUT_SECONDS * 2 / 3)
+        sources: dict[str, str] = {}
+
+        def _fetch_one(symbol: str) -> tuple[str, pd.DataFrame | None, str]:
             try:
-                bars = provider.get_bars(symbol, timeframe="1d", limit=cfg.trading_days)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return symbol, None, "取数时间预算已用完"
+                bars = run_with_timeout(
+                    lambda: provider.get_bars(symbol, timeframe="1d", limit=cfg.trading_days),
+                    min(remaining, _SCREENING_SYMBOL_TIMEOUT_SECONDS), f"screening {symbol}",
+                )
                 if bars:
+                    sources[symbol] = bars[-1].source or "unknown"
                     return symbol, pd.DataFrame([
                         {"open": b.open, "high": b.high, "low": b.low,
                          "close": b.close, "volume": b.volume,
                          "amount": getattr(b, "amount", b.volume * b.close)}
                         for b in bars
-                    ])
-            except Exception:
-                pass
-            return symbol, None
+                    ]), ""
+            except Exception as exc:
+                return symbol, None, short_error_message(exc)
+            return symbol, None, "无可用行情"
 
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
         max_workers = min(cfg.fetch_workers, len(symbols))
-        t0 = time.monotonic()
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        pool = ThreadPoolExecutor(max_workers=max_workers)
+        try:
             futures = [pool.submit(_fetch_one, s) for s in symbols]
             done = 0
-            for fut in as_completed(futures):
-                sym, df = fut.result()
+            for fut in as_completed(futures, timeout=max(0, deadline - time.monotonic())):
+                sym, df, error = fut.result()
                 if df is not None:
                     df_map[sym] = df
+                else:
+                    errors[sym] = error
                 done += 1
                 if done % 500 == 0:
                     logger.info("Screening data fetch: %d/%d (%.0fs)", done, len(symbols), time.monotonic() - t0)
+        except FutureTimeoutError:
+            pass
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+        for symbol in symbols:
+            if symbol not in df_map:
+                errors.setdefault(symbol, "取数超时或未完成")
+        coverage = {"requested": len(symbols), "received": len(df_map), "missing": len(errors)}
+        warnings = [f"行情覆盖 {len(df_map)}/{len(symbols)}，{len(errors)} 只取数失败或超时；候选仅基于已取得行情，不能视为完整全市场排名。"] if errors else []
         logger.info("Screening data fetch complete: %d/%d symbols in %.1fs", len(df_map), len(symbols), time.monotonic() - t0)
+        if not df_map:
+            return StepOutput(message="选股取数失败：没有可用行情", data={
+                "error": "没有可用行情，无法完成选股", "candidates": [],
+                "coverage": coverage, "warnings": warnings, "errors": errors,
+            })
 
         hot_industries: list[str] = []
         hot_concepts: list[str] = []
@@ -221,10 +283,12 @@ def _run_screening_engine_sync(ctx: StepContext) -> StepOutput:
         candidates = [{"symbol": s.symbol, "score": s.composite} for s in result.top_n]
 
         return StepOutput(
-            message=f"全市场{result.universe_size}只 → L1通过{result.l1_passed} → 评分{result.scored_count}只 → Top {len(candidates)}",
+            message=f"行情覆盖{len(df_map)}/{len(symbols)}只 → L1通过{result.l1_passed} → 评分{result.scored_count}只 → Top {len(candidates)}",
             data={
                 "universe": result.universe_size, "l1_passed": result.l1_passed,
                 "scored": result.scored_count, "candidates": candidates,
+                "coverage": coverage, "warnings": warnings, "errors": errors,
+                "data_sources": {source: list(sources.values()).count(source) for source in sorted(set(sources.values()))},
             },
         )
     except Exception as exc:
@@ -417,6 +481,10 @@ async def agent_morning_plan(ctx: StepContext) -> StepOutput:
         ideas_data=ideas.data,
         risk_data=risk.data,
     )
+    decision_context["screening_coverage"] = screening.data.get("coverage", {})
+    decision_context["screening_warnings"] = screening.data.get("warnings", [])
+    if screening.data.get("error"):
+        decision_context["screening_error"] = screening.data["error"]
 
     prompt = (
         f"今天是 {ctx.date.isoformat()}，请基于下方 decision_context 生成今日 A 股交易计划。\n\n"
@@ -936,7 +1004,7 @@ async def curate_knowledge(ctx: StepContext) -> StepOutput:
     from trade_compass_agent.llm.providers import ChatMessage, create_chat_client
     from trade_compass_agent.memory.contradiction import apply_conflict_reports, scan_active_conflicts
     from trade_compass_agent.memory.memory_store import MemoryStore
-    from trade_compass_agent.memory.semantic_merge import merge_similar_entries
+    from trade_compass_agent.memory.semantic_merge import maintain_memory
     from trade_compass_agent.memory.skill_store import SkillStore
     from trade_compass_agent.memory.write_gate import SemanticWriteGate
     from trade_compass_agent.runtime.bootstrap import GROUNDING_RULES
@@ -968,7 +1036,10 @@ async def curate_knowledge(ctx: StepContext) -> StepOutput:
 
     merged_clusters = 0
     try:
-        merged_clusters = merge_similar_entries(mem_store, _llm_call)
+        maintenance = maintain_memory(mem_store, _llm_call)
+        merged_clusters = maintenance.get("merged_clusters", 0)
+        if not maintenance.get("ok"):
+            logger.warning("Memory maintenance pending: %s", maintenance)
     except Exception as exc:
         logger.warning("Semantic merge in curator failed: %s", exc)
 

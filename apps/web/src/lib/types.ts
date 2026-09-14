@@ -75,9 +75,15 @@ export interface Account {
   name: string;
   description: string;
   capital: number;
+  available_cash?: number | null;
+  cash_error?: string | null;
   used: number;
   utilization_pct: number;
   created_at: string;
+}
+
+export interface AutonomousTradingSettings {
+  enabled: boolean;
 }
 
 export interface AccountSummary {
@@ -217,7 +223,18 @@ export interface SkillsResponse {
 }
 
 export interface MemoryEntry {
+  status: "active" | "candidate" | "archived";
   index: number;
+  entry_id: string;
+  version: number;
+  reason: string;
+  evidence: string[];
+  pinned: boolean;
+  needs_review: boolean;
+  change_kind?: "" | "deduplicated" | "merged" | "replaced";
+  review_method?: "" | "ai";
+  successors?: { entry_id: string; version: number; text: string; status: string }[];
+  lineage_status?: "complete" | "unavailable" | "ambiguous" | "cycle";
   text: string;
   confidence: number;
   access_count: number;
@@ -231,6 +248,10 @@ export interface MemoryResponse {
   entries: MemoryEntry[];
   chars_used: number;
   char_limit: number;
+  revision: number;
+  active_count: number;
+  candidate_count: number;
+  archived_count: number;
 }
 
 export interface ScheduledJob {

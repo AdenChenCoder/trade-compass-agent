@@ -1,0 +1,40 @@
+id: autonomous_trading
+version: 2
+name: 盘中自主交易
+description: 刷新市场与持仓，执行 Agent 自主模拟交易决策并保留每轮记录。
+owner: trading
+inputs:
+  required:
+    - as_of
+  optional:
+    - run_id
+    - source_refs
+steps:
+  - id: execution
+    type: tool
+    uses: tool:builtin.agent_autonomous_trading
+    timeout_seconds: 840
+    with:
+      job_id: autonomous_trading
+      as_of: "{inputs.as_of}"
+      run_id: "{inputs.run_id}"
+      step_timeout_seconds: 780
+    primary_output: true
+output_schema: schemas/output.schema.json
+persistence:
+  kind: jsonl
+  path_template: data/workflows/{workflow_id}/{date}.jsonl
+  retention_days: 3650
+risk_policy:
+  may_recommend_trade: true
+  executes_paper_trades: true
+  produces_broker_order: false
+timeout_seconds: 900
+retry_policy:
+  max_retries: 0
+  backoff_seconds: 0
+degradation_policy:
+  on_failure: emit_degraded_artifact
+  on_partial_data: emit_with_warnings
+evaluation_hooks:
+  - plan_follow_through

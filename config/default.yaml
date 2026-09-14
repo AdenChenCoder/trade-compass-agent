@@ -4,10 +4,10 @@ memory_dir: ./memory_vault
 rules:
   enabled: true
   char_limit: 4000
-# auto = tushare(if token+enabled) -> akshare -> baostock -> cache
+# auto uses fresh cache and free upstreams; Tushare is optional and opt-in.
 data_provider: auto
 data:
-  tushare_enabled: true
+  tushare_enabled: false
   tushare_token_env: TUSHARE_TOKEN
   cninfo_enabled: true
 trading_costs:

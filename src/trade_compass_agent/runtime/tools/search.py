@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+from datetime import datetime, timezone
 
 from trade_compass_agent.data.network import (
     extend_no_proxy_for_eastmoney,
@@ -13,6 +14,11 @@ from trade_compass_agent.data.network import (
     short_error_message,
 )
 from trade_compass_agent.runtime.market_stack import MarketStack
+from trade_compass_agent.data.sector_boards import (
+    fetch_sina_board_rows as _fetch_sina_board_rows,
+    fetch_eastmoney_board_rows as _fetch_em_board_rows,
+)
+from trade_compass_agent.data.providers import ProviderError, to_sina_code
 
 extend_no_proxy_for_eastmoney()
 patch_requests_for_eastmoney(8.0)
@@ -22,13 +28,8 @@ patch_requests_default_timeout(8.0)
 _DEFAULT_TIMEOUT = 5.0
 _EM_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.eastmoney.com"}
 _SINA_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://vip.stock.finance.sina.com.cn"}
-_SINA_BOARD_URL = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_bkzj_bk"
 _SINA_HOT_STOCK_URL = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_bkzj_ssggzj"
 _EM_HOT_RANK_URL = "https://emappdata.eastmoney.com/stockrank/getAllCurrentList"
-_EM_BOARD_SPECS: dict[str, tuple[str, str]] = {
-    "concept": ("https://79.push2.eastmoney.com/api/qt/clist/get", "m:90 t:3 f:!50"),
-    "industry": ("https://17.push2.eastmoney.com/api/qt/clist/get", "m:90 t:2 f:!50"),
-}
 
 
 def _safe_float(v, default: float = 0.0) -> float:
@@ -47,64 +48,18 @@ def _safe_int(v, default: int = 0) -> int:
         return default
 
 
-def _fetch_em_board_rows(*, board_type: str, limit: int) -> list[dict]:
-    import requests
-
-    url, fs = _EM_BOARD_SPECS[board_type]
-    params = {
-        "pn": "1",
-        "pz": str(max(1, min(limit, 100))),
-        "po": "1",
-        "np": "1",
-        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-        "fltt": "2",
-        "invt": "2",
-        "fid": "f3",
-        "fs": fs,
-        "fields": "f2,f3,f8,f12,f14,f104,f105,f128",
-    }
-    rate_limit_domain(url)
-    resp = requests.get(url, params=params, headers=_EM_HEADERS, timeout=(1.0, 1.5))
-    resp.raise_for_status()
-    diff = resp.json().get("data", {}).get("diff") or []
-    return diff if isinstance(diff, list) else []
-
-
-def _fetch_sina_board_rows(*, board_type: str, limit: int) -> list[dict]:
-    import requests
-
-    fenlei = "0" if board_type == "industry" else "1"
-    params = {
-        "page": "1",
-        "num": str(max(1, min(limit, 100))),
-        "sort": "avg_changeratio",
-        "asc": "0",
-        "fenlei": fenlei,
-    }
-    resp = requests.get(_SINA_BOARD_URL, params=params, headers=_SINA_HEADERS, timeout=8)
-    resp.raise_for_status()
-    data = resp.json()
-    if not isinstance(data, list):
-        return []
-
-    rows: list[dict] = []
-    for item in data[:limit]:
-        rows.append({
-            "f14": item.get("name", ""),
-            "f3": _safe_float(item.get("avg_changeratio")) * 100,
-            "f128": item.get("ts_name", ""),
-            "f8": _safe_float(item.get("turnover")),
-            "f104": 0,
-            "f105": 0,
-        })
-    return rows
-
 
 def _fetch_board_rows(*, board_type: str, limit: int) -> tuple[list[dict], str]:
     try:
-        return _fetch_em_board_rows(board_type=board_type, limit=limit), "eastmoney"
+        rows = _fetch_em_board_rows(board_type=board_type, limit=limit)
+        if not rows:
+            raise ValueError("empty Eastmoney board response")
+        return rows, "eastmoney"
     except Exception:
-        return _fetch_sina_board_rows(board_type=board_type, limit=limit), "sina"
+        rows = _fetch_sina_board_rows(board_type=board_type, limit=limit)
+        if not rows:
+            raise ValueError("industry/concept ranking unavailable from both sources")
+        return rows, "sina"
 
 
 def _fetch_em_hot_stock_rows(*, limit: int) -> list[dict]:
@@ -207,11 +162,11 @@ def _parse_em_board_row(row: dict, *, include_counts: bool) -> dict:
         "name": str(row.get("f14") or "").strip(),
         "change_pct": _safe_float(row.get("f3")),
         "leader": str(row.get("f128") or "").strip(),
-        "turnover_pct": _safe_float(row.get("f8")),
+        "turnover_pct": _safe_float(row.get("f8"), None),
     }
     if include_counts:
-        item["up_count"] = _safe_int(row.get("f104"))
-        item["down_count"] = _safe_int(row.get("f105"))
+        item["up_count"] = _safe_int(row.get("f104"), None)
+        item["down_count"] = _safe_int(row.get("f105"), None)
     return item
 
 
@@ -232,7 +187,7 @@ def tool_search_stock_news(stack: MarketStack, *, symbol: str, limit: int = 10) 
             "param": {
                 "cmsArticleWebOld": {
                     "searchScope": "default",
-                    "sort": "default",
+                    "sort": "time",
                     "pageIndex": 1,
                     "pageSize": limit,
                     "preTag": "",
@@ -319,41 +274,64 @@ def tool_search_announcements(stack: MarketStack, *, symbol: str, limit: int = 8
 
 
 def tool_web_search(*, query: str, limit: int = 5) -> str:
-    """General web search. Uses Tavily if TAVILY_API_KEY is set, else DuckDuckGo (zero config)."""
+    """Free web search by default; Tavily requires an explicit provider choice."""
+    provider = os.getenv("WEB_SEARCH_PROVIDER", "auto").strip().lower()
     api_key = os.getenv("TAVILY_API_KEY", "").strip()
-
-    if api_key:
+    if provider == "tavily" and api_key:
         return _web_search_tavily(query=query, limit=limit, api_key=api_key)
+    if provider == "tavily":
+        return json.dumps({"query": query, "error": "TAVILY_API_KEY not configured", "results": []}, ensure_ascii=False)
+    if provider not in {"auto", "free", ""}:
+        return json.dumps({"query": query, "error": f"Unknown WEB_SEARCH_PROVIDER: {provider}", "results": []}, ensure_ascii=False)
     return _web_search_ddg(query=query, limit=limit)
 
 
 def _web_search_tavily(*, query: str, limit: int, api_key: str) -> str:
-    try:
-        from tavily import TavilyClient
-    except ImportError:
-        return _web_search_ddg(query=query, limit=limit)
+    import requests
+
+    def fetch() -> dict:
+        response = requests.post(
+            "https://api.tavily.com/search",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "query": query,
+                "max_results": max(1, min(limit, 20)),
+                "search_depth": "basic",
+                "include_answer": True,
+                "include_published_date": True,
+            },
+            timeout=(2, 7),
+        )
+        response.raise_for_status()
+        return response.json()
 
     try:
-        client = TavilyClient(api_key=api_key)
-        response = client.search(
-            query=query,
-            max_results=limit,
-            search_depth="basic",
-            include_answer=True,
-        )
+        # Use the HTTP API so a configured key works in base installs too.
+        response = run_with_timeout(fetch, 10, "Tavily search")
+        results: list[dict] = []
+        for item in response.get("results", [])[:max(1, min(limit, 20))]:
+            if not item.get("url"):
+                continue
+            result = {
+                "title": item.get("title", ""),
+                "url": item["url"],
+                "snippet": (item.get("content") or "")[:300],
+            }
+            if item.get("published_date"):
+                result["published_date"] = item["published_date"]
+            results.append(result)
+        if not results:
+            raise ValueError("no usable search results")
     except Exception as exc:
         return json.dumps(
-            {"error": f"Tavily search failed: {short_error_message(exc)}", "query": query},
+            {
+                "error": f"Tavily search failed: {short_error_message(exc)}",
+                "query": query,
+                "provider": "tavily",
+                "results": [],
+            },
             ensure_ascii=False,
         )
-
-    results: list[dict] = []
-    for item in response.get("results", [])[:limit]:
-        results.append({
-            "title": item.get("title", ""),
-            "url": item.get("url", ""),
-            "snippet": item.get("content", "")[:300],
-        })
 
     return json.dumps(
         {
@@ -367,115 +345,140 @@ def _web_search_tavily(*, query: str, limit: int, api_key: str) -> str:
     )
 
 
+def _web_search_proxy() -> str | None:
+    """Respect the user's configured proxy; Eastmoney's NO_PROXY is unrelated."""
+    from urllib import request
+    import sys
+
+    if os.getenv("DDGS_PROXY"):
+        return os.environ["DDGS_PROXY"]
+    proxies = request.getproxies()
+    if sys.platform == "darwin" and not any(key in proxies for key in ("https", "http", "all")):
+        # urllib otherwise discards macOS settings when only NO_PROXY is present.
+        proxies = request.getproxies_macosx_sysconf()
+    return proxies.get("https") or proxies.get("all") or proxies.get("http")
+
+
 def _web_search_ddg(*, query: str, limit: int) -> str:
+    import time
+
     try:
-        from ddgs import DDGS  # type: ignore[import-untyped]
+        from ddgs import DDGS
+        from ddgs.engines import ENGINES
     except ImportError:
+        return json.dumps({"error": "ddgs search dependency missing; reinstall trade-compass-agent", "query": query}, ensure_ascii=False)
+
+    failures: list[str] = []
+    deadline = time.monotonic() + 12
+    # Separate attempts preserve successful results even when another engine fails.
+    for backend in ("brave", "duckduckgo", "yahoo", "google"):
+        # DDGS silently falls back to 'auto' for disabled engines, losing provenance.
+        if backend not in ENGINES.get("text", {}):
+            failures.append(f"{backend}: backend unavailable")
+            continue
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            failures.append("search time budget exhausted")
+            break
         try:
-            from duckduckgo_search import DDGS
-        except ImportError:
-            return json.dumps(
-                {
-                    "error": "duckduckgo-search not installed",
-                    "hint": "Run: pip install duckduckgo-search",
-                    "query": query,
-                },
-                ensure_ascii=False,
-            )
+            def fetch(backend=backend):
+                with DDGS(timeout=min(3, remaining), proxy=_web_search_proxy()) as ddgs:
+                    region = "cn-zh" if any("\u4e00" <= ch <= "\u9fff" for ch in query) else "us-en"
+                    return list(ddgs.text(query, max_results=limit, backend=backend, region=region))
 
-    try:
-        with DDGS() as ddgs:
-            raw_results = list(ddgs.text(query, max_results=limit))
-    except Exception as exc:
-        return json.dumps(
-            {"error": f"DuckDuckGo search failed: {short_error_message(exc)}", "query": query},
-            ensure_ascii=False,
-        )
-
-    results: list[dict] = []
-    for item in raw_results[:limit]:
-        results.append({
-            "title": item.get("title", ""),
-            "url": item.get("href", ""),
-            "snippet": item.get("body", "")[:300],
-        })
-
-    return json.dumps(
-        {
-            "query": query,
-            "provider": "duckduckgo",
-            "count": len(results),
-            "results": results,
-        },
-        ensure_ascii=False,
-    )
+            raw_results = run_with_timeout(fetch, min(3, remaining), f"web search {backend}")
+            results = [{
+                "title": item.get("title", ""),
+                "url": item.get("href", ""),
+                "snippet": item.get("body", "")[:300],
+            } for item in raw_results[:limit] if item.get("href")]
+            if not results:
+                raise ValueError("no usable search results")
+            payload = {"query": query, "provider": backend, "count": len(results), "results": results,
+                       "data_status": "fallback" if failures else "available",
+                       "fetched_at": datetime.now(timezone.utc).isoformat()}
+            if failures:
+                payload["warnings"] = failures
+            return json.dumps(payload, ensure_ascii=False)
+        except Exception as exc:
+            failures.append(f"{backend}: {short_error_message(exc)}")
+    return json.dumps({"error": "Web search unavailable: " + "; ".join(failures), "query": query, "results": []}, ensure_ascii=False)
 
 
-def _cls_fallback_ddg(limit: int) -> str:
-    """Fallback: fetch latest market announcements from East Money when CLS is unavailable."""
+def _fetch_cls_flash(limit: int) -> list[dict]:
+    """Use the public endpoint used by cls.cn/telegraph, with no SDK retry loop."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import time
     import requests
 
-    url = "https://np-anotice-stock.eastmoney.com/api/security/ann"
-    params = {
-        "sr": "-1",
-        "page_size": str(limit),
-        "page_index": "1",
-        "ann_type": "SHA,SZA",
-        "client_source": "web",
-        "f_node": "0",
-        "s_node": "0",
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=6)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:
-        return json.dumps({"alerts": [], "error": f"eastmoney_fallback: {short_error_message(exc)}"}, ensure_ascii=False)
-
-    ann_list = data.get("data", {}).get("list", [])
-    if not ann_list:
-        return json.dumps({"alerts": [], "count": 0, "source": "eastmoney_ann"}, ensure_ascii=False)
-
+    response = requests.get(
+        "https://www.cls.cn/api/cache",
+        params={"name": "telegraph", "rn": limit, "lastTime": int(time.time())},
+        headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.cls.cn/telegraph"},
+        timeout=(2, 3),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("errno") != 0:
+        raise ValueError(f"CLS error {payload.get('errno')}")
+    rows = (payload.get("data") or {}).get("roll_data") or []
     items = []
-    for ann in ann_list[:limit]:
-        codes = ann.get("codes", [])
-        stock_info = f"{codes[0].get('short_name', '')}({codes[0].get('stock_code', '')})" if codes else ""
-        title = ann.get("title", "")
-        items.append({"time": ann.get("notice_date", "")[:16], "content": f"[{stock_info}] {title}" if stock_info else title})
+    for row in rows:
+        content = str(row.get("content") or row.get("brief") or "").strip()
+        try:
+            timestamp = datetime.fromtimestamp(float(row["ctime"]), ZoneInfo("Asia/Shanghai"))
+        except (KeyError, TypeError, ValueError, OverflowError, OSError):
+            continue
+        if content:
+            items.append({"time": timestamp.strftime("%Y-%m-%d %H:%M:%S"), "content": content[:300]})
+    return sorted(items, key=lambda item: item["time"], reverse=True)[:limit]
 
-    return json.dumps({"count": len(items), "alerts": items, "source": "eastmoney_ann"}, ensure_ascii=False)
+
+def _fetch_eastmoney_flash(limit: int) -> list[dict]:
+    """Fallback to financial flash news, preserving the tool's content contract."""
+    import time
+    import requests
+
+    url = "https://np-weblist.eastmoney.com/comm/web/getFastNewsList"
+    rate_limit_domain(url)
+    response = requests.get(
+        url,
+        params={"client": "web", "biz": "web_724", "fastColumn": "102",
+                "sortEnd": "", "pageSize": limit, "req_trace": str(int(time.time() * 1000))},
+        headers=_EM_HEADERS,
+        timeout=(2, 3),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if str(payload.get("code")) != "1":
+        raise ValueError(f"Eastmoney flash error: {payload.get('message', 'invalid response')}")
+    rows = (payload.get("data") or {}).get("fastNewsList") or []
+    items = []
+    for row in rows:
+        content = str(row.get("summary") or row.get("title") or "").strip()
+        timestamp = str(row.get("showTime") or "").strip()
+        if content and timestamp:
+            items.append({"time": timestamp, "content": content[:300]})
+    return sorted(items, key=lambda item: item["time"], reverse=True)[:limit]
 
 
 def tool_search_market_flash(*, limit: int = 20) -> str:
-    """Fetch latest flash news from 财联社 (CLS) — real-time market alerts."""
-    try:
-        import akshare as ak
-    except ImportError:
-        return _cls_fallback_ddg(limit)
-
-    def fetch():
-        return ak.stock_info_global_cls()
-
-    try:
-        df = run_with_timeout(fetch, _DEFAULT_TIMEOUT + 3, "cls_flash")
-    except Exception:
-        return _cls_fallback_ddg(limit)
-
-    if df is None or getattr(df, "empty", True):
-        return _cls_fallback_ddg(limit)
-
-    items: list[dict] = []
-    for _, row in df.head(limit).iterrows():
-        time_val = row.get("发布时间") or row.get("时间") or row.get("time") or ""
-        content_val = (
-            row.get("内容") or row.get("快讯信息") or row.get("title") or row.get("content") or ""
-        )
-        items.append({
-            "time": str(time_val).strip(),
-            "content": str(content_val).strip()[:300],
-        })
-
-    return json.dumps({"count": len(items), "alerts": items}, ensure_ascii=False)
+    """Fetch latest financial flash news, preferring 财联社 (CLS)."""
+    limit = max(1, min(limit, 100))
+    failures = []
+    for source, fetch in (("cls", _fetch_cls_flash), ("eastmoney_flash", _fetch_eastmoney_flash)):
+        try:
+            items = run_with_timeout(lambda fetch=fetch: fetch(limit), 6, f"market flash {source}")
+            if not items:
+                raise ValueError("empty flash news response")
+            payload = {"count": len(items), "alerts": items, "source": source}
+            if failures:
+                payload["warnings"] = failures
+            return json.dumps(payload, ensure_ascii=False)
+        except Exception as exc:
+            failures.append(f"{source}: {short_error_message(exc)}")
+    return json.dumps({"count": 0, "alerts": [], "error": "; ".join(failures)}, ensure_ascii=False)
 
 
 def tool_search_hot_stocks(*, limit: int = 15) -> str:
@@ -565,9 +568,12 @@ def tool_search_concept_boards(*, limit: int = 15) -> str:
         )
 
     items = [_parse_em_board_row(row, include_counts=False) for row in rows[:limit]]
-    payload: dict = {"count": len(items), "boards": items}
+    payload: dict = {"count": len(items), "boards": items, "source": source,
+                     "data_status": "available" if source == "eastmoney" else "fallback",
+                     "classification": source, "fetched_at": datetime.now(timezone.utc).isoformat(),
+                     "as_of": None}
     if source != "eastmoney":
-        payload["source"] = source
+        payload["warnings"] = ["使用新浪分类，与东方财富板块口径不同；接口未提供行情时间，获取时间不代表行情时间。"]
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -660,9 +666,12 @@ def tool_search_industry_boards(*, limit: int = 15) -> str:
         )
 
     items = [_parse_em_board_row(row, include_counts=True) for row in rows[:limit]]
-    payload: dict = {"count": len(items), "boards": items}
+    payload: dict = {"count": len(items), "boards": items, "source": source,
+                     "data_status": "available" if source == "eastmoney" else "fallback",
+                     "classification": source, "fetched_at": datetime.now(timezone.utc).isoformat(),
+                     "as_of": None}
     if source != "eastmoney":
-        payload["source"] = source
+        payload["warnings"] = ["使用新浪分类，与东方财富板块口径不同；接口未提供行情时间，获取时间不代表行情时间。"]
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -832,7 +841,7 @@ def tool_search_x(
     }
 
     try:
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=httpx.Timeout(30.0, connect=3.0, write=3.0, pool=3.0)) as client:
             response = client.post(
                 "https://api.x.ai/v1/responses",
                 headers={
@@ -889,12 +898,10 @@ def tool_sina_realtime_quote(*, symbols: str) -> str:
     import requests
 
     codes = [s.strip() for s in symbols.split(",") if s.strip()]
-    sina_codes = []
-    for code in codes:
-        if code.startswith("6"):
-            sina_codes.append(f"sh{code}")
-        else:
-            sina_codes.append(f"sz{code}")
+    try:
+        sina_codes = [to_sina_code(code) for code in codes]
+    except ProviderError as exc:
+        return json.dumps({"error": str(exc), "symbols": codes}, ensure_ascii=False)
 
     url = f"https://hq.sinajs.cn/list={','.join(sina_codes)}"
     try:
@@ -913,7 +920,7 @@ def tool_sina_realtime_quote(*, symbols: str) -> str:
             continue
         code = var_part.split("_")[-1]
         results.append({
-            "symbol": code[2:],
+            "symbol": dict(zip(sina_codes, codes)).get(code, code[2:]),
             "name": data[0],
             "open": float(data[1] or 0),
             "prev_close": float(data[2] or 0),
@@ -1025,7 +1032,7 @@ def tool_search_x_kol(
     }
 
     try:
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=httpx.Timeout(30.0, connect=3.0, write=3.0, pool=3.0)) as client:
             response = client.post(
                 "https://api.x.ai/v1/responses",
                 headers={

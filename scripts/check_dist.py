@@ -48,7 +48,7 @@ REQUIRED_WHEEL_FILES = {
 REQUIRED_BASE_DEPENDENCIES = {
     "akshare",
     "baostock",
-    "duckduckgo-search",
+    "ddgs",
     "fastapi",
     "matplotlib",
     "mplfinance",
@@ -83,6 +83,13 @@ def _validate_names(archive: Path, names: set[str]) -> None:
             errors.append(f"forbidden local file: {name}")
         if path.suffix in FORBIDDEN_SUFFIXES:
             errors.append(f"forbidden generated file: {name}")
+        parts = path.parts
+        if parts and parts[0].startswith("trade_compass_agent-"):
+            parts = parts[1:]  # Source distributions have a versioned root.
+        if parts and parts[0] in {"data", "memory_vault"}:
+            errors.append(f"forbidden local state: {name}")
+        if len(parts) == 2 and parts[0] == "docs" and re.search(r"-20\d{2}-\d{2}-\d{2}\.", parts[1]):
+            errors.append(f"forbidden local diagnostic report: {name}")
     if errors:
         raise ValueError(f"{archive.name}:\n  " + "\n  ".join(errors))
 

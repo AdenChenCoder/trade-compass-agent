@@ -91,6 +91,7 @@ class ContextBuilder:
         rules_enabled: bool = True,
         rules_char_limit: int = 4000,
         compression_config=None,
+        trading_policy: str = "",
     ) -> None:
         self.memory_dir = memory_dir
         self.skills = skills
@@ -103,6 +104,7 @@ class ContextBuilder:
             rules_enabled=rules_enabled,
             rules_char_limit=rules_char_limit,
         )
+        self._system += trading_policy
         self._system_tokens = _estimate_tokens(self._system)
 
     @property

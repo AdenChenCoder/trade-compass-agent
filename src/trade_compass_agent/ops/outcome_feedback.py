@@ -594,6 +594,7 @@ def apply_outcome_feedback(
         reason = f"outcome:{primary_signal}:{match.match_reason}:{pending.job_id}:{pending.run_date}"
         report = _build_report(pending, match, reasons, entry_hash, delta)
         result = mem_store.adjust_confidence(
+            entry_id=entry.get("entry_id"),
             entry_hash=entry_hash,
             delta=delta,
             reason=reason,
