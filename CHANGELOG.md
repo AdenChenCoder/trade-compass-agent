@@ -20,6 +20,8 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ### Fixed
 
+- Preserve memory revision history through confidence feedback and archival,
+  including feedback on retained entries with identical historical copies.
 - Distinguish exact memory deduplication from AI-reviewed merges and revisions,
   expose retained text and version history, and stop marking archived copies for review.
 - Independently check explicit user orders against the complete request and actual

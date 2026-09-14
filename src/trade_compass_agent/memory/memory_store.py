@@ -479,7 +479,7 @@ class MemoryStore:
             return self._error("Pinned memory can only be changed by the user", "protected")
         if row["status"] == "archived":
             return self._receipt(row, target, changed=False)
-        self._remember(row, target, reason)
+        self._remember(row, target, reason, row["entry_id"], row["version"] + 1)
         row.update(status="archived", reason=reason, version=row["version"] + 1, needs_review=False)
         row["evidence"] = list(dict.fromkeys(row.get("evidence", []) + list(evidence or [])))
         self._save_meta()
@@ -533,12 +533,15 @@ class MemoryStore:
                              retired_ids=list(selected_ids))
 
     @_live
-    def adjust_confidence(self, *, entry_hash=None, text_prefix=None, delta, reason, run_id=None,
+    def adjust_confidence(self, *, entry_hash=None, entry_id=None, text_prefix=None, delta, reason, run_id=None,
                           target="memory", archive_after_disproofs=2):
         matches = [r for r in self._meta[target] if r["content_hash"] == entry_hash] if entry_hash else []
-        row, error = self._locate(target, text_prefix or "", matches[0]["entry_id"] if len(matches) == 1 else None)
+        selected_id = entry_id or (matches[0]["entry_id"] if len(matches) == 1 else None)
+        row, error = self._locate(target, text_prefix or "", selected_id)
         if error:
             return error
+        if entry_hash and row["content_hash"] != entry_hash:
+            return self._error("Memory content changed; re-evaluate feedback", "version_conflict")
         if row["source"] == "user_pin":
             return self._error("Pinned memory cannot be adjusted by feedback", "protected")
         previous = row["confidence"]
@@ -546,6 +549,7 @@ class MemoryStore:
         if run_id and any(a.get("run_id") == run_id and a.get("reason") == reason for a in row.get("adjustments", [])):
             return self._receipt(row, target, changed=False, previous_confidence=previous)
         new = self._write_confidence(row["source"], previous + delta)
+        self._remember(row, target, reason, row["entry_id"], row["version"] + 1)
         row["adjustments"].append({"at": _now_iso(), "delta": delta, "reason": reason,
                                    "run_id": run_id, "previous": previous, "new": new})
         row.update(confidence=new, version=row["version"] + 1)
@@ -580,7 +584,8 @@ class MemoryStore:
             if row["status"] == "archived" or row["source"] == "user_pin":
                 continue
             if row["confidence"] < threshold:
-                row.update(status="archived", reason="insufficient_confidence", version=row["version"] + 1)
+                self._remember(row, target, "insufficient_confidence", row["entry_id"], row["version"] + 1)
+                row.update(status="archived", reason="insufficient_confidence", version=row["version"] + 1, needs_review=False)
                 archived.append(row["text"])
                 changed = True
             elif _compute_confidence(_entry_meta_from_dict(row), target) < threshold and not row.get("needs_review"):
