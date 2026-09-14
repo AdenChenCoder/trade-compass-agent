@@ -126,6 +126,10 @@ class EntryMeta:
     reason: str = ""
     evidence: list[str] = field(default_factory=list)
     needs_review: bool = False
+    successor_id: str = ""
+    successor_version: int | None = None
+    change_kind: str = ""
+    review_method: str = ""
     disproof_count: int = 0
     promoted_by_run_id: str = ""
     promoted_by_job_id: str = ""
@@ -154,6 +158,8 @@ _CONFIDENCE_EPSILON = 0.01
 
 def _entry_meta_from_dict(data: dict[str, Any]) -> EntryMeta:
     filtered = {k: v for k, v in data.items() if k in _META_FIELD_NAMES}
+    if filtered.get("status") == "archived":
+        filtered["needs_review"] = False
     if "adjustments" not in filtered:
         filtered["adjustments"] = []
     return EntryMeta(**filtered)
@@ -261,7 +267,7 @@ class MemoryStore:
                 "archived_count": sum(r["status"] == "archived" for r in rows),
                 "pressure": used >= int(limit * .9),
                 "maintenance_needed": used >= int(limit * .9) or any(
-                    r["status"] == "candidate" or r.get("needs_review") for r in rows)}
+                    r["status"] != "archived" and (r["status"] == "candidate" or r.get("needs_review")) for r in rows)}
 
     @_live
     def review_fingerprint(self):
@@ -402,7 +408,7 @@ class MemoryStore:
                 new.update(status="candidate", reason="capacity_review_required")
             if all(new[k] == row.get(k) for k in ("text", "source", "confidence", "status", "source_obs_ids")):
                 return self._receipt(row, target, changed=False, duplicate=True)
-            self._remember(row, target, "admission_updated", new["entry_id"])
+            self._remember(row, target, "admission_updated", new["entry_id"], new["version"])
             self._meta[target] = proposed
             self._save_meta()
             return self._receipt(new, target, duplicate=True)
@@ -431,9 +437,12 @@ class MemoryStore:
                                      entry_id=row["entry_id"], version=row["version"])
         return row, None
 
-    def _remember(self, row, target, reason, successor=""):
+    def _remember(self, row, target, reason, successor="", successor_version=None,
+                  *, change_kind="replaced", review_method=""):
         old = deepcopy(row)
-        old.update(target=target, status="archived", reason=reason, retired_at=_now_iso(), successor_id=successor)
+        old.update(target=target, status="archived", reason=reason, retired_at=_now_iso(),
+                   needs_review=False, successor_id=successor, successor_version=successor_version,
+                   change_kind=change_kind if successor else "", review_method=review_method)
         self._meta.setdefault("history", []).append(old)
 
     @_live
@@ -455,7 +464,7 @@ class MemoryStore:
         proposed = [new if r is row else r for r in self._meta[target]]
         if not self._fits(target, proposed):
             return self._error("Replacement would exceed core capacity; original preserved", "capacity_blocked", **self.capacity(target))
-        self._remember(row, target, reason, new["entry_id"])
+        self._remember(row, target, reason, new["entry_id"], new["version"])
         self._meta[target] = proposed
         self._save_meta()
         return self._receipt(new, target, superseded=row["content_hash"])
@@ -471,7 +480,7 @@ class MemoryStore:
         if row["status"] == "archived":
             return self._receipt(row, target, changed=False)
         self._remember(row, target, reason)
-        row.update(status="archived", reason=reason, version=row["version"] + 1)
+        row.update(status="archived", reason=reason, version=row["version"] + 1, needs_review=False)
         row["evidence"] = list(dict.fromkeys(row.get("evidence", []) + list(evidence or [])))
         self._save_meta()
         return self._receipt(row, target, text=row["text"])
@@ -482,7 +491,8 @@ class MemoryStore:
 
     @_live
     def commit_revision(self, *, replacements, content, reason, evidence, target="memory",
-                        expected_revision=None, actor="curator", source_obs_ids=None, source="curator"):
+                        expected_revision=None, actor="curator", source_obs_ids=None, source="curator",
+                        review_method="", change_kind="replaced"):
         """Atomically adopt/merge/replace a proposed set after external evaluation.
 
         replacements contains entry_id/version pairs. The evaluator runs outside
@@ -515,7 +525,8 @@ class MemoryStore:
         if not self._fits(target, kept + [new]):
             return self._error("Proposal exceeds core capacity; originals preserved", "capacity_blocked", **self.capacity(target))
         for row in selected:
-            self._remember(row, target, reason, new["entry_id"])
+            self._remember(row, target, reason, new["entry_id"], new["version"],
+                           change_kind=change_kind, review_method=review_method)
         self._meta[target] = kept + [new]
         self._save_meta()
         return self._receipt(new, target, disposition="merged" if len(selected) > 1 else "replaced" if selected else "adopted",
@@ -684,7 +695,9 @@ class MemoryStore:
                 if h in by_hash and row["status"] != "archived":
                     winner = by_hash[h]
                     winner["source_obs_ids"] = sorted(set(winner["source_obs_ids"] + row["source_obs_ids"]))
-                    row.update(status="archived", reason=f"duplicate_of:{winner['entry_id']}")
+                    row.update(status="archived", reason=f"duplicate_of:{winner['entry_id']}",
+                               successor_id=winner["entry_id"], successor_version=winner["version"],
+                               change_kind="deduplicated", needs_review=False)
                 elif row["status"] != "archived":
                     by_hash[h] = row
             self._meta[target] = rows

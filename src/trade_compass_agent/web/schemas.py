@@ -295,6 +295,13 @@ class SkillPinRequest(BaseModel):
     pinned: bool
 
 
+class MemorySuccessorPayload(BaseModel):
+    entry_id: str
+    version: int
+    text: str
+    status: str
+
+
 class MemoryEntryPayload(BaseModel):
     index: int
     entry_id: str = ""
@@ -303,6 +310,10 @@ class MemoryEntryPayload(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     pinned: bool = False
     needs_review: bool = False
+    change_kind: str = ""
+    review_method: str = ""
+    successors: list[MemorySuccessorPayload] = Field(default_factory=list)
+    lineage_status: str = "complete"
     text: str
     confidence: float = 1.0
     access_count: int = 0

@@ -15,7 +15,7 @@ import { NewBadge } from "@/components/ui/new-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetchDecisions, curateDecisions, reflectDecision, fetchInstruments, fetchInstrumentPage, fetchMemory } from "@/lib/workbench-api";
-import type { DecisionEntry, DecisionStats, MemoryResponse } from "@/lib/types";
+import type { DecisionEntry, DecisionStats, MemoryEntry, MemoryResponse } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 function CapacityBar({ used, limit }: { used: number; limit: number }) {
@@ -35,6 +35,51 @@ function CapacityBar({ used, limit }: { used: number; limit: number }) {
         {used}/{limit}
       </span>
     </div>
+  );
+}
+
+function changeLabel(entry: MemoryEntry): string {
+  if (entry.change_kind === "deduplicated") return "完全重复，已保留一条";
+  if (entry.change_kind === "merged") return entry.review_method === "ai" ? "经 AI 审查后合并" : "已合并";
+  if (entry.change_kind === "replaced") return entry.review_method === "ai" ? "经 AI 审查后修订" : "已更新";
+  return "";
+}
+
+function MemoryChangeDetails({ entry }: { entry: MemoryEntry }) {
+  if (entry.status !== "archived" || (!entry.change_kind && !entry.successors?.length &&
+      (!entry.lineage_status || entry.lineage_status === "complete"))) return null;
+  const deduplicated = entry.change_kind === "deduplicated";
+  const summary = deduplicated ? "查看去重结果" : entry.change_kind === "merged" ? "查看合并结果" : "查看替代记录";
+  const states: Record<string, string> = { active: "有效", candidate: "候选", archived: "历史" };
+  const problems: Record<string, string> = {
+    unavailable: "保留或替代记录缺失，无法完整展示去向。",
+    ambiguous: "旧记录未注明替代版本，无法确定完整去向。",
+    cycle: "历史关联存在循环，无法确定最终去向。",
+  };
+  return (
+    <details className="pt-1 text-xs">
+      <summary className="cursor-pointer text-primary">{summary}</summary>
+      <div className="mt-2 space-y-3 border-l-2 pl-3">
+        <p className="text-muted-foreground">
+          {deduplicated ? "完全重复的副本去重，未调用 AI 重写正文。" : entry.review_method === "ai"
+            ? "修订方案经过 AI 审查后保存。" : "历史记录未注明是否经过 AI 审查。"}
+        </p>
+        {!deduplicated && entry.reason && <p className="whitespace-pre-wrap break-words">变更原因：{entry.reason}</p>}
+        {entry.successors?.map((successor, index) => (
+          <div key={`${successor.entry_id}:${successor.version}`} className="space-y-1">
+            <p className="text-muted-foreground">
+              {index === 0 ? (deduplicated ? "保留记录" : "替代记录") : "后续版本"}
+              {` · ${states[successor.status] ?? successor.status} · v${successor.version}`}
+            </p>
+            <p className="whitespace-pre-wrap break-words leading-relaxed">{successor.text}</p>
+            <p className="break-all text-muted-foreground">记录 ID：{successor.entry_id}</p>
+          </div>
+        ))}
+        {entry.lineage_status && problems[entry.lineage_status] && <p role="status" className="text-muted-foreground">
+          {problems[entry.lineage_status]}
+        </p>}
+      </div>
+    </details>
   );
 }
 
@@ -96,14 +141,15 @@ function MemoryEntries({ target }: { target: "memory" | "user" }) {
             key={`${entry.entry_id}:${entry.version}:${entry.index}`}
             className="group rounded-md border bg-muted/30 px-3 py-2.5 text-sm transition-colors hover:bg-muted/60"
           >
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1 space-y-1">
                 <p className="leading-relaxed">{entry.text}</p>
                 <p className="text-xs text-muted-foreground">
                   {entry.pinned ? "用户固定 · " : ""}{entry.source} · v{entry.version}
-                  {entry.reason ? ` · ${reasons[entry.reason] ?? (entry.reason.startsWith("duplicate_of:") ? "重复条目已合并" : entry.reason)}` : ""}
-                  {entry.needs_review ? " · 待复评" : ""}
+                  {changeLabel(entry) ? ` · ${changeLabel(entry)}` : entry.reason ? ` · ${reasons[entry.reason] ?? entry.reason}` : ""}
+                  {entry.status !== "archived" && entry.needs_review ? " · 待复评" : ""}
                 </p>
+                <MemoryChangeDetails entry={entry} />
                 {entry.evidence?.length > 0 && <details className="text-xs text-muted-foreground">
                   <summary className="cursor-pointer">查看依据</summary>
                   <p className="mt-1 whitespace-pre-wrap break-words">{entry.evidence.join("\n")}</p>
@@ -121,10 +167,10 @@ function MemoryEntries({ target }: { target: "memory" | "user" }) {
                     )}
                     title={`置信度: ${entry.confidence.toFixed(3)}`}
                   >
-                    {Math.round(entry.confidence * 100)}%
+                    置信度 {Math.round(entry.confidence * 100)}%
                   </span>
                   <span className="text-[10px] text-muted-foreground" title="访问次数">
-                    ×{entry.access_count}
+                    访问 {entry.access_count} 次
                   </span>
                 </div>
               </div>

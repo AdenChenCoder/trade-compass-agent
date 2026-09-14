@@ -788,8 +788,11 @@ def pin_skill(name: str, body: s.SkillPinRequest):
 
 
 def _memory_response(target: str, store) -> s.MemoryResponse:
+    from trade_compass_agent.memory.lineage import memory_lineage
+
     snapshot = store.snapshot(target)
     entries_meta = snapshot["entries"]
+    lineage = memory_lineage(entries_meta)
     char_limit = snapshot["limit"]
     return s.MemoryResponse(
         target=target,
@@ -806,6 +809,7 @@ def _memory_response(target: str, store) -> s.MemoryResponse:
                 content_hash=m.content_hash or m.dedup_hash,
                 created_at=m.created_at,
                 last_accessed=m.last_accessed,
+                **lineage[(m.entry_id, m.version)],
             )
             for i, m in enumerate(entries_meta)
         ],

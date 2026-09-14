@@ -104,7 +104,7 @@ def merge_similar_entries(
                 continue
             result = evaluate_revision(mem_store, replacements=[{"entry_id": m.entry_id, "version": m.version} for m in originals],
                 content=content, reason=proposal.get("reason", "semantic merge"),
-                evidence=[f"memory:{m.entry_id}:{m.version}" for m in originals], llm_call=llm_call)
+                evidence=[f"memory:{m.entry_id}:{m.version}" for m in originals], llm_call=llm_call, change_kind="merged")
             outcomes.append(result)
             merged += int(result.get("ok", False) and result.get("changed", False))
         except Exception as exc:
@@ -124,7 +124,8 @@ def _parse_json(raw):
     return value if isinstance(value, dict) else {}
 
 
-def evaluate_revision(store, *, replacements, content, reason, evidence, llm_call, target="memory", actor="curator"):
+def evaluate_revision(store, *, replacements, content, reason, evidence, llm_call, target="memory", actor="curator",
+                      change_kind="replaced"):
     """Judge a proposal outside the storage lock; commit only the version judged.
 
     This reuses the existing curator role. A model's self-written evidence list
@@ -169,7 +170,7 @@ def evaluate_revision(store, *, replacements, content, reason, evidence, llm_cal
         return {"ok": False, "disposition": "pending", "error": verdict.get("reason", "Proposal not accepted")}
     return store.commit_revision(replacements=replacements, content=content, reason=reason,
         evidence=evidence + ["curator: " + str(verdict.get("reason", "validated"))], target=target,
-        expected_revision=version, actor=actor)
+        expected_revision=version, actor=actor, review_method="ai", change_kind=change_kind)
 
 
 def _user_rules(store):

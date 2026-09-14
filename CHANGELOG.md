@@ -20,6 +20,8 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ### Fixed
 
+- Distinguish exact memory deduplication from AI-reviewed merges and revisions,
+  expose retained text and version history, and stop marking archived copies for review.
 - Independently check explicit user orders against the complete request and actual
   execution before granting an autonomous-switch exemption.
 - Keep scheduler polling responsive during long intraday runs, with atomic slot

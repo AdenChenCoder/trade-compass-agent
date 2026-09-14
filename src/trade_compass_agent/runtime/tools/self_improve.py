@@ -98,6 +98,8 @@ def tool_memory_write(
             {
                 "entry_id": m.entry_id, "version": m.version, "reason": m.reason, "evidence": m.evidence,
                 "pinned": m.source == "user_pin",
+                "successor_id": m.successor_id, "successor_version": m.successor_version,
+                "change_kind": m.change_kind, "review_method": m.review_method,
                 "text": m.text,
                 "confidence": round(m.confidence, 3),
                 "source": m.source,

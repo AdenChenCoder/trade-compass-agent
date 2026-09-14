@@ -231,6 +231,10 @@ export interface MemoryEntry {
   evidence: string[];
   pinned: boolean;
   needs_review: boolean;
+  change_kind?: "" | "deduplicated" | "merged" | "replaced";
+  review_method?: "" | "ai";
+  successors?: { entry_id: string; version: number; text: string; status: string }[];
+  lineage_status?: "complete" | "unavailable" | "ambiguous" | "cycle";
   text: string;
   confidence: number;
   access_count: number;
