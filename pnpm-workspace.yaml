@@ -5,6 +5,8 @@ overrides:
   nanoid: 3.3.18
   postcss: 8.5.24
   postcss-selector-parser: 6.1.3
+  # xcode only uses uuid.v4(); v11 retains its CommonJS API and fixes GHSA-w5hq-g745-h8pq.
+  "xcode>uuid": 11.1.1
 allowBuilds:
   esbuild: true
   sharp: true
