@@ -1041,24 +1041,42 @@ class ToolRegistry:
         self._memory_actor: str = memory_actor
         self._skill_actor: str = skill_actor
         self._trade_user_message = ""
+        self._completed_user_orders: list[dict] = []
+        self._trade_authorization: dict | None = None
+        self._trade_context_evidence: dict = {}
         self.trade_execution_guard = None
 
-    def set_trade_context(self, message: str) -> None:
+    def set_trade_context(self, message: str, *, attachments: str = "", previous_reply: str = "") -> None:
         self._trade_user_message = message if self._memory_actor == "agent" else ""
+        self._completed_user_orders = []
+        self._trade_authorization = None
+        self._trade_context_evidence = {"attachments": attachments, "previous_reply": previous_reply, "tool_results": []}
 
     def _is_autonomous_trade(self, args: dict, *, importing: bool = False) -> bool:
         from trade_compass_agent.portfolio.trading_policy import AutonomousTradingStore, TradeRejected
 
         quote = args.get("user_instruction")
+        self._trade_authorization = None
         if quote is not None:
             if not isinstance(quote, str) or not quote.strip() or quote not in self._trade_user_message:
                 raise TradeRejected("交易指令引用必须来自本轮用户明确要求，不能引用历史或后台任务", "invalid_user_instruction")
+            if importing:
+                self._authorize_user_order(args, importing=True)
             return False
         if importing:
             raise TradeRejected("同步外部成交需要引用本轮用户的明确同步指令", "user_instruction_required")
         if not AutonomousTradingStore(self.stack.config.data_dir).read():
             raise TradeRejected("自主交易已关闭；可继续分析，或执行用户明确的交易指令", "autonomous_trading_disabled")
         return True
+
+    def _authorize_user_order(self, args: dict, *, importing: bool = False) -> None:
+        from trade_compass_agent.runtime.trade_authorization import authorize_user_trade, order_scope
+
+        self._trade_authorization = authorize_user_trade(
+            self.stack.config, self._trade_user_message, order_scope(args, importing=importing),
+            self._completed_user_orders,
+            supporting_context=self._trade_context_evidence,
+        )
 
     @property
     def schemas(self) -> list[dict[str, Any]]:
@@ -1086,6 +1104,17 @@ class ToolRegistry:
             return json.dumps({"error": f"Tool '{name}' is not available in this context"}, ensure_ascii=False)
         try:
             result = self._execute(name, arguments)
+            if self._trade_user_message and name in {"analyze_portfolio", "get_market_constraints", "image_ocr", "image_analyze", "fetch_url"}:
+                self._trade_context_evidence["tool_results"].append({"tool": name, "arguments": arguments, "result": result})
+            if name in {"place_paper_trade", "batch_paper_trades"} and self._trade_authorization:
+                payload = json.loads(result)
+                fills = payload.get("results", []) if name == "batch_paper_trades" else [payload]
+                self._completed_user_orders.extend(
+                    {k: fill[k] for k in ("symbol", "side", "quantity", "price", "account") if k in fill}
+                    for fill in fills if fill.get("status") == "executed"
+                )
+                payload["user_authorization"] = self._trade_authorization
+                result = json.dumps(payload, ensure_ascii=False)
             self._consecutive_failures.pop(name, None)
             return result
         except TradeRejected as exc:
@@ -1373,6 +1402,7 @@ class ToolRegistry:
                 quantity=quantity,
                 _autonomous=autonomous,
                 _execution_guard=self.trade_execution_guard,
+                _user_authorization_guard=self._authorize_user_order if not autonomous else None,
                 price=args.get("price"),
                 price_source=args.get("price_source", "market_quote"),
                 record_decision=args.get("record_decision", True),

@@ -63,11 +63,9 @@ class JobExecutor:
             self.run_store.skip_run(run, reason="非交易日")
             return run
 
-        if self.run_store.is_job_running(job.id):
+        if not self.run_store.start_run_if_idle(run):
             self.run_store.skip_run(run, reason="同一 Job 正在运行（overlap guard）")
             return run
-
-        self.run_store.start_run(run)
 
         # Resolve stale pending reflections, then inject past lessons
         if job.agent_session:

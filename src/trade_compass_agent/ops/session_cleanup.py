@@ -8,6 +8,7 @@ window so agent_sessions/ does not grow without bound.
 from __future__ import annotations
 
 import logging
+import json
 import re
 import time
 from datetime import date, timedelta
@@ -44,6 +45,30 @@ def parse_scheduler_session_date(session_id: str) -> date | None:
         return date.fromisoformat(m.group(1))
     except ValueError:
         return None
+
+
+def _has_trading_activity(path: Path) -> bool:
+    """Keep attempts as well as fills, including legacy/custom task sessions."""
+    trade_tools = {"place_paper_trade", "batch_paper_trades"}
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    return True  # Unreadable history cannot establish safe deletion.
+                if row.get("autonomous_trading_enabled") is True:
+                    return True  # Holding/no-trade decisions are evidence too.
+                if row.get("role") == "tool" and row.get("name") in trade_tools:
+                    return True
+                for call in row.get("tool_calls") or []:
+                    if call.get("function", call).get("name") in trade_tools:
+                        return True
+    except (OSError, ValueError, AttributeError, TypeError):
+        logger.warning("Keeping unreadable scheduler session %s for recovery", path.name)
+        return True
+    return False
 
 
 def sweep_scheduler_sessions(
@@ -94,6 +119,8 @@ def sweep_scheduler_sessions(
             continue
         session_date = parse_scheduler_session_date(session_id)
         if session_date is None or session_date >= cutoff:
+            continue
+        if _has_trading_activity(path):
             continue
         if store.delete(session_id):
             removed += 1

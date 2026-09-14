@@ -197,12 +197,11 @@ class PromptJobExecutor:
     def execute(self, job: PromptJob, *, trigger: str = "scheduler") -> None:
         job_key = f"custom:{job.id}"
 
-        if self.run_store.is_job_running(job_key):
+        run = self.run_store.create_run(job_key, trigger=trigger)
+        if not self.run_store.start_run_if_idle(run):
+            self.run_store.skip_run(run, reason="同一任务正在运行")
             logger.info("Prompt job %s already running (overlap guard)", job.name)
             return
-
-        run = self.run_store.create_run(job_key, trigger=trigger)
-        self.run_store.start_run(run)
 
         try:
             session = ScheduledAgentSession(

@@ -278,6 +278,12 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
     if not ok:
         return json.dumps({"error": msg, "trade_rejected": True}, ensure_ascii=False)
 
+    user_authorization = kwargs.get("_user_authorization_guard")
+    if user_authorization is not None:
+        # Judge the actual execution price, not a model's requested price that a
+        # market quote replaced. Freshness is checked again inside the commit.
+        user_authorization({"symbol": symbol, "side": side, "quantity": quantity,
+                            "price": price, "price_source": price_source, "account": acct.value})
     fee = portfolio.estimate_fee(trade)
     def validate_execution(current_portfolio):
         execution_guard = kwargs.get("_execution_guard")

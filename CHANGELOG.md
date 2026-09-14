@@ -20,6 +20,12 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ### Fixed
 
+- Independently check explicit user orders against the complete request and actual
+  execution before granting an autonomous-switch exemption.
+- Keep scheduler polling responsive during long intraday runs, with atomic slot
+  and same-job admission across concurrent executors.
+- Preserve trading sessions from custom and other scheduled tasks, including
+  rejected orders and autonomous hold decisions, for later review.
 - Keep account limits, trade receipts, and final scheduled reports consistent
   across tools and workbench views.
 - Apply the same asset and field validation to single and batch fundamentals.

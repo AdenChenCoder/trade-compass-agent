@@ -52,6 +52,9 @@ class TickScheduler:
 
         self._running = False
         self._thread: threading.Thread | None = None
+        self._workers: set[threading.Thread] = set()
+        self._workers_lock = threading.Lock()
+        self._stop = threading.Event()
         self._db_path = db_path
         self._init_state_table()
         self._last_fired = self._load_last_fired()
@@ -79,13 +82,47 @@ class TickScheduler:
                 result[job_id] = row[1]
         return result
 
-    def _save_last_fired(self, job_id: str, slot_key: str) -> None:
+    def _claim_slot(self, job_id: str, slot_key: str) -> bool:
+        """Persist the slot before dispatch; competing instances cannot claim it."""
         import sqlite3
         with sqlite3.connect(self._db_path) as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO scheduler_state (key, value) VALUES (?, ?)",
+            changed = conn.execute(
+                "INSERT INTO scheduler_state (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value "
+                "WHERE scheduler_state.value < excluded.value",
                 (f"last_fired:{job_id}", slot_key),
-            )
+            ).rowcount
+        if changed:
+            self._last_fired[job_id] = slot_key
+        return bool(changed)
+
+    def _dispatch(self, name: str, execute) -> None:
+        """Run admitted work without holding the scheduler's polling thread."""
+        def worker():
+            try:
+                execute()
+            except Exception:
+                logger.exception("Failed to execute job %s", name)
+            finally:
+                with self._workers_lock:
+                    self._workers.discard(threading.current_thread())
+
+        thread = threading.Thread(target=worker, name=f"scheduler-{name}", daemon=True)
+        with self._workers_lock:
+            self._workers.add(thread)
+            try:
+                thread.start()
+            except Exception:
+                self._workers.discard(thread)
+                raise
+
+    def _join_workers(self, timeout: float = 10) -> bool:
+        deadline = time.monotonic() + timeout
+        with self._workers_lock:
+            workers = list(self._workers)
+        for worker in workers:
+            worker.join(timeout=max(0, deadline - time.monotonic()))
+        return all(not worker.is_alive() for worker in workers)
 
     def _migrate_legacy_jsonl(self) -> None:
         """One-time import from legacy JSONL if it exists."""
@@ -110,14 +147,18 @@ class TickScheduler:
         if self._running:
             logger.warning("TickScheduler thread stopped unexpectedly; restarting")
         self._running = True
+        self._stop.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True, name="tick-scheduler")
         self._thread.start()
         logger.info("TickScheduler started (tick=%ds)", TICK_INTERVAL_SECONDS)
 
     def shutdown(self, *, wait: bool = True) -> None:
         self._running = False
+        self._stop.set()
         if self._thread and wait:
             self._thread.join(timeout=10)
+        if wait:
+            self._join_workers()
         self._thread = None
         logger.info("TickScheduler stopped")
 
@@ -165,7 +206,7 @@ class TickScheduler:
                 self._tick()
             except Exception:
                 logger.exception("Tick error")
-            time.sleep(TICK_INTERVAL_SECONDS)
+            self._stop.wait(TICK_INTERVAL_SECONDS)
 
     def _reap_stale_runs(self) -> None:
         timeouts = {job.id: job.timeout_seconds for job in self.registry.all()}
@@ -203,16 +244,14 @@ class TickScheduler:
                 continue
             if (now - slot).total_seconds() > GRACE_WINDOW_SECONDS:
                 continue
-            self._last_fired[job.id] = slot_key
-            self._save_last_fired(job.id, slot_key)
+            if not self._claim_slot(job.id, slot_key):
+                continue
             logger.info("Firing job %s for slot %s", job.id, slot_key)
-            try:
-                asyncio.run(self._execute_and_deliver(job, trigger="scheduler"))
-            except Exception:
-                logger.exception("Failed to execute job %s", job.id)
+            self._dispatch(job.id, lambda job=job: asyncio.run(self._execute_and_deliver(job, trigger="scheduler")))
 
         # User-created prompt jobs
         for pjob in self.prompt_store.list_enabled():
+            now = datetime.now()
             slot = _compute_prompt_slot(pjob, now)
             if slot is None:
                 continue
@@ -224,13 +263,11 @@ class TickScheduler:
                 continue
             if pjob.trading_day_only and not _is_trading_day_cached():
                 continue
-            self._last_fired[pjob_key] = slot_key
-            self._save_last_fired(pjob_key, slot_key)
+            if not self._claim_slot(pjob_key, slot_key):
+                continue
             logger.info("Firing prompt job %s (%s) for slot %s", pjob.name, pjob.id, slot_key)
-            try:
-                self.prompt_executor.execute(pjob, trigger="scheduler")
-            except Exception:
-                logger.exception("Failed to execute prompt job %s", pjob.id)
+            executor = self.prompt_executor
+            self._dispatch(pjob_key, lambda pjob=pjob, executor=executor: executor.execute(pjob, trigger="scheduler"))
 
     async def _execute_and_deliver(self, job: JobDefinition, trigger: str = "scheduler") -> None:
         run = await self.executor.execute(job, trigger=trigger)

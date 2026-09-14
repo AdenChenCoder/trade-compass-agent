@@ -62,7 +62,11 @@ def test_switch_defaults_off_persists_and_rejects_autonomous_order(stack):
     assert len(ledger(stack).trades) == 1
 
 
-def test_explicit_current_instruction_works_off_but_cannot_leak_to_next_turn(stack):
+def test_explicit_current_instruction_works_off_but_cannot_leak_to_next_turn(stack, monkeypatch):
+    from trade_compass_agent.llm.providers import ChatCompletion
+    monkeypatch.setattr("trade_compass_agent.runtime.trade_authorization.create_chat_client", lambda config: SimpleNamespace(
+        complete=lambda messages: ChatCompletion(content=json.dumps({"authorized": True,
+            "instruction": "帮我买入000001一百股", "reason": "用户明确要求立即买入100股"}))))
     registry = ToolRegistry(stack)
     instruction = "帮我买入000001一百股"
     registry.set_trade_context(instruction)
@@ -82,7 +86,11 @@ def test_scheduled_context_cannot_claim_interactive_user_authorization(stack):
     assert ledger(stack).trades == []
 
 
-def test_imports_cannot_bypass_switch_or_market_prices(stack):
+def test_imports_cannot_bypass_switch_or_market_prices(stack, monkeypatch):
+    from trade_compass_agent.llm.providers import ChatCompletion
+    monkeypatch.setattr("trade_compass_agent.runtime.trade_authorization.create_chat_client", lambda config: SimpleNamespace(
+        complete=lambda messages: ChatCompletion(content=json.dumps({"authorized": True,
+            "instruction": "同步真实账户买入000001一百股，成交价10元", "reason": "明确要求同步外部已成交记录"}))))
     registry = ToolRegistry(stack)
     batch = {"trades": [order(price=10)]}
     assert json.loads(registry.execute("batch_paper_trades", batch))["code"] == "user_instruction_required"
@@ -345,6 +353,7 @@ def test_intraday_scheduler_runs_real_workflow_agent_and_keeps_receipts(stack, m
 
     first = scheduler()
     first._tick()
+    assert first._join_workers()
     runs = first.run_store.recent_runs(job_id='autonomous_trading')
     assert len(runs) == 1
     assert runs[0].status == 'completed', runs[0].error
@@ -364,9 +373,11 @@ def test_intraday_scheduler_runs_real_workflow_agent_and_keeps_receipts(stack, m
     first._tick()
     restarted = scheduler()
     restarted._tick()
+    assert restarted._join_workers()
     assert len(restarted.run_store.recent_runs(job_id='autonomous_trading')) == 1
     clock[0] = NOW.replace(minute=35)
     restarted._tick()
+    assert restarted._join_workers()
     assert len(restarted.run_store.recent_runs(job_id='autonomous_trading')) == 2
     sessions = list((stack.config.data_dir / 'agent_sessions').glob('scheduler-autonomous_trading-*.jsonl'))
     assert len(sessions) == 2
@@ -402,3 +413,47 @@ def test_stopped_intraday_run_cannot_commit_after_slow_quote(stack):
     result = json.loads(registry.execute('place_paper_trade', order()))
     assert result['code'] == 'execution_inactive'
     assert ledger(stack).trades == []
+
+
+def test_custom_autonomous_trade_receipts_survive_observation_period(tmp_path, monkeypatch):
+    from datetime import date
+    from trade_compass_agent.ops.agent_session import ScheduledAgentSession
+    from trade_compass_agent.ops.session_cleanup import sweep_scheduler_sessions
+    from trade_compass_agent.llm.providers import ChatCompletion, ToolCall
+    from trade_compass_agent.runtime.loop import AgentLoop
+    from trade_compass_agent.runtime.session import SessionStore
+    from trade_compass_agent.config import AgentConfig
+    config = AppConfig(data_dir=tmp_path/'data', memory_dir=tmp_path/'memory',
+                       data_provider='sample', agent=AgentConfig(llm_session_titles=False))
+    now = datetime(2026, 9, 14, 10, 5)
+    monkeypatch.setattr(portfolio_tools, '_market_now', lambda: now)
+    monkeypatch.setattr('trade_compass_agent.ops.trading_calendar.is_trading_day', lambda *a: True)
+    monkeypatch.setattr(portfolio_tools, '_update_signal_tracker', lambda *a: None)
+    AutonomousTradingStore(config.data_dir).set_enabled(True)
+    bar = Bar(symbol='000001', timestamp=now, open=10, high=10, low=10, close=10, volume=1000)
+    stack = SimpleNamespace(config=config, provider=SimpleNamespace(get_bars=lambda *a, **k: [bar]))
+    class Client:
+        count = 0
+        def stream_complete(self, messages, **kwargs):
+            self.count += 1
+            if self.count == 1:
+                return ChatCompletion(content='', model='test', provider='test', tool_calls=[
+                    ToolCall(id='order-1', name='place_paper_trade', arguments=json.dumps({
+                        'symbol': '000001', 'side': 'buy', 'quantity': 100, 'account': 'short_stock'}))])
+            assert json.loads(messages[-1].content)['status'] == 'executed'
+            return ChatCompletion(content='本轮已成交100股。', model='test', provider='test')
+    monkeypatch.setattr('trade_compass_agent.runtime.loop.create_chat_client', lambda *a: Client())
+    monkeypatch.setattr(AgentLoop, '_update_session_summary', lambda *a, **k: None)
+    monkeypatch.setattr(AgentLoop, '_maybe_background_review', lambda *a, **k: None)
+    monkeypatch.setattr(AgentLoop, 'from_config', lambda c, **kw: AgentLoop(
+        config=c, stack=stack, session_store=SessionStore(c.data_dir/'agent_sessions'),
+        memory_actor=kw.get('memory_actor', 'scheduler')))
+    session = ScheduledAgentSession(config, job_id='prompt-user-market-analysis', run_date=now.date())
+    response = session.run('分析行情，并按判断买入或卖出。')
+    assert '成交' in response
+    assert len(JsonPaperPortfolio(config.data_dir/'paper_trades.jsonl').trades) == 1
+    sessions = SessionStore(config.data_dir/'agent_sessions')
+    assert sessions.load(session.session_id) is not None
+    removed = sweep_scheduler_sessions(config.data_dir, now=date(2026, 9, 23), force=True)
+    print('custom_trade_sessions_removed:', removed, 'session_retrievable:', sessions.load(session.session_id) is not None)
+    assert sessions.load(session.session_id) is not None, 'Autonomous custom-job reasoning and receipts disappear before one month'

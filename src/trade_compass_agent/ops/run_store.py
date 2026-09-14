@@ -141,6 +141,21 @@ class SqliteRunStore:
                 (_dt(run.started_at), run.id),
             )
 
+    def start_run_if_idle(self, run: RunRecord) -> bool:
+        """Claim one job atomically across scheduler, API and CLI workers."""
+        started_at = datetime.now()
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            changed = conn.execute(
+                "UPDATE job_runs SET status = 'running', started_at = ? "
+                "WHERE id = ? AND status = 'queued' AND NOT EXISTS "
+                "(SELECT 1 FROM job_runs WHERE job_id = ? AND status = 'running')",
+                (_dt(started_at), run.id, run.job_id),
+            ).rowcount
+        if changed:
+            run.status, run.started_at = "running", started_at
+        return bool(changed)
+
     def complete_run(self, run: RunRecord, *, message: str = "", artifact: str | None = None) -> None:
         run.status = "completed"
         run.finished_at = datetime.now()

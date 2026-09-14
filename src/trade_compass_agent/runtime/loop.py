@@ -347,7 +347,7 @@ class AgentLoop:
         from trade_compass_agent.portfolio.trading_policy import AutonomousTradingStore
         from trade_compass_agent.runtime.bootstrap import build_trading_policy
 
-        self._tools.set_trade_context(message)
+        autonomous_trading_enabled = AutonomousTradingStore(self.config.data_dir).read()
         context = ContextBuilder(
             memory_dir=self.config.memory_dir,
             skills=skills,
@@ -357,7 +357,7 @@ class AgentLoop:
             rules_char_limit=self.config.rules.char_limit,
             compression_config=self.config.context_compression,
             trading_policy=build_trading_policy(
-                AutonomousTradingStore(self.config.data_dir).read(),
+                autonomous_trading_enabled,
                 interactive=self.memory_actor == "agent",
             ),
         )
@@ -374,6 +374,10 @@ class AgentLoop:
             memory_dir=self.config.memory_dir,
         )
         history = [m.to_chat_message() for m in self.session_store.load_context(session)]
+        self._tools.set_trade_context(
+            message, attachments=enriched[len(message.strip()):].strip() if attachments else "",
+            previous_reply=next((m.content for m in reversed(history) if m.role == "assistant" and m.content), ""),
+        )
         messages = context.build_messages(history, enriched)
 
         # Phase 0: token budget check — Phase 1 trim (in ContextBuilder) + Phase 2 summarize
@@ -449,7 +453,8 @@ class AgentLoop:
                     f"{_est_tokens:,}", _usage * 100, f"{_budget.context_budget:,}",
                 )
 
-        user_record = SessionMessageRecord(role="user", content=enriched, timestamp=datetime.now())
+        user_record = SessionMessageRecord(role="user", content=enriched, timestamp=datetime.now(),
+                                           autonomous_trading_enabled=autonomous_trading_enabled)
         self.session_store.append(session, user_record)
         if not session.title:
             user_count = sum(1 for item in session.messages if item.role == "user")
