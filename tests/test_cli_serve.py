@@ -16,6 +16,11 @@ from trade_compass_agent.cli import DEFAULT_PORT, _resolve_port, run_serve
 from trade_compass_agent.web.security import is_loopback_host
 
 
+@pytest.fixture(autouse=True)
+def mobile_build_is_tested_separately(monkeypatch):
+    monkeypatch.setattr("trade_compass_agent.mobile.assets.prepare_source_mobile", lambda: None)
+
+
 def test_default_port() -> None:
     assert DEFAULT_PORT == 19704
 

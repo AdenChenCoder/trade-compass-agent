@@ -190,6 +190,104 @@ Verification must include the highest-level practical consumer available (API, U
   from the user-facing surface.
 - Verify copy at the actual consumer surface, not only in source text.
 
+## 7. Deliver the Product, Not Just a Working Development Setup
+
+**A successful demo, green test suite, or merged PR does not establish that a
+new user can use the shipped feature.**
+
+### Make the supported entry point self-sufficient
+
+- Before implementing a large feature, identify its normal installation and
+  startup path, external prerequisites, writable state, and observable success
+  condition. Include setup, first use, failure, restart, and upgrade in scope
+  where the feature depends on them.
+- Probes, temporary servers, manually copied assets, local toolchain paths,
+  pre-authorized accounts, and cached certificates are development aids. They
+  must not become hidden prerequisites of the delivered product. Convert any
+  required step into the supported build, startup, or onboarding path and
+  document genuine prerequisites.
+- Preserve the agreed delivery model. A separately hosted demo, alternate
+  service, or manually managed process is not a substitute for the project's
+  own entry point unless the user explicitly changes that requirement.
+- After a feature is merged, base follow-up fixes on current main and use the
+  user's designated active checkout. Do not keep a retired worktree or its
+  running processes as the authoritative implementation. Confirm the actual
+  process, checkout, configuration, data root, and served assets before editing
+  or restarting; preserve unrelated work in that checkout.
+
+### Verify first use separately from continued use
+
+- Test first use with isolated, fresh writable roots and no prior authorization,
+  certificates, generated assets, or browser cache that would skip setup. Never
+  obtain a clean test environment by deleting the user's existing state.
+- For affected paths, separately verify continued use, process restart, upgrade,
+  and recovery from interrupted setup or network loss. A successful run with
+  existing credentials or certificates does not validate their initial creation.
+- Check zero, one, and multiple records when availability of an action depends
+  on data. Do not accidentally limit creation to an empty state. Keep unresolved
+  startup state distinct from confirmed signed-out, unpaired, or empty state so
+  existing users are not briefly shown the wrong onboarding flow.
+- A mock certificate or provider response can verify application behavior, but
+  cannot prove real authorization, certificate issuance, or public reachability.
+  Use bounded real integration checks for those claims; exercise repeated
+  failures with mocks or a provider sandbox instead of consuming production
+  quotas through trial and error.
+- Ask for device-only checks only when they resolve a specific unanswered
+  acceptance criterion. Explain the expected observation, retain the result,
+  and do not repeat an accepted check without a relevant change or new failure.
+
+### Verify the artifact the user actually runs
+
+- Build and install the distributable outside the repository, verify the
+  imported package location, and exercise its normal entry point with fresh
+  state. Confirm that required UI assets, helper executables, defaults, and
+  licenses are included, with no accidental dependency on the source tree or
+  developer-only tools. Apply this gate when changing distribution or startup.
+- Trace UI changes through source, build output, serving process, browser cache,
+  and service worker. Verify the loaded version before declaring the change
+  visible. For update changes, test cold launch and an already active page
+  separately, including preservation of drafts and the current session.
+- Keep source and installed behavior aligned through the same implementation.
+  Do not repair only the local running instance or rely on manual file copying
+  as the permanent installation or upgrade mechanism.
+
+### Treat failure and recovery as product behavior
+
+- Define the success evidence, timeout, cancellation, failure state, and recovery
+  action for each external setup step. A live process, open listener, or heartbeat
+  must not be presented as successful authorization or usable connectivity.
+- Keep status observable during slow operations. Once an operation has failed,
+  stop presenting it as preparation; show its user-relevant consequence and an
+  action the implementation can actually perform.
+- Give retries an explicit owner and policy. Bound attempts, back off repeated
+  failures, honor provider retry deadlines, and preserve applicable cooldowns
+  across restart. UI retries and lower-level retries must not multiply requests
+  or bypass provider limits.
+- Retain safe diagnostic evidence across failure and restart: stage, timestamps,
+  structured error category, and retry deadline where available. Preserve enough
+  information to distinguish the original failure from a later timeout or rate
+  limit, without logging credentials, private payloads, or authorization URLs.
+- Recovery must preserve identity, authorization, pairings, user history, and
+  stable application addresses. Do not reset them, replace accounts, weaken TLS,
+  or create a new origin merely to make a failing test pass. Explain and obtain
+  authorization for any necessary change to those product contracts.
+
+### Make completion claims match the evidence
+
+- Record which user outcome each check proves, whether it used fresh or existing
+  state, and whether external behavior was real or simulated. Test counts and
+  compilation success cannot substitute for the critical user journey.
+- Fixing a spinner, adding a retry button, or improving diagnostics does not fix
+  the underlying connection failure. Report those improvements separately from
+  whether the original outcome has actually succeeded.
+- Do not call a feature complete or ready for release while its critical first-use
+  path is failing or unverified. State the remaining gap and the observation that
+  would close it; merging a PR or an upstream issue report does not close it.
+- Turn escaped defects into regression checks at the consumer boundary and
+  durable rules here. Keep incident transcripts and temporary investigation
+  details under `temp/`; avoid embedding machine-specific workarounds or one-off
+  provider settings in these guidelines.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.

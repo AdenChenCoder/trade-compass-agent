@@ -741,6 +741,14 @@ def run_serve(
     config = load_app_config()
     ensure_runtime_dirs(settings_from_config(config))
 
+    from trade_compass_agent.mobile.assets import prepare_source_mobile
+
+    try:
+        prepare_source_mobile()
+    except RuntimeError as exc:
+        # Optional mobile prerequisites must not take down the local workbench.
+        print(f"Mobile connection unavailable: {exc}", file=sys.stderr)
+
     if dev:
         os.environ["TRADE_COMPASS_DEV_CORS"] = "true"
     else:

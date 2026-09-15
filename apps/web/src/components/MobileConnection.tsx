@@ -7,11 +7,18 @@ import { Card } from "@/components/ui/card";
 
 interface Status {
   enabled: boolean; requested?: boolean; provider?: string; pwa_url?: string | null;
-  connection?: { phase: string; message: string; action_url: string | null;
+  connection?: { phase: string; message: string; action_url: string | null; retryable?: boolean;
     public_check?: { state: string; message: string; checked: number; reachable: number; checked_at: number | null } | null };
 }
 interface Device { device_id: string; name: string; status: string; verification_code: string; expires_at?: number;
   push?: { subscribed: boolean; tasks_enabled?: boolean; last_test: { status: string; received_at: number | null } | null } }
+const AUTHORIZATION_KEY = "mobile-opened-authorization";
+function readOpenedAuthorization(): { phase: string; url: string } | null {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(AUTHORIZATION_KEY) ?? "null");
+    return typeof value?.phase === "string" && typeof value?.url === "string" ? value : null;
+  } catch { return null; }
+}
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const response = await fetch(`/api/mobile/${path}`, { method,
     headers: { "Content-Type": "application/json" },
@@ -41,6 +48,14 @@ export function MobileConnection() {
   const [copied, setCopied] = useState(false);
   const [remove, setRemove] = useState<string | null>(null);
   const [completed, setCompleted] = useState("");
+  const [openedAuthorization, setOpenedAuthorization] = useState(readOpenedAuthorization);
+  function rememberAuthorization(value: { phase: string; url: string } | null) {
+    setOpenedAuthorization(value);
+    try {
+      if (value) sessionStorage.setItem(AUTHORIZATION_KEY, JSON.stringify(value));
+      else sessionStorage.removeItem(AUTHORIZATION_KEY);
+    } catch { /* The current page still tracks the attempt if storage is unavailable. */ }
+  }
   const seenPending = useRef(new Set<string>());
   useEffect(() => {
     for (const device of devices.data?.devices ?? []) {
@@ -64,6 +79,7 @@ export function MobileConnection() {
   }
   async function enable(value: boolean) {
     await request("access", "POST", { enabled: value });
+    if (!value) rememberAuthorization(null);
     setInvitation(""); setQr(""); setCompleted("");
   }
   async function invite() {
@@ -83,8 +99,18 @@ export function MobileConnection() {
   const qrSeconds = Math.max(0, Math.ceil((expires - now) / 1000));
   const valid = !!invitation && expires > now && ready;
   const action = status.data?.connection?.action_url;
+  // Moving from account login to HTTPS permission is normal progress, not an interruption.
+  const authorizationChanged = !!action && openedAuthorization?.phase === phase && openedAuthorization.url !== action;
   const failed = phase === "error";
   const waiting = requested && !ready && !failed;
+  const delayed = !failed && !!status.data?.connection?.retryable;
+  const certificatePaused = phase === "certificate_retry_wait";
+  const certificateDelayed = delayed && phase === "preparing_certificate";
+  const waitingLabel = authorizationChanged ? "授权入口已更新" : action ? phase === "needs_funnel_https_permission" ? "等待连接授权" : "等待账号授权"
+    : phase === "needs_login_or_network" ? "等待连接服务响应"
+    : phase === "control_status_unavailable" ? "等待网络恢复"
+    : phase === "preparing_certificate" ? "正在准备安全证书"
+    : phase === "waiting_for_mobile" ? "正在启动手机入口" : "正在建立安全连接";
   const showPairing = ready && status.data?.pwa_url && !pending.length && (!paired.length || !!invitation);
   const unstable = publicCheck && ["partial", "unreachable"].includes(publicCheck.state);
   return <Card className="overflow-hidden rounded-2xl shadow-none">
@@ -94,22 +120,21 @@ export function MobileConnection() {
         <div><h2 className="text-base font-semibold tracking-tight">连接手机</h2><p className="mt-0.5 text-xs text-muted-foreground">同一段对话，随时继续。</p></div>
       </div>
       <span role="status" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-        {waiting || status.isLoading ? <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" /> : <span className={`h-1.5 w-1.5 rounded-full ${ready ? "bg-emerald-600" : "bg-muted-foreground"}`} />}
-        {status.isLoading ? "读取状态…" : ready ? "手机连接已开启" : failed ? "连接已中断" : waiting ? "正在建立安全连接" : "未开启"}
+        {(waiting && !action && !delayed && !certificatePaused) || status.isLoading ? <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" /> : <span className={`h-1.5 w-1.5 rounded-full ${ready ? "bg-emerald-600" : "bg-muted-foreground"}`} />}
+        {status.isLoading ? "读取状态…" : ready ? "手机连接已开启" : failed ? "连接已中断" : certificatePaused ? "连接暂时不可用" : certificateDelayed ? "安全证书尚未就绪" : delayed ? "连接准备时间较长" : waiting ? waitingLabel : "未开启"}
       </span>
     </div>
     <div className="space-y-6 p-6">
       {error || status.error ? <p role="alert" className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive">{error || "暂时无法读取连接状态，请稍后重试"}</p> : null}
       {!ready ? <div className="py-3">
         <div className="mb-5 flex items-center gap-3 text-muted-foreground"><Monitor className="h-9 w-9" strokeWidth={1.3} /><span className="h-px w-8 bg-border" /><Smartphone className="h-7 w-7" strokeWidth={1.3} /></div>
-        <h3 className="text-xl font-semibold tracking-tight">{failed ? "恢复手机连接" : waiting ? action ? "还差一步，完成账号授权" : "正在准备你的手机入口" : "把电脑里的对话带在身边"}</h3>
-        <p className="mb-5 mt-2 max-w-md text-sm leading-6 text-muted-foreground">{failed ? "原来的手机和会话都已保留，重新连接后即可继续。" : waiting ? "首次使用需要完成 Tailscale 授权，完成后会自动继续。" : "在手机上继续会话、查看任务结果，所有内容与这台电脑同步。"}</p>
-        {action ? <a href={action} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          {phase === "needs_funnel_https_permission" ? "继续授权" : "登录 / 注册"}<ExternalLink className="h-3.5 w-3.5" /></a>
-          : <Button disabled={busy || status.isLoading || status.isError || waiting} onClick={() => void act(() => enable(true))}>
-            {busy || waiting ? <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" /> : null}{failed ? "重新连接" : waiting ? "正在准备…" : "开启手机连接"}</Button>}
+        <h3 className="text-xl font-semibold tracking-tight">{failed ? "恢复手机连接" : certificatePaused ? "安全连接暂时无法完成" : certificateDelayed ? "账号已连接，等待安全证书" : delayed ? "暂时未能完成连接" : authorizationChanged ? "请从新的入口继续授权" : waiting ? action ? "完成当前连接的授权" : waitingLabel : "把电脑里的对话带在身边"}</h3>
+        <p className="mb-5 mt-2 max-w-md text-sm leading-6 text-muted-foreground">{certificatePaused ? status.data?.connection?.message : certificateDelayed ? "安全证书准备时间较长，请保持应用运行。证书就绪后会自动继续，无需再次登录。" : failed || delayed ? status.data?.connection?.message : authorizationChanged ? "当前连接的授权入口已变更。即使旧页面显示授权成功，也请从这里继续完成连接。" : action ? phase === "needs_funnel_https_permission" ? "账号已连接，请继续授权 HTTPS 手机访问。" : "请完成 Tailscale 账号和设备授权，完成后会自动继续。" : waiting ? phase === "needs_login_or_network" ? "正在获取登录入口，请稍候。" : status.data?.connection?.message : "在手机上继续会话、查看任务结果，所有内容与这台电脑同步。"}</p>
+        {action ? <a href={action} onClick={() => rememberAuthorization({ phase, url: action })} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {authorizationChanged ? "打开新的授权入口" : phase === "needs_funnel_https_permission" ? "继续授权" : "登录 / 注册"}<ExternalLink className="h-3.5 w-3.5" /></a>
+          : <Button disabled={busy || status.isLoading || status.isError || (waiting && !delayed)} onClick={() => void act(() => enable(true))}>
+            {busy || (waiting && !delayed && !certificatePaused) ? <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" /> : null}{certificatePaused ? "等待自动重试" : failed ? "重新连接" : delayed ? "重试连接" : waiting ? "正在准备…" : "开启手机连接"}</Button>}
         {requested ? <Button variant="ghost" disabled={busy} className="ml-2 text-muted-foreground" onClick={() => void act(() => enable(false))}>关闭连接</Button> : null}
-        {failed ? <p className="mt-3 text-xs text-muted-foreground">{status.data?.connection?.message}</p> : null}
       </div> : null}
       {completed ? <p role="status" className="flex items-center gap-2 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"><Check className="h-4 w-4" />{completed}已连接，可以在手机上继续对话了。</p> : null}
       {ready && pending.map(device => <div key={device.device_id} className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-5 dark:border-emerald-900 dark:bg-emerald-950/20">

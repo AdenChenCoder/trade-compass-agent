@@ -43,6 +43,7 @@ def managed(tmp_path, monkeypatch):
     async def check_public_entry(*_args):
         return {"state": "inconclusive", "checked": 0, "reachable": 0}
     monkeypatch.setattr("trade_compass_agent.mobile.reachability.check_public_entry", check_public_entry)
+    monkeypatch.setattr("trade_compass_agent.mobile.managed.require_mobile_assets", lambda: None)
 
     config_file = tmp_path / "config.yaml"
     config_file.write_text(
@@ -99,6 +100,9 @@ while True:
  phase='needs_login_or_network'
  if (state/'authorized').exists(): phase='listening_mobile_access_unverified' if Path(a.mobile_bridge_config).exists() else 'waiting_for_mobile'
  value={'phase':phase,'instance':a.instance,'origin':'https://computer.test.ts.net','action_url':'https://login.tailscale.com/test-only' if phase=='needs_login_or_network' else '', 'updated_at':datetime.now(timezone.utc).isoformat()}
+ if (state/'no-login-link').exists(): value['action_url']=''
+ if (state/'certificate-paused').exists():
+  value.update(phase='certificate_retry_wait', action_url='', certificate_failure=json.loads((state/'certificate-paused').read_text()))
  temp=state/'status.tmp'; temp.write_text(json.dumps(value)); temp.chmod(0o600); temp.replace(state/'status.json')
  time.sleep(.02)
 """
@@ -345,6 +349,7 @@ from trade_compass_agent.config import AppConfig, MobileConfig
 from trade_compass_agent.mobile import managed
 import sys
 managed.helper_binary = lambda _: Path(sys.argv[2])
+managed.require_mobile_assets = lambda: None
 async def main():
  connection = managed.ManagedConnection(SimpleNamespace(state=SimpleNamespace()),
      AppConfig(data_dir=Path(sys.argv[1]), mobile=MobileConfig(provider='tailscale')))
@@ -405,3 +410,101 @@ def test_packaged_binary_integrity_cache_repair_and_readonly_assets(tmp_path, mo
         helper_binary(tmp_path / "state")
     assert not output.exists()
     bundle.chmod(0o700)
+
+
+def test_missing_assets_fail_before_network_with_safe_diagnostic_and_recover(managed, monkeypatch, capfd):
+    from trade_compass_agent.web.app import create_app
+    from trade_compass_agent.mobile import assets
+
+    config, config_file, state, _ = managed
+    before = config_file.read_bytes()
+    monkeypatch.setattr(assets, "MOBILE_DIST", config.data_dir / "absent-assets")
+    monkeypatch.setattr("trade_compass_agent.mobile.managed.require_mobile_assets", assets.require_mobile_assets)
+    with TestClient(create_app(), client=("127.0.0.1", 1)) as client:
+        response = client.post("/api/mobile/access", json={"enabled": True})
+        assert response.status_code == 503
+        assert "手机页面尚未准备好" in response.json()["detail"]
+        status = client.get("/api/mobile/status").json()
+        assert status["connection"]["phase"] == "error" and not status["enabled"]
+        assert client.app.state.mobile_controller.managed.process is None
+        assert config_file.read_bytes() == before
+        assert client.get("/api/agent/sessions").status_code == 200
+        assert "stage=assets error=RuntimeError" in capfd.readouterr().err
+        monkeypatch.setattr("trade_compass_agent.mobile.managed.require_mobile_assets", lambda: None)
+        client.post("/api/mobile/access", json={"enabled": True}).raise_for_status()
+        until(lambda: client.get("/api/mobile/status").json()["connection"]["action_url"])
+
+
+def test_delayed_first_login_allows_explicit_retry_without_replacing_identity(managed, monkeypatch, capfd):
+    from trade_compass_agent.web.app import create_app
+    from trade_compass_agent.mobile import managed as implementation
+
+    config, _, state, _ = managed
+    identity = load_or_create_identity(config.data_dir / "mobile")
+    before = identity.pem_path.read_bytes()
+    (state / "no-login-link").touch()
+    monkeypatch.setattr(implementation, "PREPARATION_NOTICE_AFTER", .1)
+    with TestClient(create_app(), client=("127.0.0.1", 1)) as client:
+        client.post("/api/mobile/access", json={"enabled": True}).raise_for_status()
+        owner = client.app.state.mobile_controller
+        previous = owner.managed.process
+        until(lambda: client.get("/api/mobile/status").json()["connection"]["retryable"])
+        assert previous.returncode is None  # Slow login stays alive until the user retries.
+        client.post("/api/mobile/access", json={"enabled": True}).raise_for_status()
+        assert owner.managed.process is not previous and previous.returncode is not None
+        assert identity.pem_path.read_bytes() == before
+        (state / "no-login-link").unlink()
+        result = until(lambda: value if (value := client.get("/api/mobile/status").json())["connection"]["action_url"] else None)
+        assert not result["connection"]["retryable"]
+        process = owner.managed.process
+        client.post("/api/mobile/access", json={"enabled": True}).raise_for_status()
+        assert owner.managed.process is process  # An available login URL is never restarted.
+        assert "login.tailscale.com" not in capfd.readouterr().err
+
+
+def test_start_failure_log_records_stage_without_secret_error_text(managed, monkeypatch, capfd):
+    from trade_compass_agent.web.app import create_app
+
+    def fail(_):
+        raise OSError(13, "secret-device-token https://login.tailscale.com/private")
+
+    monkeypatch.setattr("trade_compass_agent.mobile.managed.helper_binary", fail)
+    with TestClient(create_app(), client=("127.0.0.1", 1)) as client:
+        response = client.post("/api/mobile/access", json={"enabled": True})
+        assert response.status_code == 503
+        logs = capfd.readouterr().err
+        assert "stage=component error=PermissionError" in logs
+        assert "errno=13" in logs
+        assert "secret-device-token" not in logs + response.text
+        assert "login.tailscale.com" not in logs + response.text
+
+
+def test_certificate_cooldown_is_visible_and_does_not_restart_helper(managed):
+    from datetime import datetime, timedelta, timezone
+    from trade_compass_agent.web.app import create_app
+
+    _, _, state, _ = managed
+    pause = state / "certificate-paused"
+    pause.write_text(json.dumps({"code": "certificate_acme_rateLimited",
+                                "retry_at": (datetime.now(timezone.utc) + timedelta(minutes=12)).isoformat()}))
+    with TestClient(create_app(), client=("127.0.0.1", 1)) as client:
+        client.post("/api/mobile/access", json={"enabled": True}).raise_for_status()
+        until(lambda: client.get("/api/mobile/status").json()["connection"]["phase"] == "certificate_retry_wait")
+        owner = client.app.state.mobile_controller.managed
+        process = owner.process
+        current = client.get("/api/mobile/status").json()
+        assert not current["enabled"]
+        assert not current["connection"]["retryable"]
+        assert "暂时受限" in current["connection"]["message"]
+        assert "12 分钟后自动重试" in current["connection"]["message"]
+        assert not current["connection"]["action_url"]
+        owner.progress_at -= 120
+        assert not client.get("/api/mobile/status").json()["connection"]["retryable"]
+        client.post("/api/mobile/access", json={"enabled": True}).raise_for_status()
+        assert owner.process is process
+        assert client.get("/api/agent/sessions").status_code == 200
+        pause.unlink()
+        (state / "authorized").touch()
+        until(lambda: client.get("/api/mobile/status").json()["enabled"])
+        assert owner.process is process
+        assert owner.certificate_failure is None

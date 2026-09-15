@@ -14,13 +14,14 @@ import (
 // Diagnostics deliberately contain no raw provider logs, URLs, peers or errors.
 // They describe this process only and are stored in its private status file.
 type controlDiagnostic struct {
-	StatusAvailable  bool `json:"status_available"`
-	Online           bool `json:"online"`
-	FunnelPermission bool `json:"funnel_permission"`
-	ServeConfigRead  bool `json:"serve_config_read"`
-	FunnelConfigured bool `json:"funnel_configured"`
-	ListenerOpen     bool `json:"listener_open"`
-	HealthIssues     int  `json:"health_issues"`
+	StatusAvailable  bool   `json:"status_available"`
+	BackendState     string `json:"backend_state"`
+	Online           bool   `json:"online"`
+	FunnelPermission bool   `json:"funnel_permission"`
+	ServeConfigRead  bool   `json:"serve_config_read"`
+	FunnelConfigured bool   `json:"funnel_configured"`
+	ListenerOpen     bool   `json:"listener_open"`
+	HealthIssues     int    `json:"health_issues"`
 }
 
 type diagnosticEvent struct {
@@ -35,8 +36,9 @@ type diagnosticSnapshot struct {
 }
 
 type connectionDiagnostics struct {
-	mu    sync.Mutex
-	state diagnosticSnapshot
+	mu               sync.Mutex
+	state            diagnosticSnapshot
+	certificateError error
 }
 
 func (d *connectionDiagnostics) count(code string, recent bool) {
@@ -62,6 +64,7 @@ func (d *connectionDiagnostics) control(st *ipnstate.Status, sc *ipn.ServeConfig
 	value := controlDiagnostic{ServeConfigRead: read, ListenerOpen: listening}
 	if st != nil {
 		value.StatusAvailable = true
+		value.BackendState = st.BackendState
 		value.HealthIssues = len(st.Health)
 		if st.Self != nil {
 			value.Online = st.Self.Online
@@ -91,9 +94,9 @@ func (d *connectionDiagnostics) snapshot() diagnosticSnapshot {
 	return value
 }
 
-// Match only known fixed messages from the pinned provider source. Never format
-// or persist arguments, which can contain addresses, login URLs and credentials.
-func (d *connectionDiagnostics) logf(format string, _ ...any) {
+// Match known messages from the pinned provider source. Error arguments are
+// classified locally; never format or persist raw provider arguments.
+func (d *connectionDiagnostics) logf(format string, args ...any) {
 	switch {
 	case strings.Contains(format, "ingress: denied; no ingress cap from"):
 		d.count("ingress_permission_denied", true)
@@ -101,6 +104,42 @@ func (d *connectionDiagnostics) logf(format string, _ ...any) {
 		d.count("ingress_config_missing", true)
 	case strings.Contains(format, "got ingress conn for unconfigured"):
 		d.count("ingress_target_missing", true)
+	case strings.Contains(format, "already had ACME account."), strings.Contains(format, "registered ACME account."):
+		d.count("certificate_account_ready", true)
+	case strings.Contains(format, "starting SetDNS call for"):
+		d.count("certificate_dns_started", true)
+	case strings.Contains(format, "did SetDNS for"), strings.Contains(format, "TXT record already existed for"):
+		d.count("certificate_dns_ready", true)
+	case strings.Contains(format, "requesting cert..."):
+		d.count("certificate_order_ready", true)
+	case strings.Contains(format, "got cert"):
+		d.count("certificate_received", true)
+	case strings.HasSuffix(format, "getCertPEM: %v") && len(args) == 1:
+		if err, ok := args[0].(error); ok {
+			d.mu.Lock()
+			d.certificateError = err
+			d.mu.Unlock()
+			d.count(certificateFailureCode(err), true)
+		}
+	}
+}
+
+func certificateFailureCode(err error) string {
+	message := err.Error()
+	for _, problem := range []string{"dns", "unauthorized", "rateLimited", "connection", "caa", "rejectedIdentifier", "serverInternal", "badNonce", "malformed", "userActionRequired"} {
+		if strings.Contains(message, "urn:ietf:params:acme:error:"+problem+":") {
+			return "certificate_acme_" + problem
+		}
+	}
+	switch {
+	case strings.Contains(message, "context deadline exceeded"), strings.Contains(message, "i/o timeout"):
+		return "certificate_request_timeout"
+	case strings.Contains(message, "SetDNS"):
+		return "certificate_dns_request_failed"
+	case strings.Contains(message, "acme: order"), strings.Contains(message, "acme: authorization error"):
+		return "certificate_validation_failed"
+	default:
+		return "certificate_provider_error"
 	}
 }
 
@@ -128,4 +167,18 @@ func (d *connectionDiagnostics) handler(next http.Handler) http.Handler {
 		d.count("http_request", false)
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (d *connectionDiagnostics) takeCertificateError() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	err := d.certificateError
+	d.certificateError = nil
+	return err
+}
+
+func (d *connectionDiagnostics) peekCertificateError() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.certificateError
 }

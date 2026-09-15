@@ -39,6 +39,7 @@ class MobileController:
             try:
                 await self.managed.start()
             except (OSError, RuntimeError, ValueError) as exc:
+                self.managed.log_failure(exc)
                 self.error = str(exc) if isinstance(exc, RuntimeError) else "无法启动手机连接组件，请重试"
                 await self.managed.close()
                 raise
@@ -63,7 +64,7 @@ class MobileController:
         async with self.lock:
             service = getattr(self.app.state, "mobile_service", None)
             if enabled:
-                restart = (self.managed is None or self.managed.phase in {"error", "stopped"} or bool(self.error)
+                restart = (self.managed is None or self.managed.phase == "stopped" or self.managed.status()["retryable"] or bool(self.error)
                            if self.config.mobile.provider == "tailscale" else service is None or not service.running)
                 if restart:
                     await self.close()
