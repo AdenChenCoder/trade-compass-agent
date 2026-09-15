@@ -131,6 +131,22 @@ Add the same extra to a source checkout:
 uv sync --extra tushare
 ```
 
+Feishu bots require the `channels` extra, including the `lark_oapi` SDK.
+For source checkouts, include it whenever synchronizing the environment:
+
+```bash
+uv sync --extra dev --extra channels
+```
+
+For an installed tool, include `channels` alongside any other extras you use,
+for example `uv tool install --force --python 3.12 'trade-compass-agent[channels]'`.
+Synchronizing a checkout without `--extra channels` can remove these optional
+dependencies even while a previously started service is still running.
+After changing the service's environment, restart it with
+`trade-compass service restart`. A completed analysis does not guarantee message
+delivery; each attempted channel delivery is recorded separately in the task's
+run details, and failures also produce warning notifications.
+
 Confirm the resulting environment with:
 
 ```bash
