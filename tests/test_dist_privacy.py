@@ -9,6 +9,7 @@ from scripts.check_dist import _validate_names
 @pytest.mark.parametrize("name", [
     "data/paper_trades.jsonl",
     "memory_vault/knowledge.md",
+    "temp/nested/artifact",
     "docs/market-readiness-2026-09-13.md",
     "docs/tushare-paid-verification-2026-09-12.json",
     "docs/personal-data-source-selection-2026-09-12.md.before-paid-verification",

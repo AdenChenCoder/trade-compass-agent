@@ -128,6 +128,10 @@ class EntryMeta:
     needs_review: bool = False
     successor_id: str = ""
     successor_version: int | None = None
+    successor_hash: str = ""  # Pre-versioned ledger's explicit replacement reference.
+    retired_at: str = ""
+    reviewed_at: str = ""
+    review_evidence: dict[str, Any] = field(default_factory=dict)
     change_kind: str = ""
     review_method: str = ""
     disproof_count: int = 0
@@ -177,7 +181,7 @@ def _content_hash(text: str) -> str:
 def _compute_confidence(meta: EntryMeta, target: str = "memory") -> float:
     """Compute current confidence with Ebbinghaus decay (target-aware)."""
     try:
-        last = datetime.fromisoformat(meta.last_accessed)
+        last = datetime.fromisoformat(max(meta.last_accessed, meta.reviewed_at))
     except (ValueError, TypeError):
         return meta.confidence
     days = max(0, (datetime.now(timezone.utc) - last).total_seconds() / 86400)
@@ -472,6 +476,8 @@ class MemoryStore:
     @_live
     def archive_entry(self, text_prefix="", target="memory", *, entry_id=None, expected_version=None,
                       actor="curator", reason="retired", evidence=None):
+        if not reason.strip():
+            return self._error("Retirement requires a concrete reason")
         row, error = self._locate(target, text_prefix, entry_id, expected_version)
         if error:
             return error
@@ -480,10 +486,79 @@ class MemoryStore:
         if row["status"] == "archived":
             return self._receipt(row, target, changed=False)
         self._remember(row, target, reason, row["entry_id"], row["version"] + 1)
-        row.update(status="archived", reason=reason, version=row["version"] + 1, needs_review=False)
+        row.update(status="archived", reason=reason, version=row["version"] + 1, needs_review=False, retired_at=_now_iso())
         row["evidence"] = list(dict.fromkeys(row.get("evidence", []) + list(evidence or [])))
         self._save_meta()
         return self._receipt(row, target, text=row["text"])
+
+    @_live
+    def reopen_for_review(self, *, entry_id, expected_version, reason, evidence, actor="user", target="memory"):
+        """Give a retired record another review, without restoring its authority."""
+        if actor != "user" or not reason.strip() or not evidence:
+            return self._error("Reopening history requires a user request, reason and evidence", "protected")
+        row, error = self._locate(target, entry_id=entry_id, expected_version=expected_version)
+        if error:
+            return error
+        if row["source"] == "user_pin":
+            return self._error("Pinned memory is protected", "protected")
+        if row["status"] != "archived":
+            return self._receipt(row, target, changed=False)
+        self._remember(row, target, row["reason"], row["entry_id"], row["version"] + 1, change_kind="reopened")
+        row.update(status="candidate", version=row["version"] + 1, reason=reason,
+                   confidence=max(0, min(.4, self._min_inject_confidence - .01)), needs_review=True,
+                   successor_id="", successor_version=None, successor_hash="", change_kind="", retired_at="")
+        row["evidence"] = list(dict.fromkeys(row.get("evidence", []) + evidence))
+        self._save_meta()
+        return self._receipt(row, target)
+
+    @_live
+    def record_candidate_review(self, *, entry_id, expected_version, decision, reason, evidence,
+                                content="", expected_revision=None, target="memory", review_evidence=None):
+        """Commit an evaluated candidate; capacity cannot evict an existing record."""
+        if decision not in {"admit", "defer", "retire"} or not reason.strip():
+            return self._error("Candidate review needs a decision and reason")
+        if expected_revision is not None and expected_revision != self._meta["revision"]:
+            return self._error("Memory changed during review", "version_conflict")
+        row, error = self._locate(target, entry_id=entry_id, expected_version=expected_version)
+        if error:
+            return error
+        if row["status"] != "candidate" or row["source"] == "user_pin":
+            return self._error("Only candidates may be reassessed", "protected")
+        if decision != "defer" and not evidence:
+            return self._error("Admission or retirement requires evaluated evidence")
+        new = deepcopy(row)
+        new.update(reason=reason, needs_review=False, review_method="ai", reviewed_at=_now_iso(),
+                   review_evidence=deepcopy(review_evidence or {}),
+                   evidence=list(dict.fromkeys(row.get("evidence", []) + evidence)))
+        if decision == "admit":
+            error = self._validate_text(content)
+            if error:
+                return self._error(error)
+            new.update(text=content.strip(), source="curator", confidence=.85, status="active",
+                       content_hash=_content_hash(content.strip()), dedup_hash=_content_hash(content.strip()),
+                       disproof_count=0)
+            new["source_obs_ids"] = list(dict.fromkeys(new["source_obs_ids"] + [
+                ref.removeprefix("observation:") for ref in evidence if ref.startswith("observation:")]))
+            if new["confidence"] < self._min_inject_confidence:
+                new.update(status="candidate", reason="复评置信度尚未达到配置的采纳门槛。")
+            winner = next((r for r in self._core(target) if r["content_hash"] == new["content_hash"]), None)
+            if winner:
+                new.update(text=row["text"], content_hash=row["content_hash"], dedup_hash=row["dedup_hash"],
+                           status="archived", successor_id=winner["entry_id"], successor_version=winner["version"],
+                           change_kind="merged", reason=reason)
+            elif not self._fits(target, [new if r is row else r for r in self._meta[target]]):
+                new.update(status="candidate", reason="capacity_review_required")
+        elif decision == "retire":
+            new.update(status="archived", retired_at=_now_iso())
+        if new == row:
+            return self._receipt(row, target, changed=False)
+        new["version"] += 1
+        self._remember(row, target, reason, row["entry_id"], new["version"], review_method="ai")
+        self._meta[target] = [new if r is row else r for r in self._meta[target]]
+        self._save_meta()
+        if new["status"] == "archived" and new.get("successor_id"):
+            return self._receipt(new, target, disposition="merged")
+        return self._receipt(new, target)
 
     def remove(self, text, target="memory", **kwargs):
         """Compatibility alias for soft retirement; history is always accessible."""
@@ -601,7 +676,7 @@ class MemoryStore:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=stale_days)).isoformat()
         changed = False
         for row in self._meta[target]:
-            if row["status"] != "archived" and row["source"] != "user_pin" and row["last_accessed"] < cutoff and not row.get("needs_review"):
+            if row["status"] != "archived" and row["source"] != "user_pin" and max(row["last_accessed"], row.get("reviewed_at", "")) < cutoff and not row.get("needs_review"):
                 row["needs_review"] = True
                 changed = True
         if changed:
@@ -654,6 +729,7 @@ class MemoryStore:
             raise ValueError("Memory ledger requires a newer application version")
         if data.get("schema_version") != 3:
             self._migrate_legacy()
+        self._repair_legacy_lineage()
         for target in ("memory", "user"):
             if not self._fits(target, self._meta[target]):
                 raise ValueError(f"Effective {target} exceeds configured limit; review before reducing capacity")
@@ -713,9 +789,31 @@ class MemoryStore:
         for old in self._meta.pop("_superseded", []):
             if old.get("text"):
                 history.append({**asdict(EntryMeta(text=old["text"], source="legacy", confidence=0,
-                                                  status="archived", reason="legacy_superseded")), "target": "memory"})
+                    status="archived", reason="legacy_superseded", successor_hash=old.get("superseded_by", ""),
+                    retired_at=old.get("superseded_at", ""))), "target": "memory"})
         self._meta.update(schema_version=3, revision=int(self._meta.get("revision", 0)))
         self._save_meta()
+
+    def _repair_legacy_lineage(self):
+        missing = [r for r in self._meta.get("history", [])
+                   if r.get("reason") == "legacy_superseded" and not r.get("successor_hash")]
+        backup = self._memory_dir / ".memory-migration-v2.json"
+        if not missing or not backup.is_file():
+            return
+        try:
+            originals = json.loads(backup.read_text())["metadata"].get("_superseded", [])
+            if not isinstance(originals, list) or any(not isinstance(row, dict) for row in originals):
+                return
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return  # Recovery material must never replace or invalidate the ledger.
+        changed = False
+        for row in missing:
+            matches = [r for r in originals if r.get("text") == row["text"] and r.get("superseded_by")]
+            if len(matches) == 1:
+                row.update(successor_hash=matches[0]["superseded_by"], retired_at=matches[0].get("superseded_at", ""))
+                changed = True
+        if changed:
+            self._save_meta()
 
     def _save_meta(self):
         # This private compatibility hook is used by older tests. Production callers

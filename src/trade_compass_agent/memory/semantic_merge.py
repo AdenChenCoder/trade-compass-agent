@@ -150,7 +150,10 @@ def evaluate_revision(store, *, replacements, content, reason, evidence, llm_cal
             return {"ok": False, "disposition": "version_conflict", "error": "Read current entries and retry"}
         if row.source == "user_pin" and actor != "user":
             return {"ok": False, "disposition": "protected", "error": "Pinned memory is protected"}
-        if row.status == "archived" or not store.is_trusted_source(row.source):
+        if row.status == "archived" or not store.is_trusted_source(row.source) or (
+            row.status == "candidate" and (row.reason != "capacity_review_required"
+                                           or row.confidence < store._min_inject_confidence)
+        ):
             return {"ok": False, "disposition": "pending", "error": "Unverified candidates require evidence-based promotion first"}
         originals.append(row)
     if llm_call is None:
@@ -158,16 +161,19 @@ def evaluate_revision(store, *, replacements, content, reason, evidence, llm_cal
     prompt = json.dumps({"originals": [{"id": m.entry_id, "text": m.text, "status": m.status, "evidence": m.source_obs_ids} for m in originals],
         "proposal": content, "reason": reason, "references": evidence,
         "other_core": [m.text for m in store.list_active(target) if m.entry_id not in {o.entry_id for o in originals}]}, ensure_ascii=False)
+    user_rules = _user_rules(store)
     try:
         verdict = _parse_json(llm_call("审查记忆修订。保持条件、例外、范围、时序和独有信息；引用自述不算独立验证。"
             "允许有依据的纠错和以更高价值知识取代较低价值内容，但不得仅凭新、长、高频判优。"
             "合并同义知识不要求新增市场证据；新增主张须有输入中可验证依据。"
             "容量退选与证伪必须区分。违反用户规则或无法证明更好则保留原集合。"
-            "返回 JSON {valid:boolean, reason:string}。\n" + GROUNDING_RULES + "\n" + _user_rules(store), prompt))
+            "返回 JSON {valid:boolean, reason:string}。\n" + GROUNDING_RULES + "\n" + user_rules, prompt))
     except Exception as exc:
         return {"ok": False, "disposition": "evaluation_failed", "error": str(exc)}
     if verdict.get("valid") is not True:
         return {"ok": False, "disposition": "pending", "error": verdict.get("reason", "Proposal not accepted")}
+    if _user_rules(store) != user_rules:
+        return {"ok": False, "disposition": "version_conflict", "error": "User rules changed; re-evaluate the proposal"}
     return store.commit_revision(replacements=replacements, content=content, reason=reason,
         evidence=evidence + ["curator: " + str(verdict.get("reason", "validated"))], target=target,
         expected_revision=version, actor=actor, review_method="ai", change_kind=change_kind)
@@ -179,7 +185,19 @@ def _user_rules(store):
     return rules.read_for_prompt()
 
 
-def maintain_memory(store, llm_call, *, force=False):
+def maintain_memory(store, llm_call, *, force=False, observations=None):
+    """Review evidence for drafts before running the existing capacity review."""
+    from trade_compass_agent.memory.reassessment import review_candidates
+
+    review = review_candidates(store, llm_call, observations=observations, force=force)
+    if not review["ok"]:
+        return review
+    result = _maintain_capacity(store, llm_call, force=force)
+    return {**result, "changed": review["changed"] or result.get("changed", False),
+            "commits": review["commits"] + result.get("commits", []), "reviews": review["reviews"]}
+
+
+def _maintain_capacity(store, llm_call, *, force=False):
     """Pressure review: merge first, then explicitly compare admission/replacement.
 
     A content/state fingerprint avoids repeating unchanged evaluations. Reads and
@@ -188,7 +206,8 @@ def maintain_memory(store, llm_call, *, force=False):
     import hashlib
     import json
     rows = store.get_entries_with_meta()
-    eligible = [m for m in rows if m.status != "archived" and store.is_trusted_source(m.source)]
+    eligible = [m for m in rows if store.is_trusted_source(m.source) and
+                (m.status == "active" or (m.status == "candidate" and m.reason == "capacity_review_required"))]
     fingerprint = hashlib.sha256(json.dumps([(m.entry_id, m.version, m.status) for m in eligible]).encode()).hexdigest()
     if not force and store.maintenance_marker("reviewed_fingerprint") == fingerprint:
         return {"ok": True, "changed": False, "disposition": "unchanged"}
@@ -201,7 +220,8 @@ def maintain_memory(store, llm_call, *, force=False):
     if failures:
         return {"ok": False, "changed": bool(commits), "commits": commits,
                 "merged_clusters": merged, "error": "; ".join(failures)}
-    eligible = [m for m in store.get_entries_with_meta() if m.status != "archived" and store.is_trusted_source(m.source)]
+    eligible = [m for m in store.get_entries_with_meta() if store.is_trusted_source(m.source) and
+                (m.status == "active" or (m.status == "candidate" and m.reason == "capacity_review_required"))]
     candidates = [m for m in eligible if m.status == "candidate"]
     changed = bool(merged)
     if candidates:

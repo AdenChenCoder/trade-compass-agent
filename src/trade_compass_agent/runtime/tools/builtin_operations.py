@@ -1031,12 +1031,16 @@ async def curate_knowledge(ctx: StepContext) -> StepOutput:
         skills = skill_store.list_skills(include_stale=False)
         skills_summary = "\n".join(f"- {s.name}: {s.description or ''}" for s in skills[:20]) if skills else ""
         active = mem_store.list_active("memory", min_confidence=gov.min_inject_confidence)
-        reports = scan_active_conflicts(active, GROUNDING_RULES, skills_summary, _llm_call)
+        from trade_compass_agent.memory.rules_store import RulesStore
+        reports = scan_active_conflicts(active, GROUNDING_RULES, skills_summary, _llm_call,
+                                       user_rules=RulesStore(ctx.config.memory_dir).read_for_prompt())
         conflicts_applied = apply_conflict_reports(reports, mem_store)
 
     merged_clusters = 0
     try:
-        maintenance = maintain_memory(mem_store, _llm_call)
+        from trade_compass_agent.memory.observation_store import ObservationStore
+        maintenance = maintain_memory(mem_store, _llm_call,
+                                      observations=ObservationStore(ctx.config.data_dir / "observations.db"))
         merged_clusters = maintenance.get("merged_clusters", 0)
         if not maintenance.get("ok"):
             logger.warning("Memory maintenance pending: %s", maintenance)

@@ -131,13 +131,52 @@ def recover_capacity_rejections(memory: MemoryStore, sessions: Path | None, date
     return recovered
 
 
-def migrate(root: Path, sessions: Path | None, recover_failed_date: str | None = None):
+def reopen_stale_history(memory: MemoryStore, evidence_path: Path | None):
+    """An explicit, audited allowlist gives old decay retirements another review."""
+    if evidence_path is None:
+        return []
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    selected = {key: value for key, value in evidence.items() if value.get("stale")}
+    receipts = []
+    with memory._transaction():
+        rows = {m.entry_id: m for m in memory.get_entries_with_meta()}
+        pending = []
+        for key, proof in selected.items():
+            row = rows.get(key)
+            marker = f"reopened_stale:{key}"
+            if row is None or row.text != proof.get("text"):
+                # A reviewed revision may legitimately have different text on replay.
+                if row and marker in row.evidence:
+                    continue
+                raise ValueError(f"Audited memory no longer matches: {key}")
+            if marker in row.evidence:
+                continue
+            if row.status != "archived" or row.reason != "legacy_archived" or row.source == "user_pin" or row.successor_id:
+                raise ValueError(f"Not an eligible legacy retirement: {key}")
+            if not all("Archived stale memory" in log.get("text", "") and log.get("path") and log.get("line")
+                       and row.text[:30] in log["text"] for log in proof["stale"]):
+                raise ValueError(f"Invalid stale-retirement evidence: {key}")
+            pending.append((row, proof, marker))
+        # Validate the whole allowlist before changing any record.
+        for row, proof, marker in pending:
+            result = memory.reopen_for_review(entry_id=row.entry_id, expected_version=row.version,
+                reason="用户请求重新复评：服务停摆期间的未访问衰减不能证明记忆失效。",
+                evidence=[marker] + [f"{log['path']}:{log['line']}: {log['text']}" for log in proof["stale"]])
+            if not result.get("ok"):
+                raise ValueError(result["error"])
+            receipts.append(result)
+    return receipts
+
+
+def migrate(root: Path, sessions: Path | None, recover_failed_date: str | None = None, reopen_stale_evidence: Path | None = None):
     memory = MemoryStore(root)
     recovered = recover_low_trust_provenance(memory, sessions)
     recovered_drafts = recover_capacity_rejections(memory, sessions, recover_failed_date)
+    reopened = reopen_stale_history(memory, reopen_stale_evidence)
     skills = SkillStore(root / "skills")
     records = memory.get_entries_with_meta(include_history=True)
     return {"capacity": memory.capacity(), "provenance_repaired_ids": recovered,
+            "reopened_stale": reopened,
             "recovered_draft_ids": recovered_drafts,
             "records": len(records), "texts_hash": hashlib.sha256(json.dumps(sorted(m.text for m in records), ensure_ascii=False).encode()).hexdigest(),
             "skill_count": len(skills.list_skills(True)),
@@ -149,20 +188,21 @@ def main():
     parser.add_argument("--memory-dir", type=Path, required=True)
     parser.add_argument("--sessions-dir", type=Path)
     parser.add_argument("--recover-failed-date", help="Recover capacity-rejected scheduler drafts for YYYY-MM-DD as candidates")
+    parser.add_argument("--reopen-stale-evidence", type=Path, help="Audited ID/text/log allowlist for user-requested reassessment of old time-decay retirements")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--backup-dir", type=Path)
     args = parser.parse_args()
     if args.apply:
         backup = args.backup_dir or args.memory_dir.parent / f"memory-before-lifecycle-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
         copy_vault(args.memory_dir, backup)
-        report = migrate(args.memory_dir, args.sessions_dir, args.recover_failed_date)
+        report = migrate(args.memory_dir, args.sessions_dir, args.recover_failed_date, args.reopen_stale_evidence)
         report.update(applied=True, backup_dir=str(backup))
         (backup.parent / f"{backup.name}-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
     else:
         with tempfile.TemporaryDirectory(prefix="memory-lifecycle-preview-") as temporary:
             root = Path(temporary) / "vault"
             copy_vault(args.memory_dir, root)
-            report = {**migrate(root, args.sessions_dir, args.recover_failed_date), "applied": False}
+            report = {**migrate(root, args.sessions_dir, args.recover_failed_date, args.reopen_stale_evidence), "applied": False}
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

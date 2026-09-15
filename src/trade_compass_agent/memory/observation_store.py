@@ -176,6 +176,17 @@ class ObservationStore:
             ).fetchall()
         return [self._row_to_obs(r) for r in rows]
 
+    def get_by_ids(self, ids: list[str]) -> list[Observation]:
+        """Resolve exact provenance without recording recall as new evidence."""
+        found = []
+        for offset in range(0, len(ids), 500):
+            batch = ids[offset:offset + 500]
+            placeholders = ",".join("?" for _ in batch)
+            rows = self._get_conn().execute(
+                f"SELECT {self._SELECT_COLS} FROM observations WHERE id IN ({placeholders})", batch).fetchall()
+            found.extend(self._row_to_obs(row) for row in rows)
+        return found
+
     def unconsolidated(self, limit: int = 50) -> list[Observation]:
         """Get observations not yet consumed by consolidation."""
         conn = self._get_conn()
