@@ -35,9 +35,11 @@ def apply_risk_warnings(
 
         concentration = portfolio.get("concentration_top5", [])
         for item in concentration:
-            if item.get("weight_pct", 0) > 25:
+            account_capital_pct = item.get("account_capital_pct")
+            if isinstance(account_capital_pct, (int, float)) and account_capital_pct > 25:
                 warnings.append(
-                    f"集中度提示: {item.get('symbol', '?')} 仓位占比 {item['weight_pct']:.0f}%"
+                    f"集中度提示: {item.get('symbol', '?')} 占所属账户额度 "
+                    f"{account_capital_pct:.0f}%"
                 )
                 if on_event:
                     on_event(
@@ -46,7 +48,7 @@ def apply_risk_warnings(
                             data={
                                 "symbol": signal.symbol,
                                 "type": "concentration",
-                                "detail": f"{item.get('weight_pct', 0):.0f}%",
+                                "detail": f"{account_capital_pct:.0f}%",
                             },
                         )
                     )

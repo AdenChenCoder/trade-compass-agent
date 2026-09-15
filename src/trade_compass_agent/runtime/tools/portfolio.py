@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from trade_compass_agent.domain import AccountKind, PaperTrade
 from trade_compass_agent.evaluation.signal_tracker import SignalTracker
 from trade_compass_agent.portfolio import JsonPaperPortfolio
+from trade_compass_agent.portfolio.accounts import AccountStore
 from trade_compass_agent.portfolio.lot_sizing import (
     pnl_exit_review_candidate,
     suggest_rebalance_for_pnl,
@@ -165,13 +166,60 @@ def tool_analyze_portfolio(stack: MarketStack) -> str:
     ]
 
     total_value = sum(p.market_value for p in positions)
+    accounts = AccountStore(stack.config.data_dir / "accounts.json").list()
+    total_capital = sum(
+        account.capital
+        for account in accounts
+        if math.isfinite(account.capital) and account.capital > 0
+    )
+    accounts_by_kind = {
+        kind: [account for account in accounts if account.kind == kind]
+        for kind in AccountKind
+    }
     concentration = []
-    if total_value > 0:
-        for p in sorted(positions, key=lambda x: x.market_value, reverse=True)[:5]:
-            concentration.append({
-                "symbol": p.symbol,
-                "weight_pct": round(p.market_value / total_value * 100, 1),
-            })
+    for p in positions:
+        matching_accounts = accounts_by_kind[p.account]
+        account_capital = None
+        concentration_error = None
+        if len(matching_accounts) != 1:
+            concentration_error = (
+                f"账户类型 {p.account.value} 对应 {len(matching_accounts)} 个账户，集中度不可计算"
+            )
+        elif not math.isfinite(matching_accounts[0].capital) or matching_accounts[0].capital <= 0:
+            concentration_error = f"账户 {matching_accounts[0].name} 的额度无效，集中度不可计算"
+        else:
+            account_capital = matching_accounts[0].capital
+
+        account_capital_pct = (
+            round(p.market_value / account_capital * 100, 2)
+            if account_capital is not None
+            else None
+        )
+        item = {
+            "symbol": p.symbol,
+            "account": p.account.value,
+            # Keep weight_pct for API compatibility, but give it the same explicit
+            # account-capital meaning used by the risk-control consumer.
+            "weight_pct": account_capital_pct,
+            "account_capital_pct": account_capital_pct,
+            "total_capital_pct": (
+                round(p.market_value / total_capital * 100, 2) if total_capital > 0 else None
+            ),
+            "invested_mix_pct": (
+                round(p.market_value / total_value * 100, 2) if total_value > 0 else None
+            ),
+        }
+        if concentration_error:
+            item["concentration_error"] = concentration_error
+        concentration.append(item)
+
+    concentration.sort(
+        key=lambda item: item["account_capital_pct"]
+        if item["account_capital_pct"] is not None
+        else -math.inf,
+        reverse=True,
+    )
+    concentration = concentration[:5]
 
     return json.dumps(
         {
@@ -182,7 +230,9 @@ def tool_analyze_portfolio(stack: MarketStack) -> str:
             "trades_as_of": _market_now().isoformat(),
             "trade_history_note": "recent_trades 是按成交时间倒序的最近20笔实际流水，数量和 trade_id 以此为准；recent_closed_trades 是 FIFO 分批结算，同一卖出可能对应多条，不代表多笔成交。更早成交可用 search_decisions 的 execution_trades 核对，未查询到不能推算或编造。",
             "total_market_value": round(total_value, 2),
+            "total_account_capital": round(total_capital, 2),
             "total_positions": len(positions),
+            "concentration_basis": "account_capital",
             "concentration_top5": concentration,
             "autonomous_trading_enabled": AutonomousTradingStore(stack.config.data_dir).read(),
             "account_balances": account_balances(portfolio, stack.config.data_dir),

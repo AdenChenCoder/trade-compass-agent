@@ -180,7 +180,7 @@ class TestRiskVeto:
         with patch(
             "trade_compass_agent.runtime.tools.portfolio.tool_analyze_portfolio"
         ) as mock_portfolio:
-            mock_portfolio.return_value = '{"concentration_top5": [{"symbol": "600519", "weight_pct": 30}], "total_positions": 3}'
+            mock_portfolio.return_value = '{"concentration_top5": [{"symbol": "600519", "account_capital_pct": 30, "invested_mix_pct": 10}], "total_positions": 3}'
             result = apply_risk_warnings(stack, signal)
 
         assert result.rating == SignalRating.BUY
@@ -226,10 +226,33 @@ class TestRiskVeto:
         with patch(
             "trade_compass_agent.runtime.tools.portfolio.tool_analyze_portfolio"
         ) as mock_portfolio:
-            mock_portfolio.return_value = '{"concentration_top5": [{"symbol": "600001", "weight_pct": 15}], "total_positions": 3}'
+            mock_portfolio.return_value = '{"concentration_top5": [{"symbol": "600001", "account_capital_pct": 15, "invested_mix_pct": 80}], "total_positions": 3}'
             result = apply_risk_warnings(stack, signal)
 
         assert result.rating == SignalRating.BUY
+        assert "集中度提示" not in result.reasoning
+
+    def test_legacy_invested_weight_cannot_trigger_concentration_warning(self):
+        from trade_compass_agent.domain.signals import SignalRating, TradingSignal
+        from trade_compass_agent.runtime.specialists.risk_controls import apply_risk_warnings
+
+        signal = TradingSignal(
+            symbol="600519",
+            rating=SignalRating.BUY,
+            confidence=0.7,
+            reasoning="Good momentum",
+            source_specialist="debate",
+        )
+        stack = MagicMock()
+        stack.config.data_dir = Path("/tmp/test")
+
+        with patch(
+            "trade_compass_agent.runtime.tools.portfolio.tool_analyze_portfolio"
+        ) as mock_portfolio:
+            mock_portfolio.return_value = '{"concentration_top5": [{"symbol": "600001", "weight_pct": 80}], "total_positions": 3}'
+            result = apply_risk_warnings(stack, signal)
+
+        assert "集中度提示" not in result.reasoning
 
     def test_hold_and_sell_skip_veto(self):
         from trade_compass_agent.domain.signals import SignalRating, TradingSignal
