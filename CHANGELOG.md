@@ -27,6 +27,17 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ### Fixed
 
+- Review low-trust memory candidates against current rules and saved evidence,
+  with independent verification before admission or retirement; retain
+  inconclusive candidates and retry failed reviews without increasing capacity.
+- Prevent direct revisions from bypassing candidate reassessment, and reject
+  revision proposals evaluated against user rules that changed during review.
+- Allow explicitly requested, audited reassessment of historical time-decay
+  retirements, preserving prior versions and keeping review time separate from use.
+- Recover legacy memory successor links from explicit migration records while
+  leaving missing or ambiguous lineage unresolved.
+- Keep temporary development documents under ignored `temp/` and exclude the
+  entire directory from release archives; preserve application runtime data.
 - Preserve memory revision history through confidence feedback and archival,
   including feedback on retained entries with identical historical copies.
 - Distinguish exact memory deduplication from AI-reviewed merges and revisions,

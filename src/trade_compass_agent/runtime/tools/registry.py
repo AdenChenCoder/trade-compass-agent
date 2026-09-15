@@ -1219,6 +1219,7 @@ class ToolRegistry:
                 entry_id=args.get("entry_id"), expected_version=args.get("expected_version"),
                 reason=str(args.get("reason", "")), evidence=args.get("evidence", []),
                 replacements=args.get("replacements", []), llm_call=evaluate_memory, status=str(args.get("status", "all")),
+                observations=self._obs_store,
             )
         if name == "skill_manage" and self._skill_store:
             from trade_compass_agent.runtime.tools.self_improve import tool_skill_manage

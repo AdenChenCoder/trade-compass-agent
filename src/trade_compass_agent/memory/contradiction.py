@@ -31,16 +31,20 @@ class ConflictReport:
     conflicts_with: str = ""
     entry_id: str = ""
     expected_version: int | None = None
+    user_rules: str | None = None
 
 
 CURATOR_SCAN_PROMPT = """\
 你是 KNOWLEDGE 策展人。审查以下活跃知识条目，找出：
 1. 与 GROUNDING 硬约束冲突的条目（如 min-lot、数据真实性、交易制度）
 2. 互相矛盾或重复的条目（应 SUPERSEDE 修正版，而非并存）
-3. 应归档的过时/低价值条目
+3. 有明确证伪依据或违反规则且无法保真修订的条目。时间久、访问少、服务停摆、证据不足不等于失效。
 
 ## GROUNDING 硬约束
 {grounding_rules}
+
+## 当前用户规则（优先于软记忆）
+{user_rules}
 
 ## 活跃 KNOWLEDGE 条目（{count} 条）
 {entries_block}
@@ -49,10 +53,10 @@ CURATOR_SCAN_PROMPT = """\
 {skills_summary}
 
 返回 JSON 数组。每项格式：
-{{"verdict": "SUPERSEDE"|"ARCHIVE"|"KEEP", "entry_prefix": "≥10字前缀定位条目", "reason": "1-2句", "refined": "SUPERSEDE时的新文本≤80字", "conflicts_with": "SUPERSEDE时旧条前缀"}}
+{{"verdict": "SUPERSEDE"|"ARCHIVE"|"KEEP", "entry_prefix": "≥10字前缀定位条目", "reason": "具体依据与原文冲突点，不能为空", "refined": "SUPERSEDE时的完整修订文本，不遗漏条件或例外", "conflicts_with": "SUPERSEDE时旧条前缀", "archive_basis": "contradiction|disproved"}}
 
 - SUPERSEDE: 新条修正旧条，conflicts_with 必填
-- ARCHIVE: 软归档，不再注入
+- ARCHIVE: 软归档，不再注入；仅 archive_basis=contradiction/disproved，reason 必须指出所给依据，禁止以时间衰减或缺少证据为理由。
 - KEEP: 无问题
 
 无问题时返回 []。只返回 JSON 数组。
@@ -167,19 +171,21 @@ def scan_active_conflicts(
     grounding_rules: str,
     skills_summary: str,
     llm_call: LLM_CALL,
+    *, user_rules: str = "",
 ) -> list[ConflictReport]:
     """Batch scan active KNOWLEDGE entries for conflicts with grounding or each other."""
     if not entries:
         return []
 
     numbered = "\n".join(
-        f"{i + 1}. [{m.source} conf={m.confidence:.2f}] {m.text[:120]}"
+        f"{i + 1}. [id={m.entry_id} v={m.version} source={m.source} pinned={m.source == 'user_pin'}] {m.text}\n依据引用（未解析引用不算验证）: {m.source_obs_ids}"
         for i, m in enumerate(entries)
     )
     prompt = CURATOR_SCAN_PROMPT.format(
-        grounding_rules=grounding_rules[:4000],
+        grounding_rules=grounding_rules,
+        user_rules=user_rules or "（暂无）",
         count=len(entries),
-        entries_block=numbered[:4000],
+        entries_block=numbered,
         skills_summary=skills_summary[:1000] or "（暂无）",
     )
 
@@ -201,6 +207,9 @@ def scan_active_conflicts(
         verdict = str(item.get("verdict", "KEEP")).upper()
         if verdict not in ("SUPERSEDE", "ARCHIVE"):
             continue
+        reason = str(item.get("reason", "") or "").strip()
+        if not reason or (verdict == "ARCHIVE" and item.get("archive_basis") not in {"contradiction", "disproved"}):
+            continue
         prefix = str(item.get("entry_prefix", "") or item.get("conflicts_with", "")).strip()
         if len(prefix) < 3:
             continue
@@ -214,11 +223,12 @@ def scan_active_conflicts(
         reports.append(ConflictReport(
             verdict=verdict,
             entry_prefix=prefix,
-            reason=str(item.get("reason", "")),
-            refined_text=str(item.get("refined", ""))[:120],
+            reason=reason,
+            refined_text=str(item.get("refined", "")),
             conflicts_with=conflicts_with,
             entry_id=matches[0].entry_id,
             expected_version=matches[0].version,
+            user_rules=user_rules,
         ))
     return reports
 
@@ -232,6 +242,13 @@ def apply_conflict_reports(
     """Apply curator scan results via replace (SUPERSEDE) or archive_entry (ARCHIVE)."""
     applied: list[dict[str, str]] = []
     for report in reports:
+        if not report.reason.strip():
+            continue
+        if report.user_rules is not None:
+            from trade_compass_agent.memory.rules_store import RulesStore
+            if RulesStore(mem_store._memory_dir).read_for_prompt() != report.user_rules:
+                logger.warning("User rules changed during curator review; rescan before applying")
+                continue
         if not report.entry_id or report.expected_version is None:
             logger.warning("Curator proposal has no reviewed version; rescan before applying")
             continue

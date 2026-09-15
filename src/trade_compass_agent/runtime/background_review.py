@@ -24,7 +24,8 @@ SKILL_NUDGE_INTERVAL = 15   # tool iterations without skill write
 
 MEMORY_REVIEW_PROMPT = """\
 先 write_knowledge(action=list) 查看有效/候选/历史与容量。
-在有效额度接近满或存在已晋升但因空间不足待采纳的候选时，调用 write_knowledge(action=maintain)。
+在存在候选（含重新开放复评的历史条目）或有效额度接近满时，调用 write_knowledge(action=maintain)。
+maintain 会结合用户规则、制度约束和已有观察审查候选；证据不足时保留候选。
 明确失效、重复或有更高价值的新版本时，使用带理由、证据和当前版本的 revise/remove；
 长期未访问不等于失效，归档是停用历史。
 回顾来源对话，考虑是否需要更新 memory:
@@ -38,7 +39,7 @@ MEMORY_REVIEW_PROMPT = """\
 不要把触发条件、执行步骤、工具调用顺序、评分表、阈值表、输出模板或 load_skill 路由写入 memory；
 这些都属于 skill_manage(create/patch/edit)。
 **注意**：Agent add 为低信任暂存（confidence=0.4），默认不会注入后续 prompt；
-只有经 promotion 晋升或用户 pin 的条目才会成为高信任记忆。
+只有经 promotion 晋升、策展复评验证或用户 pin 的条目才会成为高信任记忆。
 若用户明确要求「记住/固定」某条，保留候选及用户原话，前台用户固定入口处理 pin；后台不得代为 pin。
 
 如果没有值得保存的，回复 'Nothing to save.'

@@ -1,5 +1,6 @@
 import threading
 import time
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -109,16 +110,29 @@ def test_sample_provider_generates_minute_bars():
     assert bars[-1].timestamp > bars[0].timestamp
 
 
-def test_local_bar_cache_provider_round_trips(tmp_path):
+@pytest.fixture
+def minute_cache_clock(monkeypatch):
+    # Sample data and freshness validation must share a market clock on UTC CI.
+    now = datetime(2026, 9, 11, 10, 0)
+    monkeypatch.setattr("trade_compass_agent.data.providers._market_now", lambda: now)
+    monkeypatch.setattr("trade_compass_agent.data.providers._sample_intraday_now", lambda: now)
+    return now
+
+
+def test_local_bar_cache_provider_round_trips(tmp_path, minute_cache_clock, monkeypatch):
     cache = LocalBarCacheProvider(tmp_path)
     source = SampleProvider().get_bars("600519", timeframe="5m", limit=12)
     cache.write_bars("600519", "5m", source)
     loaded = cache.get_bars("600519", timeframe="5m", limit=5)
     assert len(loaded) == 5
     assert loaded[-1].close == source[-1].close
+    monkeypatch.setattr("trade_compass_agent.data.providers._market_now",
+                        lambda: minute_cache_clock + timedelta(minutes=15))
+    with pytest.raises(ProviderError, match="stale cache"):
+        cache.get_bars("600519", timeframe="5m", limit=5)
 
 
-def test_chain_provider_uses_cache_before_sample_for_minutes(tmp_path):
+def test_chain_provider_uses_cache_before_sample_for_minutes(tmp_path, minute_cache_clock):
     cache = LocalBarCacheProvider(tmp_path)
     cache.write_bars("600519", "5m", SampleProvider().get_bars("600519", timeframe="5m", limit=8))
     chain = ChainProvider([_FailingProvider(), cache])

@@ -118,7 +118,7 @@ def _validate_names(archive: Path, names: set[str]) -> None:
         parts = path.parts
         if parts and parts[0].startswith("trade_compass_agent-"):
             parts = parts[1:]  # Source distributions have a versioned root.
-        if parts and parts[0] in {"data", "memory_vault"}:
+        if parts and parts[0] in {"data", "memory_vault", "temp"}:
             errors.append(f"forbidden local state: {name}")
         if len(parts) == 2 and parts[0] == "docs" and re.search(r"-20\d{2}-\d{2}-\d{2}\.", parts[1]):
             errors.append(f"forbidden local diagnostic report: {name}")

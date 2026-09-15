@@ -47,6 +47,20 @@ Preserve these load-bearing contracts unless the task explicitly changes them:
 - UI code may present backend behavior but must not duplicate authoritative
   rules or persistence logic.
 
+## Temporary documents
+
+- Store all temporary project documents under the repository-root `/temp/`
+  directory (`<repo>/temp/`), using task-specific subdirectories when needed.
+  This includes development draft plans, scratch notes, investigation reports,
+  code review reports, and ad hoc validation results.
+- Keep `/temp/` ignored by Git. Never stage, commit, or force-add its contents.
+- Put only durable project documentation in `docs/`; do not scatter temporary
+  documents across the repository root, `docs/`, `data/`, or source directories.
+  Application runtime data, including generated reports, execution logs,
+  caches, memory, and recovery backups, stays in its configured data and memory
+  roots. Classify files by their producer and use, not by directory name,
+  filename, age, or file format alone.
+
 ## Common commands
 
 ```bash
