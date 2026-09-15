@@ -14,6 +14,8 @@ from trade_compass_agent.llm.providers import (
     OpenAIChatClient,
     create_chat_client,
     create_llm_provider,
+    create_vision_client,
+    is_vision_capable,
 )
 from trade_compass_agent.runtime.exceptions import AgentTurnError
 from trade_compass_agent.runtime.intake import enrich_user_message
@@ -69,6 +71,36 @@ def test_create_llm_provider_deepseek(monkeypatch, mock_openai_client: MagicMock
     mock_openai_client.assert_called_once_with(api_key="test-key", base_url=DEEPSEEK_BASE_URL)
     assert provider.name == "deepseek"
     assert provider.model == "deepseek-chat"
+
+
+def test_deepseek_flash_is_vision_capable() -> None:
+    assert is_vision_capable("deepseek-flash") is True
+
+
+def test_create_vision_client_uses_deepseek_flash(
+    monkeypatch, mock_openai_client: MagicMock
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    mock_openai_client.return_value = MagicMock()
+    config = AppConfig(
+        llm=LLMConfig(
+            provider="deepseek",
+            model="deepseek-flash",
+            api_key_env="DEEPSEEK_API_KEY",
+            vision_model="deepseek-flash",
+            vision_provider="deepseek",
+            vision_api_key_env="DEEPSEEK_API_KEY",
+        )
+    )
+
+    client = create_vision_client(config)
+
+    mock_openai_client.assert_called_once_with(
+        api_key="test-key", timeout=90.0, max_retries=2, base_url=DEEPSEEK_BASE_URL
+    )
+    assert client is not None
+    assert client.name == "deepseek-vision"
+    assert client.model == "deepseek-flash"
 
 
 def test_stream_complete_retries_read_timeout_before_first_delta(

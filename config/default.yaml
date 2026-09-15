@@ -102,13 +102,13 @@ context_compression:
 #   .trade-compass/mcp.json (project) and ~/.trade-compass/mcp.json (user, overrides)
 llm:
   provider: deepseek   # disabled | openai | deepseek | anthropic | openrouter | dashscope
-  model: deepseek-chat
+  model: deepseek-flash
   api_key_env: DEEPSEEK_API_KEY
   timeout: 60.0        # LLM request timeout in seconds
   max_retries: 2       # Automatic retries on transient errors
-  vision_model: "gemma4:26b"   # Override model for vision tasks; empty = use default model
-  vision_provider: "ollama"    # Provider for vision model; empty = same as main provider
-  vision_api_key_env: ""       # API key env for vision provider; empty = same as main
+  vision_model: "deepseek-flash"   # Override model for vision tasks; empty = use default model
+  vision_provider: "deepseek"    # Provider for vision model; empty = same as main provider
+  vision_api_key_env: "DEEPSEEK_API_KEY"       # API key env for vision provider; empty = same as main
 debate:
   max_debate_rounds: 2        # bull/bear exchange rounds (1 = single round, 2 = with rebuttals)
   enable_research_phase: true  # Stage 1: parallel analyst reports (tech/fundamental/sentiment)

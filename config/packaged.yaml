@@ -95,13 +95,13 @@ context_compression:
   context_budget: 0
 llm:
   provider: deepseek
-  model: deepseek-chat
+  model: deepseek-flash
   api_key_env: DEEPSEEK_API_KEY
   timeout: 60.0
   max_retries: 2
-  vision_model: ""
-  vision_provider: ""
-  vision_api_key_env: ""
+  vision_model: "deepseek-flash"
+  vision_provider: "deepseek"
+  vision_api_key_env: "DEEPSEEK_API_KEY"
 debate:
   max_debate_rounds: 2
   enable_research_phase: true

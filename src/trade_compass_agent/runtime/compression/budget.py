@@ -34,6 +34,7 @@ _MODEL_CONTEXTS: dict[str, int] = {
     "deepseek-reasoner": 64_000,
     "deepseek-v3": 128_000,
     "deepseek-v4-pro": 128_000,
+    "deepseek-flash": 1_048_576,
     "gpt-4o": 128_000,
     "gpt-4o-mini": 128_000,
     "gpt-4-turbo": 128_000,

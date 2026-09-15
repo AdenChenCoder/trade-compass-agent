@@ -139,7 +139,7 @@ class LLMConfig:
     """LLM provider settings for the agent runtime."""
 
     provider: str = "disabled"
-    model: str = "deepseek-chat"
+    model: str = "deepseek-flash"
     api_key_env: str = "DEEPSEEK_API_KEY"
     timeout: float = 90.0
     max_retries: int = 2
@@ -404,7 +404,7 @@ def load_app_config(path: Path | None = None) -> AppConfig:
         ),
         llm=LLMConfig(
             provider=str(llm_raw.get("provider", "disabled")),
-            model=str(llm_raw.get("model", "deepseek-chat")),
+            model=str(llm_raw.get("model", "deepseek-flash")),
             api_key_env=str(llm_raw.get("api_key_env", "DEEPSEEK_API_KEY")),
             timeout=float(llm_raw.get("timeout", 90.0)),
             max_retries=int(llm_raw.get("max_retries", 2)),

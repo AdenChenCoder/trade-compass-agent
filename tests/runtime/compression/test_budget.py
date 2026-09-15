@@ -95,6 +95,16 @@ def test_resolve_context_budget_auto():
     assert budget == 128_000  # deepseek-chat
 
 
+def test_resolve_context_budget_deepseek_flash():
+    class _DeepSeekFlashConfig(_MockConfig):
+        class _LLM:
+            model = "deepseek-flash"
+
+        llm = _LLM()
+
+    assert resolve_context_budget(_DeepSeekFlashConfig()) == 1_048_576
+
+
 class _ExplicitBudgetConfig(_MockConfig):
     class _Comp(_MockCompressionConfig):
         context_budget = 64000

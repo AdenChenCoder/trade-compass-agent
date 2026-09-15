@@ -491,7 +491,7 @@ _VISION_CAPABLE_MODELS = {
     "claude-3-opus", "claude-3-sonnet", "claude-3-haiku",
     "claude-3.5-sonnet", "claude-4-sonnet", "claude-4-opus",
     "qwen-vl-max", "qwen-vl-plus",
-    "deepseek-vl",
+    "deepseek-flash", "deepseek-vl",
     "gemma4", "gemma3",
 }
 

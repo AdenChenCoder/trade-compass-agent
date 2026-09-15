@@ -26,7 +26,7 @@ _LLM_OPTIONS = (
     ("disabled", "暂不启用 LLM"),
 )
 _LLM_DEFAULT_MODELS = {
-    "deepseek": "deepseek-chat",
+    "deepseek": "deepseek-flash",
     "openai": "gpt-4o-mini",
     "anthropic": "claude-3-5-sonnet-latest",
     "openrouter": "deepseek/deepseek-chat",
