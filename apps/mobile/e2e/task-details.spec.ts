@@ -29,7 +29,7 @@ test('task cards open complete, accessible details and return to the same list',
     await phone.getByRole('button', { name: '任务消息', exact: true }).click();
     const originalCard = phone.getByRole('button', { name: `查看任务详情：${original.title}`, exact: true });
     await originalCard.scrollIntoViewIfNeeded();
-    const scrollBefore = await phone.evaluate(() => scrollY);
+    const scrollBefore = await phone.locator('main').evaluate(element => element.scrollTop);
     expect(scrollBefore).toBeGreaterThan(0);
     await originalCard.click();
     const sheet = phone.getByRole('dialog', { name: original.title, exact: true });
@@ -64,7 +64,7 @@ test('task cards open complete, accessible details and return to the same list',
     await sheet.getByRole('button', { name: '返回列表', exact: true }).click();
     await expect(sheet).toHaveCount(0);
     await expect(originalCard).toBeFocused();
-    expect(Math.abs(await phone.evaluate(() => scrollY) - scrollBefore)).toBeLessThan(2);
+    expect(Math.abs(await phone.locator('main').evaluate(element => element.scrollTop) - scrollBefore)).toBeLessThan(2);
     await expect(phone).toHaveURL('https://localhost:19746/mobile/');
     await originalCard.press('Enter');
     await expect(sheet).toBeVisible();

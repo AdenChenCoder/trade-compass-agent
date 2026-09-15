@@ -69,6 +69,7 @@ export function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshResult, setRefreshResult] = useState('');
   const nearBottom = useRef(true);
+  const scrollArea = useRef<HTMLElement>(null);
   const root = `compass.v1.${connection.computer_id ?? 'unpaired'}.`;
   const requestKey = `${root}request.${selected}`;
   const draftKey = `${root}draft.${selected}`;
@@ -98,7 +99,7 @@ export function App() {
   }), []);
   useEffect(() => {
     if (notificationClick && tab === 'notices') {
-      window.scrollTo(0, 0);
+      if (scrollArea.current) scrollArea.current.scrollTop = 0;
       void acknowledgeNotificationNavigation(notificationClick);
     }
   }, [notificationClick, tab]);
@@ -110,12 +111,9 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const track = () => { nearBottom.current = document.documentElement.scrollHeight - window.innerHeight - window.scrollY < 180; };
-    window.addEventListener('scroll', track, { passive: true });
-    return () => window.removeEventListener('scroll', track);
-  }, []);
-  useEffect(() => {
-    if (page && nearBottom.current) requestAnimationFrame(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    if (selected && page && nearBottom.current) requestAnimationFrame(() => {
+      if (scrollArea.current) scrollArea.current.scrollTop = scrollArea.current.scrollHeight;
+    });
   }, [page?.messages.length, selected]);
 
   useEffect(() => {
@@ -346,8 +344,9 @@ export function App() {
   async function loadOlder() {
     if (!selected || page?.page.next_before == null || older) return;
     setOlder(true);
-    const previousHeight = document.documentElement.scrollHeight;
-    const previousTop = window.scrollY;
+    const area = scrollArea.current!;
+    const previousHeight = area.scrollHeight;
+    const previousTop = area.scrollTop;
     try {
       const value = await api<Page>(`sessions/${encodeURIComponent(selected)}/messages?limit=50&before=${page.page.next_before}`);
       setPage(previous => {
@@ -357,7 +356,7 @@ export function App() {
         save(`${root}page.${selected}`, merged);
         return merged;
       });
-      requestAnimationFrame(() => window.scrollTo(0, previousTop + document.documentElement.scrollHeight - previousHeight));
+      requestAnimationFrame(() => { area.scrollTop = previousTop + area.scrollHeight - previousHeight; });
     } catch (err) { setError(errorText(err)); } finally { setOlder(false); }
   }
   async function forget() {
@@ -369,7 +368,7 @@ export function App() {
   }
 
   const connectionView = !connection.connected || tab === 'connection' || (!approved && sessions.length === 0);
-  useEffect(() => { window.scrollTo(0, 0); }, [tab, connectionView]);
+  useEffect(() => { if (scrollArea.current) scrollArea.current.scrollTop = 0; }, [tab, connectionView]);
   const showNavigation = connection.connected && (approved || sessions.length > 0);
   const inConversation = !connectionView && tab === 'sessions' && !!selected;
   const title = connectionView ? '我的连接' : tab === 'notices' ? '任务消息' : inConversation ? page?.title || '新对话' : '会话';
@@ -406,7 +405,10 @@ export function App() {
       {connection.connected ? <span className={`connection-indicator ${online && approved && !authorizationLost ? 'online' : ''}`} role="status" aria-label={connectionLabel} title={connectionLabel} /> : null}
       <AppUpdate />
     </header>
-    <main className={inConversation ? 'chat-main' : ''}>
+    <main ref={scrollArea} className={inConversation ? 'chat-main' : ''} onScroll={event => {
+      const area = event.currentTarget;
+      nearBottom.current = area.scrollHeight - area.clientHeight - area.scrollTop < 180;
+    }}>
       {error || createError || draftError ? <div className="notice error" role="alert">{draftError || error || createError}</div> : null}
       {connectionView ? <section className="connect-view">
         {restoringConnection ? <p className="muted" role="status">正在恢复连接…</p> : connection.connected && approved && !authorizationLost ? <>

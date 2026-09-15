@@ -208,6 +208,54 @@ it.each(['failed', 'unknown'])('keeps the original message available for an unce
 const history = (count: number) => Array.from({ length: count }, (_, index) => ({ role: 'assistant', content: `历史消息 ${index}` }));
 const visibleHistory = () => [...element.querySelectorAll('.message .markdown')].map(node => node.textContent?.trim());
 
+it('follows new replies inside the content pane without moving a reader away from older messages', async () => {
+  network = true; transcript = history(20);
+  await act(async () => root.render(createElement(App))); await settle();
+  const area = element.querySelector('main')!;
+  Object.defineProperties(area, {
+    clientHeight: { value: 300 },
+    scrollHeight: { get: () => element.querySelectorAll('.message').length * 50 },
+  });
+  await click('原会话');
+  await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+  expect(area.scrollTop).toBe(1000);
+  area.scrollTop = 150;
+  await act(async () => area.dispatchEvent(new Event('scroll')));
+  transcript = history(21);
+  await act(async () => window.dispatchEvent(new Event('pageshow'))); await settle();
+  await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+  expect(area.scrollTop).toBe(150);
+  area.scrollTop = 750;
+  await act(async () => area.dispatchEvent(new Event('scroll')));
+  transcript = history(22);
+  await act(async () => window.dispatchEvent(new Event('pageshow'))); await settle();
+  await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+  expect(area.scrollTop).toBe(1100);
+  await click('任务消息');
+  expect(area.scrollTop).toBe(0);
+  expect(window.scrollTo).not.toHaveBeenCalled();
+});
+
+it('keeps the reading position in the content pane when older messages are prepended', async () => {
+  network = true; transcript = history(120);
+  localStorage.removeItem(prefix + 'page.' + session.session_id);
+  await act(async () => root.render(createElement(App))); await settle();
+  const area = element.querySelector('main')!;
+  Object.defineProperties(area, {
+    clientHeight: { value: 300 },
+    scrollHeight: { get: () => element.querySelectorAll('.message').length * 50 },
+  });
+  await click('原会话');
+  await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+  area.scrollTop = 120;
+  await act(async () => area.dispatchEvent(new Event('scroll')));
+  await click('查看更早消息');
+  await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+  expect(visibleHistory()).toHaveLength(100);
+  expect(area.scrollTop).toBe(2620);
+  expect(window.scrollTo).not.toHaveBeenCalled();
+});
+
 it.each([60, 150, 275])('fills history gaps on reconnect to %s messages without losing the draft', async count => {
   network = true; transcript = history(50);
   await act(async () => root.render(createElement(App))); await settle();
