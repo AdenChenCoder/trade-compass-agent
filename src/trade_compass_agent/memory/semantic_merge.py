@@ -150,7 +150,10 @@ def evaluate_revision(store, *, replacements, content, reason, evidence, llm_cal
             return {"ok": False, "disposition": "version_conflict", "error": "Read current entries and retry"}
         if row.source == "user_pin" and actor != "user":
             return {"ok": False, "disposition": "protected", "error": "Pinned memory is protected"}
-        if row.status == "archived" or not store.is_trusted_source(row.source):
+        if row.status == "archived" or not store.is_trusted_source(row.source) or (
+            row.status == "candidate" and (row.reason != "capacity_review_required"
+                                           or row.confidence < store._min_inject_confidence)
+        ):
             return {"ok": False, "disposition": "pending", "error": "Unverified candidates require evidence-based promotion first"}
         originals.append(row)
     if llm_call is None:
@@ -158,16 +161,19 @@ def evaluate_revision(store, *, replacements, content, reason, evidence, llm_cal
     prompt = json.dumps({"originals": [{"id": m.entry_id, "text": m.text, "status": m.status, "evidence": m.source_obs_ids} for m in originals],
         "proposal": content, "reason": reason, "references": evidence,
         "other_core": [m.text for m in store.list_active(target) if m.entry_id not in {o.entry_id for o in originals}]}, ensure_ascii=False)
+    user_rules = _user_rules(store)
     try:
         verdict = _parse_json(llm_call("审查记忆修订。保持条件、例外、范围、时序和独有信息；引用自述不算独立验证。"
             "允许有依据的纠错和以更高价值知识取代较低价值内容，但不得仅凭新、长、高频判优。"
             "合并同义知识不要求新增市场证据；新增主张须有输入中可验证依据。"
             "容量退选与证伪必须区分。违反用户规则或无法证明更好则保留原集合。"
-            "返回 JSON {valid:boolean, reason:string}。\n" + GROUNDING_RULES + "\n" + _user_rules(store), prompt))
+            "返回 JSON {valid:boolean, reason:string}。\n" + GROUNDING_RULES + "\n" + user_rules, prompt))
     except Exception as exc:
         return {"ok": False, "disposition": "evaluation_failed", "error": str(exc)}
     if verdict.get("valid") is not True:
         return {"ok": False, "disposition": "pending", "error": verdict.get("reason", "Proposal not accepted")}
+    if _user_rules(store) != user_rules:
+        return {"ok": False, "disposition": "version_conflict", "error": "User rules changed; re-evaluate the proposal"}
     return store.commit_revision(replacements=replacements, content=content, reason=reason,
         evidence=evidence + ["curator: " + str(verdict.get("reason", "validated"))], target=target,
         expected_revision=version, actor=actor, review_method="ai", change_kind=change_kind)

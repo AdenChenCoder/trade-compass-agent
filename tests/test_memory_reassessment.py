@@ -254,6 +254,64 @@ def test_review_receipt_distinguishes_merge_from_admission_or_retirement(tmp_pat
     assert len(store.list_active()) == 1 and store.list_active()[0].source == "user_pin"
 
 
+@pytest.mark.parametrize("state", ["reopened", "deferred", "below_threshold"])
+def test_agent_revision_cannot_bypass_candidate_reassessment(tmp_path, state):
+    if state == "below_threshold":
+        store = MemoryStore(tmp_path, min_inject_confidence=.9)
+        store.add("下单前须校验实时行情")
+        assert review_candidates(store, model())["ok"]
+    else:
+        store, _, _, evidence = legacy(tmp_path)
+        reopen_stale_history(store, evidence)
+        if state == "deferred":
+            assert review_candidates(store, model(basis="empirical", refs=[]))["ok"]
+    row = next(m for m in store.get_entries_with_meta() if m.status == "candidate")
+    before = (tmp_path / ".memory_meta.json").read_bytes()
+    def unexpected(*args):
+        pytest.fail("Unreviewed candidates must not enter the trusted revision evaluator")
+    result = json.loads(tool_memory_write(store, "revise", content=row.text,
+        reason="调整表达", evidence=["self:assertion"], entry_id=row.entry_id,
+        expected_version=row.version, llm_call=unexpected))
+    assert not result["ok"] and result["disposition"] == "pending"
+    assert (tmp_path / ".memory_meta.json").read_bytes() == before
+    assert not MemoryStore(tmp_path).format_for_system_prompt()
+
+
+def test_revision_can_admit_verified_candidate_after_capacity_is_freed(tmp_path):
+    store = MemoryStore(tmp_path, memory_char_limit=20)
+    pin = store.add("P" * 20, source="user_pin")
+    store.add("下单前须校验实时行情")
+    assert review_candidates(store, model())["ok"]
+    row = next(m for m in store.get_entries_with_meta() if m.status == "candidate")
+    assert row.reason == "capacity_review_required"
+    store.archive_entry(entry_id=pin["entry_id"], actor="user", reason="用户取消固定内容")
+    result = json.loads(tool_memory_write(store, "revise", content=row.text,
+        reason="已完成复评且额度已释放", evidence=row.evidence, entry_id=row.entry_id,
+        expected_version=row.version, llm_call=lambda *args: '{"valid":true,"reason":"保持已验证内容"}'))
+    assert result["ok"] and result["accepted"]
+    restarted = MemoryStore(tmp_path, memory_char_limit=20)
+    assert row.text in restarted.format_for_system_prompt()
+    assert [m.text for m in restarted.list_active()] == [row.text]
+
+
+def test_revision_rejects_user_rule_changes_during_evaluation(tmp_path):
+    store = MemoryStore(tmp_path)
+    row = store.add("下单前校验行情时效", source="promotion")
+    rules = RulesStore(tmp_path)
+    rules.add("按原有用户约束审查", actor="user")
+    before = (tmp_path / ".memory_meta.json").read_bytes()
+    def evaluate(system, user):
+        assert "按原有用户约束审查" in system
+        rules.add("暂时禁止采纳本条交易原则", actor="user")
+        return '{"valid":true,"reason":"旧规则允许更新"}'
+    result = json.loads(tool_memory_write(store, "revise", content="执行交易前必须校验行情时效",
+        reason="补充描述", evidence=["grounding"], entry_id=row["entry_id"],
+        expected_version=row["version"], llm_call=evaluate))
+    assert not result["ok"] and result["disposition"] == "version_conflict"
+    assert (tmp_path / ".memory_meta.json").read_bytes() == before
+    assert MemoryStore(tmp_path).list_active()[0].text == "下单前校验行情时效"
+
+
 def test_retirement_requires_reason_and_curator_sees_complete_rules_and_text(tmp_path):
     store = MemoryStore(tmp_path)
     text = "条件和例外" * 60
