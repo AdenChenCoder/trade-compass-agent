@@ -781,9 +781,10 @@ def run_serve(
 
     if dev:
         print(f"API dev server: {url}")
-        print("Start the Vite dev server in another terminal:")
-        print("  pnpm --dir apps/web dev")
-        print("  (proxies /api/* to this server; UI at http://127.0.0.1:3000/agent)")
+        if os.getenv("TRADE_COMPASS_DEV_SUPERVISED", "").lower() not in {"1", "true", "yes"}:
+            print("Start the Vite dev server in another terminal:")
+            print("  pnpm --dir apps/web dev")
+            print("  (proxies /api/* to this server; UI at http://127.0.0.1:3000/agent)")
     else:
         print(f"Trade Compass: {url}/agent")
 
@@ -1252,6 +1253,15 @@ def main() -> None:
         help="Do not start the scheduler (default: on when config.scheduler.enabled)",
     )
 
+    p_dev = sub.add_parser("dev", help=command_help("dev"))
+    p_dev.add_argument("--port", type=int, default=None, help="API port (default: 19704)")
+    p_dev.add_argument("--open", action="store_true", help="Open the Web UI after startup")
+    p_dev.add_argument(
+        "--no-scheduler",
+        action="store_true",
+        help="Do not start the scheduler",
+    )
+
     p_compress = sub.add_parser(
         "compress", help="Manually compress a session's context (Phase 1+2)"
     )
@@ -1404,6 +1414,14 @@ def main() -> None:
             args.host,
             _resolve_port(args.port),
             dev=args.dev,
+            open_browser=args.open,
+            no_scheduler=args.no_scheduler,
+        )
+    elif args.command == "dev":
+        from trade_compass_agent.development import run_development
+
+        run_development(
+            api_port=_resolve_port(args.port),
             open_browser=args.open,
             no_scheduler=args.no_scheduler,
         )

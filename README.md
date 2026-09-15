@@ -234,9 +234,11 @@ uv tool install --force --python 3.12 'trade-compass-agent[forecast]'
 uv sync --extra dev
 pnpm install --frozen-lockfile
 
-uv run trade-compass serve --dev  # API: :19704
-pnpm --dir apps/web dev            # Web UI: :3000
+uv run trade-compass dev --open    # API: :19704 + Web UI: :3000
 ```
+
+如果常驻服务正在占用 `19704`，先运行 `uv run trade-compass service stop`。统一开发命令
+会同时管理后端和前端进程，按 `Ctrl+C` 可一起停止；使用 `--no-scheduler` 可禁用开发环境调度器。
 
 提交 Pull Request 前运行：
 

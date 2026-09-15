@@ -238,9 +238,13 @@ experimental research aids, not trading signals.
 uv sync --extra dev
 pnpm install --frozen-lockfile
 
-uv run trade-compass serve --dev  # API on :19704
-pnpm --dir apps/web dev            # Web UI on :3000
+uv run trade-compass dev --open    # API on :19704 + Web UI on :3000
 ```
+
+If the persistent service is using port `19704`, first run
+`uv run trade-compass service stop`. The unified development command manages
+both processes and stops them together on `Ctrl+C`; pass `--no-scheduler` to
+disable the scheduler during development.
 
 Run the project checks before opening a pull request:
 

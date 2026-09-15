@@ -18,6 +18,7 @@ def test_commands_json_is_machine_readable(capsys) -> None:
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["commands"] == command_catalog()
+    assert any(item["command"] == "trade-compass dev" for item in payload["commands"])
     assert any(item["command"] == "trade-compass memory reindex" for item in payload["commands"])
 
 

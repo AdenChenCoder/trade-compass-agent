@@ -40,6 +40,12 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         ("serve",), "Start the local Web workbench and API.", "onboarding", mutates_state=True
     ),
+    CommandSpec(
+        ("dev",),
+        "Start backend and frontend development servers together.",
+        "onboarding",
+        mutates_state=True,
+    ),
     CommandSpec(("agent",), "Run one agent turn with tools.", "research", aliases=(("ask",),)),
     CommandSpec(("market-pulse",), "Show sector strength and limit-up activity.", "research"),
     CommandSpec(

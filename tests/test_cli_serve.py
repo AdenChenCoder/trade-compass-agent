@@ -103,6 +103,23 @@ def test_serve_dev_no_scheduler_flag(monkeypatch: pytest.MonkeyPatch, capsys: py
     assert "Scheduler: disabled (--no-scheduler)" in captured.out
 
 
+def test_supervised_serve_dev_does_not_request_second_terminal(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("TRADE_COMPASS_DEV_SUPERVISED", "true")
+
+    with patch("uvicorn.run"):
+        run_serve(
+            "127.0.0.1",
+            DEFAULT_PORT,
+            dev=True,
+            open_browser=False,
+            no_scheduler=True,
+        )
+
+    assert "another terminal" not in capsys.readouterr().out
+
+
 def test_serve_initializes_platform_log_retention(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TRADE_COMPASS_NO_SCHEDULER", raising=False)
 

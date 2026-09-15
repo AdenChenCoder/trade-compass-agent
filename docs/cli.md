@@ -26,6 +26,19 @@ automation, or `setup --wizard` to opt into the wizard from a source checkout.
 In the wizard, use `↑/↓` to navigate, `Space` to toggle multi-select choices,
 and `Enter` to confirm the current item.
 
+## Development
+
+From a source checkout, start the hot-reloading API and Web UI together:
+
+```bash
+uv run trade-compass dev --open
+```
+
+The API listens on `127.0.0.1:19704` and Vite on `127.0.0.1:3000`. Both stop
+together on `Ctrl+C`. Stop the persistent service first if it is using the API
+port, or pass `--port` to use another API port. Pass `--no-scheduler` to avoid
+running scheduled jobs during development.
+
 ## Research and automation
 
 ```bash
