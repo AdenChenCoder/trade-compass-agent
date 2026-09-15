@@ -11,6 +11,7 @@ import { PeerSetup } from './PeerSetup';
 import { peerMode } from './peer';
 import { acknowledgeNotificationNavigation, listenForNotificationNavigation } from './notification-navigation';
 import { fillHistoryGap } from '../../shared/session-history';
+import coinLogo from '../../shared/brand/coin-logo.svg';
 
 interface Session { session_id: string; title?: string; preview?: string; updated_at: string }
 interface SessionList { sessions: Session[]; next_cursor?: string | null }
@@ -387,7 +388,7 @@ export function App() {
   }
   return <div className={`app-shell ${showNavigation ? 'has-rail' : 'onboarding'}`}>
     {showNavigation ? <aside className="side-rail">
-      <div className="brand-mark" aria-label="交易罗盘"><Icon name="robot" /></div>
+      <img className="brand-mark" src={coinLogo} alt="交易罗盘" width={34} height={34} />
       <nav aria-label="主导航">{([['sessions', '会话'], ['notices', '任务消息'], ['connection', '连接']] as const).map(([value, label]) => <button key={value}
         className={`rail-item ${value === 'connection' ? 'rail-connection' : ''} ${tab === value ? 'active' : ''}`}
         aria-current={tab === value ? 'page' : undefined} disabled={busy || older} onClick={() => setTab(value)}>
@@ -397,7 +398,7 @@ export function App() {
     </aside> : null}
     <header className="app-header">
       {inConversation ? <button className="icon-button header-back" aria-label="所有会话" disabled={busy || older} onClick={() => selectSession(null)}><Icon name="back" /></button>
-        : !showNavigation ? <div className="brand-mark"><Icon name="robot" /></div> : null}
+        : !showNavigation ? <img className="brand-mark" src={coinLogo} alt="交易罗盘" width={34} height={34} /> : null}
       <div className="header-title"><h1>{title}</h1><p>{connectionView ? '管理设备连接与通知' : tab === 'notices' ? '查看任务结果与提醒' : inConversation ? '交易罗盘' : '个股研究与市场分析'}</p></div>
       {showNavigation && !connectionView && tab === 'sessions' ? <button className="icon-button new-session-button" aria-label="新建会话" aria-busy={creating}
         title={online ? '新建会话' : '恢复连接后可新建会话'} disabled={!online || !approved || authorizationLost || busy || older}
@@ -462,7 +463,8 @@ export function App() {
           {page?.page.next_before != null ? <button className="secondary older" disabled={older} onClick={() => void loadOlder()}>{older ? '正在加载…' : '查看更早消息'}</button> : null}
           {page && page.messages.length === 0 ? <div className="empty"><Icon name="chat" /><h3>今天想研究什么？</h3><p>分析个股、了解市场，或梳理投资思路。<br />例如：今天大盘资金情况如何？</p></div> : null}
           {selected === missingSession ? <div className="empty" role="status"><Icon name="chat" /><h3>这段会话已删除</h3><p>可以返回会话列表，或开始新的对话。</p><button className="secondary" disabled={!online || busy} onClick={() => void createSession()}>{draft ? '用草稿新建会话' : '新建会话'}</button></div> : !page ? <div className="empty">正在读取会话…</div> : page.messages.map((message, index) => <article className={`message ${message.role === 'user' ? 'user' : 'assistant'}`} key={page.page.start_index + index}>
-            <span className="message-avatar" aria-hidden="true"><Icon name={message.role === 'user' ? 'person' : 'robot'} /></span>
+            <span className="message-avatar" aria-hidden="true">{message.role === 'user'
+              ? <Icon name="person" /> : <img src={coinLogo} alt="" width={26} height={26} />}</span>
             <div className="message-body"><span className="sr-only">{message.role === 'user' ? '你' : '交易罗盘'}</span><div className="message-bubble"><Markdown text={message.content} />
               {message.sections?.map((section, i) => <div key={i}><h3>{section.title}</h3><Markdown text={section.content} /></div>)}
               {message.tool_calls?.length ? <details className="message-tools"><summary>使用了 {message.tool_calls.length} 个工具</summary><p>{message.tool_calls.map(tool => tool.name).join('、')}</p></details> : null}

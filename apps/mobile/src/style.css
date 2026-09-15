@@ -36,8 +36,7 @@ h3 { font-size: 14px; line-height: 1.6; font-weight: 600; }
 .connection-indicator { width: 7px; height: 7px; border-radius: 50%; background: #a0a4ad; flex-shrink: 0; box-shadow: 0 0 0 4px #f2f3f5; margin-right: 4px; }
 .connection-indicator.online { background: var(--accent); box-shadow: 0 0 0 4px #edf6f0; }
 .side-rail { position: fixed; top: 0; bottom: 0; left: max(0px, calc((100vw - 760px) / 2)); width: calc(var(--rail) + env(safe-area-inset-left)); height: 100dvh; display: flex; flex-direction: column; align-items: center; padding: calc(18px + env(safe-area-inset-top)) 6px calc(18px + env(safe-area-inset-bottom)) calc(6px + env(safe-area-inset-left)); border-right: 1px solid var(--line); background: #fff; z-index: 6; }
-.brand-mark { display: grid; place-items: center; background: var(--ink); color: #fff; width: 34px; height: 34px; border-radius: 11px; flex-shrink: 0; }
-.brand-mark svg { width: 21px; height: 21px; }
+.brand-mark { display: block; width: 34px; height: 34px; flex-shrink: 0; object-fit: contain; }
 .side-rail nav { display: flex; flex: 1; flex-direction: column; gap: 10px; width: 100%; padding-top: 32px; }
 .rail-item { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; width: 100%; min-height: 56px; padding: 7px 0; border: 0; border-radius: 10px; background: transparent; color: #767b84; }
 .rail-item span { font-size: 9px; font-weight: 550; white-space: nowrap; }
@@ -89,6 +88,8 @@ main.chat-main { padding: 0; }
 .message.user { flex-direction: row-reverse; }
 .message-avatar { display: grid; place-items: center; width: 26px; height: 26px; flex-shrink: 0; margin-top: 3px; border-radius: 50%; background: #e9ecf0; color: #69717d; }
 .message-avatar svg { width: 15px; height: 15px; }
+.message-avatar img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.assistant .message-avatar { background: transparent; }
 .user .message-avatar { background: #f0f1f3; color: #62666e; }
 .message-body { min-width: 0; max-width: calc(100% - 34px); }
 .message-bubble { background: #f0f2f5; border: 1px solid #e5e8ed; border-radius: 3px 13px 13px 13px; padding: 12px; }
