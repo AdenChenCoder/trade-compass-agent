@@ -5,6 +5,9 @@ from __future__ import annotations
 
 from email.parser import BytesParser
 from email.policy import default
+import gzip
+import hashlib
+import json
 import re
 import sys
 import tarfile
@@ -23,8 +26,12 @@ FORBIDDEN_PARTS = {
     "__pycache__",
     "graphify-out",
     "node_modules",
+    ".gradle",
+    ".kotlin",
+    "test-results",
+    "playwright-report",
 }
-FORBIDDEN_SUFFIXES = {".pyc", ".pyo", ".tsbuildinfo"}
+FORBIDDEN_SUFFIXES = {".pyc", ".pyo", ".tsbuildinfo", ".apk", ".jks", ".keystore"}
 REQUIRED_WHEEL_FILES = {
     "trade_compass_agent/agent_skills.yaml",
     "trade_compass_agent/builtin_skills/investment-masters/references/buffett.md",
@@ -40,15 +47,39 @@ REQUIRED_WHEEL_FILES = {
     "trade_compass_agent/schemas/readers/reader_claims.schema.json",
     "trade_compass_agent/specialists/equity_research/specialist.yaml",
     "trade_compass_agent/web/security.py",
+    "trade_compass_agent/mobile/api.py",
+    "trade_compass_agent/mobile/client.py",
+    "trade_compass_agent/mobile/identity.py",
+    "trade_compass_agent/mobile/pairing.py",
+    "trade_compass_agent/mobile/peer.py",
+    "trade_compass_agent/mobile/server.py",
+    "trade_compass_agent/mobile/turns.py",
+    "trade_compass_agent/mobile/push.py",
+    "trade_compass_agent/mobile/tls.py",
+    "trade_compass_agent/mobile/setup.py",
+    "trade_compass_agent/mobile/task_push.py",
+    "trade_compass_agent/mobile/managed.py",
+    "trade_compass_agent/mobile/reachability.py",
+    "trade_compass_agent/mobile/helper.py",
+    "trade_compass_agent/mobile/tls_reload.py",
+    "trade_compass_agent/mobile_bin/manifest.json",
+    "trade_compass_agent/mobile_bin/LICENSES.txt",
+    "trade_compass_agent/mobile_dist/index.html",
+    "trade_compass_agent/mobile_dist/manifest.webmanifest",
+    "trade_compass_agent/mobile_dist/sw.js",
     "trade_compass_agent/web_dist/favicon.ico",
     "trade_compass_agent/web_dist/favicon.svg",
     "trade_compass_agent/web_dist/index.html",
     "trade_compass_agent/workflows/catalyst_calendar_cn/workflow.yaml",
 }
 REQUIRED_BASE_DEPENDENCIES = {
+    "aiortc",
+    "httpx",
     "akshare",
     "baostock",
     "ddgs",
+    "cryptography",
+    "pywebpush",
     "fastapi",
     "matplotlib",
     "mplfinance",
@@ -64,6 +95,7 @@ REQUIRED_BASE_DEPENDENCIES = {
 FORBIDDEN_BASE_DEPENDENCIES = {"duckdb"}
 REQUIRED_PROJECT_URLS = {"Changelog", "Documentation", "Homepage", "Issues", "Repository"}
 MAX_WHEEL_SIZE_BYTES = 5 * 1024 * 1024
+MAX_HELPER_SIZE_BYTES = 40 * 1024 * 1024
 
 
 def _project_version() -> str:
@@ -139,6 +171,24 @@ def main() -> int:
         metadata = archive.read(metadata_names[0])
         base_dependencies = _base_dependency_names(metadata)
         project_urls = _project_url_names(metadata)
+        helper_size = sum(i.compress_size for i in archive.infolist() if i.filename.startswith("trade_compass_agent/mobile_bin/"))
+        try:
+            prefix = "trade_compass_agent/mobile_bin/"
+            manifest = json.loads(archive.read(prefix + "manifest.json"))
+            assert manifest["protocol"] == 1
+            assert re.fullmatch(r"\d+\.\d+\.\d+-compass\.[a-f0-9]{12}", manifest["tailscale_version"])
+            assert manifest["tailscale_version"].endswith(manifest["source_sha256"][:12])
+            assert set(manifest["platforms"]) == {"darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"}
+            assert hashlib.sha256(archive.read(prefix + "LICENSES.txt")).hexdigest() == manifest["licenses_sha256"]
+            for target, entry in manifest["platforms"].items():
+                packed = archive.read(prefix + target + ".gz")
+                assert hashlib.sha256(packed).hexdigest() == entry["archive_sha256"]
+                binary = gzip.decompress(packed)
+                assert len(binary) == entry["size"]
+                assert hashlib.sha256(binary).hexdigest() == entry["sha256"]
+        except (KeyError, ValueError, AssertionError, OSError) as exc:
+            print(f"{wheel.name}: mobile helper bundle is missing or invalid ({type(exc).__name__})", file=sys.stderr)
+            return 1
     with tarfile.open(sdist, "r:gz") as archive:
         sdist_names = set(archive.getnames())
 
@@ -175,9 +225,9 @@ def main() -> int:
         )
         return 1
 
-    if wheel.stat().st_size > MAX_WHEEL_SIZE_BYTES:
+    if wheel.stat().st_size - helper_size > MAX_WHEEL_SIZE_BYTES or helper_size > MAX_HELPER_SIZE_BYTES:
         print(
-            f"{wheel.name}: wheel exceeds {MAX_WHEEL_SIZE_BYTES // (1024 * 1024)} MiB budget",
+            f"{wheel.name}: base package exceeds 5 MiB or mobile helpers exceed 40 MiB",
             file=sys.stderr,
         )
         return 1
@@ -185,6 +235,9 @@ def main() -> int:
     sdist_prefix = f"trade_compass_agent-{version}/"
     required_sdist_files = {
         f"{sdist_prefix}src/trade_compass_agent/web_dist/index.html",
+        f"{sdist_prefix}src/trade_compass_agent/mobile_bin/manifest.json",
+        f"{sdist_prefix}scripts/build_mobile_helper.py",
+        f"{sdist_prefix}scripts/mobile-funnel-probe/go.mod",
     }
     missing_sdist = sorted(required_sdist_files - sdist_names)
     if missing_sdist:

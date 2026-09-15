@@ -1,0 +1,39 @@
+{
+  "name": "@trade-compass/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build:peer": "VITE_COMPASS_TRANSPORT=peer pnpm build",
+    "build": "tsc --noEmit && vite build",
+    "sync": "pnpm build && cap sync",
+    "test": "vitest run src",
+    "android": "cap open android",
+    "ios": "cap open ios",
+    "test:e2e": "playwright test",
+    "test:peer": "playwright test --config playwright.peer.config.ts",
+    "test:pwa": "playwright test --config playwright.pwa.config.ts"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.1",
+    "@capacitor/barcode-scanner": "3.1.2",
+    "@capacitor/core": "8.5.1",
+    "@capacitor/ios": "8.5.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^9.0.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.1",
+    "@playwright/test": "^1.63.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^26.0.0",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.0",
+    "vitest": "^4.1.11"
+  }
+}

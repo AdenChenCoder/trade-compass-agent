@@ -21,6 +21,9 @@ classifiers = [
 ]
 
 dependencies = [
+  "aiortc>=1.14,<2",
+  "httpx>=0.27,<1",
+  "cryptography>=50.0.0,<51",
   "fastapi>=0.115,<1",
   "starlette>=1.3.1,<2",
   "pydantic>=2.0,<3",
@@ -36,6 +39,7 @@ dependencies = [
   "openai>=1.0,<3",
   "mplfinance>=0.12.10b0,<0.13",
   "matplotlib>=3.8",
+  "pywebpush>=2.0,<3",
 ]
 
 [project.urls]
@@ -46,6 +50,9 @@ Issues = "https://github.com/AdenChenCoder/trade-compass-agent/issues"
 Changelog = "https://github.com/AdenChenCoder/trade-compass-agent/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+mobile = [
+  "cryptography>=50.0.0,<51",
+]
 tushare = [
   "tushare>=1.4",
 ]
@@ -84,6 +91,7 @@ vision = [
   "pypdf>=6.16.1,<7",
 ]
 dev = [
+  "cryptography>=50.0.0,<51",
   "pytest>=8.0",
   "ruff>=0.6",
   "httpx>=0.27",
@@ -117,6 +125,25 @@ exclude = [
   "/memory_vault",
   "/temp",
   "/docs/*-20??-??-??.*",
+  "/apps/mobile/dist",
+  "/apps/mobile/dist-peer",
+  "/apps/mobile/test-results",
+  "/apps/mobile/playwright-report",
+  "/apps/mobile/**/build",
+  "/apps/mobile/**/.gradle",
+  "/apps/mobile/**/.kotlin",
+  "/apps/mobile/android/local.properties",
+  "/apps/mobile/android/capacitor-cordova-android-plugins",
+  "/apps/mobile/android/app/src/main/assets",
+  "/apps/mobile/android/app/src/main/res/xml/config.xml",
+  "/apps/mobile/ios/App/App/public",
+  "/apps/mobile/ios/App/App/capacitor.config.json",
+  "/apps/mobile/ios/App/App/config.xml",
+  "/apps/mobile/ios/DerivedData",
+  "/apps/mobile/ios/App/Pods",
+  "/apps/mobile/ios/App/output",
+  "**/*.jks",
+  "**/*.keystore",
 ]
 
 [tool.hatch.build.hooks.custom]

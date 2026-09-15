@@ -17,6 +17,7 @@ from trade_compass_agent.runtime.skills import (
     load_skill_reference,
 )
 from trade_compass_agent.web.dist import resolve_web_dist
+from trade_compass_agent.mobile.helper import verify_bundled_helper
 
 
 def collect_release_smoke() -> dict[str, object]:
@@ -41,6 +42,7 @@ def collect_release_smoke() -> dict[str, object]:
         missing.append("trade_compass_agent/web_dist/index.html")
     if missing:
         raise RuntimeError("installed package assets missing: " + ", ".join(missing))
+    verify_bundled_helper()
 
     skills = discover_external_skills(
         project_root=Path("/__trade_compass_no_source_checkout__"),

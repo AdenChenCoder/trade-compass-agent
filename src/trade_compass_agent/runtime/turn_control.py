@@ -12,6 +12,10 @@ class ActiveTurn:
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
 
+class TurnBusyError(RuntimeError):
+    pass
+
+
 class TurnRegistry:
     """Tracks in-flight agent turns for cooperative interrupt."""
 
@@ -23,6 +27,8 @@ class TurnRegistry:
     def register(self, turn_id: str, session_id: str) -> Callable[[], bool]:
         turn = ActiveTurn(turn_id=turn_id, session_id=session_id)
         with self._lock:
+            if session_id in self._session_turn:
+                raise TurnBusyError("A turn is already in progress for this session")
             self._turns[turn_id] = turn
             self._session_turn[session_id] = turn_id
 
@@ -35,6 +41,10 @@ class TurnRegistry:
         with self._lock:
             turn_id = self._session_turn.get(session_id)
             return turn_id is not None and turn_id in self._turns
+
+    def contains(self, turn_id: str) -> bool:
+        with self._lock:
+            return turn_id in self._turns
 
     def is_cancelled(self, turn_id: str) -> bool:
         with self._lock:

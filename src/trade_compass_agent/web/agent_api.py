@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import queue
 import threading
@@ -25,7 +27,7 @@ from trade_compass_agent.runtime.mcp.loader import load_mcp_config
 from trade_compass_agent.runtime.skills import discover_external_skills, load_agent_skills_config
 from trade_compass_agent.runtime.run_trace import TurnTraceWriter, write_run_card
 from trade_compass_agent.runtime.stream_buffer import SessionStreamBuffer
-from trade_compass_agent.runtime.turn_control import get_turn_registry
+from trade_compass_agent.runtime.turn_control import TurnBusyError, get_turn_registry
 
 router = APIRouter(prefix="/agent")
 
@@ -212,6 +214,7 @@ class SessionUpdateRequest(BaseModel):
 
 class SessionsListPayload(BaseModel):
     sessions: list[SessionListItemPayload]
+    next_cursor: str | None = None
 
 
 _cached_stack: MarketStack | None = None
@@ -250,18 +253,20 @@ def _loop_for_session(session_id: str, on_event) -> AgentLoop:
 
 @router.post("/turn", response_model=TurnResponsePayload)
 def agent_turn(body: TurnRequest) -> TurnResponsePayload:
+    return execute_agent_turn(body)
+
+
+def execute_agent_turn(body: TurnRequest, *, reserved_turn_id=None, reserved_cancel=None):
     events: list[TurnEvent] = []
     store = _session_store()
     session = store.get_or_create(body.session_id)
     session_id = session.session_id
     registry = get_turn_registry()
-    if registry.has_active_turn(session_id):
-        raise HTTPException(
-            status_code=409,
-            detail="A turn is already in progress for this session",
-        )
-    turn_id = str(uuid.uuid4())
-    is_cancelled = registry.register(turn_id, session_id)
+    turn_id = reserved_turn_id or str(uuid.uuid4())
+    try:
+        is_cancelled = reserved_cancel or registry.register(turn_id, session_id)
+    except TurnBusyError as exc:
+        raise HTTPException(409, str(exc)) from exc
     _buffer_for_session(session_id).clear()
     config = load_app_config()
     run_dir = config.data_dir / "runs" / turn_id
@@ -444,7 +449,10 @@ async def agent_stream(
 
 @router.post("/sessions", response_model=SessionCreatedPayload)
 def create_agent_session() -> SessionCreatedPayload:
-    store = _session_store()
+    return create_session_payload(_session_store())
+
+
+def create_session_payload(store: SessionStore) -> SessionCreatedPayload:
     session = store.create()
     return SessionCreatedPayload(
         session_id=session.session_id,
@@ -453,9 +461,31 @@ def create_agent_session() -> SessionCreatedPayload:
 
 
 @router.get("/sessions", response_model=SessionsListPayload)
-def list_agent_sessions(limit: int = Query(20, ge=1, le=100)) -> SessionsListPayload:
-    store = _session_store()
+def list_agent_sessions(limit: int = Query(20, ge=1, le=100),
+                        cursor: str | None = Query(None, max_length=1024)) -> SessionsListPayload:
+    return list_sessions_payload(_session_store(), limit, cursor)
+
+
+def list_sessions_payload(store: SessionStore, limit: int, cursor: str | None = None) -> SessionsListPayload:
+    before = None
+    if cursor is not None:
+        try:
+            value = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
+            if not isinstance(value, list) or len(value) != 2 or not all(isinstance(v, str) for v in value):
+                raise ValueError("invalid cursor")
+            if datetime.fromisoformat(value[0]).tzinfo is not None:
+                raise ValueError("invalid timestamp")
+            before = (value[0], value[1])
+        except (ValueError, binascii.Error, UnicodeDecodeError) as exc:
+            raise HTTPException(422, "invalid session cursor") from exc
+    items = store.list_recent(limit + 1, exclude_prefix=SCHEDULER_SESSION_PREFIX, before=before)
+    next_cursor = None
+    if len(items) > limit:
+        last = items[limit - 1]
+        next_cursor = base64.urlsafe_b64encode(json.dumps(
+            [last.updated_at.isoformat(), last.session_id], ensure_ascii=False).encode()).decode()
     return SessionsListPayload(
+        next_cursor=next_cursor,
         sessions=[
             SessionListItemPayload(
                 session_id=item.session_id,
@@ -465,7 +495,7 @@ def list_agent_sessions(limit: int = Query(20, ge=1, le=100)) -> SessionsListPay
                 message_count=item.message_count,
                 preview=item.preview,
             )
-            for item in store.list_recent(limit, exclude_prefix=SCHEDULER_SESSION_PREFIX)
+            for item in items[:limit]
         ]
     )
 
@@ -532,7 +562,12 @@ def get_agent_session_messages(
     limit: int = Query(50, ge=1, le=100),
     before: int | None = Query(None, ge=0),
 ) -> SessionMessagesPagePayload:
-    store = _session_store()
+    return session_messages_payload(_session_store(), session_id, limit, before)
+
+
+def session_messages_payload(
+    store: SessionStore, session_id: str, limit: int, before: int | None,
+) -> SessionMessagesPagePayload:
     page = store.load_display_page(session_id, limit=limit, before=before)
     if page is None:
         raise HTTPException(status_code=404, detail="session not found")

@@ -18,6 +18,10 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 3000,
     proxy: {
+      "/mobile": {
+        target: "http://127.0.0.1:19704",
+        changeOrigin: true,
+      },
       "/api": {
         target: "http://127.0.0.1:19704",
         changeOrigin: true,

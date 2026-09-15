@@ -243,6 +243,18 @@ class Watchlists:
 
 
 @dataclass(frozen=True)
+class MobileConfig:
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 19705
+    public_origin: str = ""
+    tls_certfile: str = ""
+    tls_keyfile: str = ""
+    tls_relay: bool = False
+    provider: str = "manual"
+
+
+@dataclass(frozen=True)
 class AppConfig:
     profile: str = "local"
     data_dir: Path = Path("data")
@@ -257,6 +269,7 @@ class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     debate: DebateConfig = field(default_factory=DebateConfig)
     channels: ChannelsConfig = field(default_factory=ChannelsConfig)
+    mobile: MobileConfig = field(default_factory=MobileConfig)
     rules: RulesConfig = field(default_factory=RulesConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     context_compression: CompressionConfig = field(default_factory=CompressionConfig)
@@ -315,6 +328,7 @@ def load_app_config(path: Path | None = None) -> AppConfig:
     data_raw = raw.get("data", {}) or {}
     privacy_raw = raw.get("privacy", {}) or {}
     channels_raw = raw.get("channels", {}) or {}
+    mobile_raw = raw.get("mobile", {}) or {}
     rules_raw = raw.get("rules", {}) or {}
     compression_raw = raw.get("context_compression", {}) or {}
     memory_raw = raw.get("memory", {}) or {}
@@ -331,6 +345,16 @@ def load_app_config(path: Path | None = None) -> AppConfig:
 
     result = AppConfig(
         profile=os.getenv("TRADE_COMPASS_PROFILE", raw.get("profile", "local")),
+        mobile=MobileConfig(
+            enabled=bool(mobile_raw.get("enabled", False)),
+            host=str(mobile_raw.get("host", "0.0.0.0")),
+            port=int(mobile_raw.get("port", 19705)),
+            public_origin=str(mobile_raw.get("public_origin", "")).rstrip("/"),
+            tls_certfile=str(_resolve_config_path(project_root, mobile_raw["tls_certfile"])) if mobile_raw.get("tls_certfile") else "",
+            tls_keyfile=str(_resolve_config_path(project_root, mobile_raw["tls_keyfile"])) if mobile_raw.get("tls_keyfile") else "",
+            tls_relay=bool(mobile_raw.get("tls_relay", False)),
+            provider=str(mobile_raw.get("provider", "manual" if mobile_raw else "tailscale")),
+        ),
         data_dir=data_dir,
         memory_dir=memory_dir,
         data_provider=provider,
@@ -565,3 +589,22 @@ def update_scheduler_config(updates: dict[str, object]) -> AppConfig:
     )
     invalidate_config_cache()
     return load_app_config(config_path)
+
+
+def update_mobile_enabled(enabled: bool) -> None:
+    """Persist an explicit local UI choice, retaining the previous configuration."""
+    from trade_compass_agent.concurrency import atomic_write, get_path_lock
+    config_path = resolve_config_path()
+    if config_path.resolve() == PACKAGED_CONFIG_PATH.resolve():
+        config_path, _ = initialize_user_files()
+    with get_path_lock(config_path):
+        original = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+        raw = yaml.safe_load(original) or {}
+        mobile = raw.get("mobile") or {}
+        # An absent section defaults to managed access. Persist that choice before
+        # adding enabled, otherwise the next load mistakes it for a legacy section.
+        raw["mobile"] = {**(mobile or {"provider": "tailscale"}), "enabled": enabled}
+        if original:
+            atomic_write(config_path.with_suffix(".mobile-backup.yaml"), original)
+        atomic_write(config_path, yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+    invalidate_config_cache()

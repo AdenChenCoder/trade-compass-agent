@@ -6,6 +6,13 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ### Added
 
+- Added a bundled mobile PWA for creating conversations, continuing the same
+  Agent sessions as the desktop workbench, and reading paginated history.
+- Added an in-app phone connection flow with managed Tailscale Funnel access,
+  QR pairing, device-specific verification codes, and device revocation.
+- Added opt-in task notifications with complete result details, notification
+  navigation, offline recovery, and updates that preserve drafts and pairing.
+
 - Optional autonomous paper trading in existing accounts, controlled by a
   persistent global switch during conversations and scheduled intraday analysis.
 

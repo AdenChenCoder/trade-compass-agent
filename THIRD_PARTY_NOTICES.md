@@ -28,5 +28,18 @@ this repository or its Python distributions:
 Their model cards and current license metadata remain authoritative for those
 separate downloads: https://huggingface.co/NeoQuasar
 
+## Mobile connection component
+
+The Python distribution includes compiled mobile connection components built
+from `scripts/mobile-funnel-probe/`. They embed `tailscale.com` v1.102.4
+(https://github.com/tailscale/tailscale/tree/v1.102.4, BSD-3-Clause), its imported
+dependencies, and the Go runtime. Dependency versions are pinned in that
+directory's `go.mod` and `go.sum`.
+
+The build collects dependency license and notice files for all four target
+platforms, together with the Go runtime license, in the packaged
+`trade_compass_agent/mobile_bin/LICENSES.txt`. The component manifest records
+the checksum of this notice file as well as the distributed binaries.
+
 Python and JavaScript dependencies are not vendored into the source tree. Their
 licenses remain governed by their respective distributions.

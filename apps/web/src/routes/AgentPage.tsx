@@ -69,6 +69,7 @@ import {
 } from "@/lib/turn-outcome";
 import { useAgentSSE } from "@/hooks/useAgentSSE";
 import { cn } from "@/lib/utils";
+import { fillHistoryGap } from "../../../shared/session-history";
 
 function nextId(): string {
   return nextTraceId();
@@ -178,6 +179,8 @@ function appendTurnError(
 
 export function AgentPage() {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -185,6 +188,7 @@ export function AgentPage() {
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [streaming, setStreaming] = useState(false);
+  const [remoteBusy, setRemoteBusy] = useState(false);
   const [toolTrace, setToolTrace] = useState<ToolTraceEntry[]>([]);
   const [pendingSections, setPendingSections] = useState<TurnSection[]>([]);
   const [attachments, setAttachments] = useState<TurnAttachment[]>([]);
@@ -315,6 +319,48 @@ export function AgentPage() {
   }, []);
 
   const [resumeStreamSessionId, setResumeStreamSessionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sessionId || streaming || loadingHistory || loadingOlder) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function sync() {
+      try {
+        if (document.visibilityState === "visible") {
+          const latest = await fetchAgentSessionMessagePage(sessionId!, { limit: MESSAGE_PAGE_SIZE, signal: controller.signal });
+          if (cancelled) return;
+          const history = messagesRef.current.filter(message => /^history-\d+$/.test(message.id));
+          const lastHistory = history[history.length - 1];
+          const previousEnd = lastHistory ? Number(lastHistory.id.slice("history-".length)) + 1 : undefined;
+          const detail = await fillHistoryGap(latest, previousEnd,
+            before => fetchAgentSessionMessagePage(sessionId!, { limit: MESSAGE_PAGE_SIZE, before, signal: controller.signal }),
+            controller.signal);
+          if (cancelled) return;
+          setRemoteBusy(!!detail.has_active_turn);
+          const prefix = messagesRef.current.filter(message => {
+              const index = /^history-(\d+)$/.exec(message.id);
+              return index !== null && Number(index[1]) < detail.page.start_index;
+          });
+          const merged = [...prefix, ...messagesFromSession(detail.messages, detail.page.start_index)];
+          setMessages(previous => {
+            // Failed submissions are local UI state, not part of the transcript.
+            const withErrors = [...merged, ...previous.filter(message => message.role === "error")];
+            return JSON.stringify(previous) === JSON.stringify(withErrors) ? previous : withErrors;
+          });
+          if (prefix.length === 0) setNextBefore(detail.page.next_before);
+        }
+      } catch { /* Keep the last visible history while disconnected. */ }
+      finally { if (!cancelled) timer = setTimeout(() => void sync(), 2000); }
+    }
+    timer = setTimeout(() => void sync(), 2000);
+    return () => { cancelled = true; controller.abort(); clearTimeout(timer); };
+  }, [sessionId, streaming, loadingHistory, loadingOlder]);
+
+  useEffect(() => {
+    const timer = setInterval(() => { if (document.visibilityState === "visible") void refreshSessions(); }, 5000);
+    return () => clearInterval(timer);
+  }, [refreshSessions]);
 
   useEffect(() => {
     const storedSessionId = getStoredSessionId();
@@ -654,7 +700,7 @@ export function AgentPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     let text = input.trim();
-    if (!text || streaming) return;
+    if (!text || streaming || remoteBusy) return;
 
     const skillMatch = text.match(/^\/skill\s+([\w-]+)\s*(.*)/s);
     if (skillMatch) {
@@ -678,7 +724,7 @@ export function AgentPage() {
     setInput("");
     setAttachments([]);
     setMessages((prev) => [
-      ...prev,
+      ...prev.filter(message => message.role !== "error"),
       { id: nextId(), role: "user", content: text, timestamp: Date.now() },
     ]);
     setStreaming(true);
@@ -699,6 +745,7 @@ export function AgentPage() {
       let sid = sessionId;
       if (!sid) {
         const created = await createAgentSession();
+        if (abortController.signal.aborted) return;
         sid = created.session_id;
         setSessionId(sid);
         setStoredSessionId(sid);
@@ -713,6 +760,8 @@ export function AgentPage() {
         },
         { signal: abortController.signal },
       );
+
+      if (abortController.signal.aborted) return;
 
       setSessionId(response.session_id);
       setStoredSessionId(response.session_id);
@@ -743,6 +792,7 @@ export function AgentPage() {
       }
       setStreaming(false);
     } catch (err) {
+      if (abortController.signal.aborted && !stopRequestedRef.current) return;
       if (stopRequestedRef.current) {
         setStreaming(false);
         setToolTrace((prev) => markStatusDone(prev));
@@ -753,6 +803,8 @@ export function AgentPage() {
         setMessages((prev) => stripErrorsAfterLastUser(prev));
         return;
       }
+      setInput(current => current.trim() ? current : text);
+      setAttachments(current => current.length ? current : attachments);
       setStreaming(false);
       setToolTrace([]);
       const msg =
@@ -798,6 +850,7 @@ export function AgentPage() {
     setToolTrace([]);
     setPendingSections([]);
     setStreaming(false);
+    setRemoteBusy(false);
     setNextBefore(null);
     setLoadingOlder(false);
     setShowNewMessages(false);
@@ -814,10 +867,7 @@ export function AgentPage() {
   }, [disconnect]);
 
   const handleNewChat = () => {
-    if (streaming && sessionId) {
-      void postAgentControl({ session_id: sessionId, action: "interrupt" }).catch(() => {});
-      abortTurnRef.current?.abort();
-    }
+    abortTurnRef.current?.abort();
     clearStoredSessionId();
     setSessionId(null);
     resetChatState();
@@ -829,10 +879,7 @@ export function AgentPage() {
       setSidebarOpen(false);
       return;
     }
-    if (streaming && sessionId) {
-      void postAgentControl({ session_id: sessionId, action: "interrupt" }).catch(() => {});
-      abortTurnRef.current?.abort();
-    }
+    abortTurnRef.current?.abort();
     resetChatState();
     setLoadingHistory(true);
     setSidebarOpen(false);
@@ -1167,7 +1214,7 @@ export function AgentPage() {
                     }
                   }
                 }}
-                placeholder="输入问题，可粘贴链接或添加附件…"
+                placeholder={remoteBusy ? "电脑正在回复另一端发起的消息，你可以先写好下一条…" : "输入问题，可粘贴链接或添加附件…"}
                 disabled={streaming}
                 rows={1}
                 className={cn(
@@ -1181,8 +1228,8 @@ export function AgentPage() {
                 type={streaming ? "button" : "submit"}
                 size="icon"
                 className="shrink-0"
-                disabled={!streaming && !input.trim()}
-                title={streaming ? "停止" : "发送"}
+                disabled={!streaming && (!input.trim() || remoteBusy)}
+                title={streaming ? "停止" : remoteBusy ? "等待本轮回复完成" : "发送"}
                 onClick={streaming ? () => void handleStop() : undefined}
               >
                 {streaming ? (

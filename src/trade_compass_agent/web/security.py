@@ -88,8 +88,9 @@ class LocalOriginMiddleware(BaseHTTPMiddleware):
 class RequestSizeLimitMiddleware:
     """Reject HTTP request bodies above the configured local limit."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, limit: int | None = None) -> None:
         self.app = app
+        self.limit = limit
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -98,7 +99,7 @@ class RequestSizeLimitMiddleware:
 
         request = Request(scope)
         content_length = request.headers.get("content-length", "").strip()
-        limit = max_request_bytes()
+        limit = self.limit if self.limit is not None else max_request_bytes()
         if content_length:
             try:
                 declared_size = int(content_length)

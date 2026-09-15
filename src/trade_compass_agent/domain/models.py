@@ -257,3 +257,4 @@ class Notification:
     title: str
     message: str
     severity: Literal["info", "warning", "critical"] = "info"
+    task_status: str | None = None

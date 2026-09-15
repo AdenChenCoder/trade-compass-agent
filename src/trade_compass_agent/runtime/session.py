@@ -479,7 +479,8 @@ class SessionStore:
         self._context_file(session_id).unlink(missing_ok=True)
         return True
 
-    def list_recent(self, limit: int = 20, *, exclude_prefix: str | None = None) -> list[SessionSummary]:
+    def list_recent(self, limit: int = 20, *, exclude_prefix: str | None = None,
+                    before: tuple[str, str] | None = None) -> list[SessionSummary]:
         if limit < 1:
             return []
         self._ensure_dir()
@@ -490,6 +491,8 @@ class SessionStore:
                 continue
             session = self.load(session_id)
             if session is None:
+                continue
+            if before is not None and (session.updated_at.isoformat(), session_id) >= before:
                 continue
             display_messages = [m for m in session.messages if m.role in {"user", "assistant"}]
             preview = next((m.content[:120] for m in display_messages if m.role == "user"), None)
@@ -503,5 +506,5 @@ class SessionStore:
                     title=session.title,
                 )
             )
-        summaries.sort(key=lambda item: item.updated_at, reverse=True)
+        summaries.sort(key=lambda item: (item.updated_at, item.session_id), reverse=True)
         return summaries[:limit]

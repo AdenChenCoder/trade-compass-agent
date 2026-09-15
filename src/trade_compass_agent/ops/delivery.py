@@ -59,7 +59,8 @@ class DeliveryRouter:
                 title=title,
                 message=content,
                 severity=severity,
-            ))
+                task_status=run.status,
+            ), event_id=f"job-run:{run.id}")
 
         external_channels = [c for c in delivery.channels if c != "web_log"]
         if external_channels:

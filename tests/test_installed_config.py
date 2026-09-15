@@ -14,6 +14,7 @@ from trade_compass_agent.config import (
     invalidate_config_cache,
     load_app_config,
     resolve_config_path,
+    update_mobile_enabled,
     update_scheduler_config,
 )
 
@@ -115,3 +116,31 @@ def test_scheduler_update_never_writes_packaged_default(installed_layout) -> Non
     assert updated.scheduler.enabled is False
     assert user_raw["scheduler"]["enabled"] is False
     assert packaged.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize("mobile", [{"enabled": False}, {"host": "127.0.0.1", "port": 19705},
+                                  {"provider": "manual", "enabled": False}])
+def test_mobile_switch_preserves_existing_manual_configuration(installed_layout, mobile) -> None:
+    home, _ = installed_layout
+    config_path, _ = initialize_user_files()
+    raw = yaml.safe_load(config_path.read_text())
+    raw["mobile"] = mobile
+    config_path.write_text(yaml.safe_dump(raw))
+    original = config_path.read_text()
+
+    update_mobile_enabled(True)
+
+    assert load_app_config().mobile.provider == "manual"
+    assert yaml.safe_load(config_path.read_text())["mobile"] == {**mobile, "enabled": True}
+    assert (home / "config.mobile-backup.yaml").read_text() == original
+
+
+def test_first_mobile_switch_keeps_packaged_defaults_read_only(installed_layout) -> None:
+    home, packaged = installed_layout
+    original = packaged.read_bytes()
+    packaged.chmod(0o444)
+    update_mobile_enabled(True)
+    assert load_app_config().mobile.provider == "tailscale"
+    assert load_app_config().mobile.enabled
+    assert (home / "config.yaml").exists()
+    assert packaged.read_bytes() == original

@@ -33,6 +33,19 @@ notifications:
   channels: ["web_log"]
   macos_enabled: false
   max_records: 500
+# Opt-in, separate HTTPS listener; the desktop API remains loopback-only.
+# Enable through Settings > Connect phone; managed access prepares its own address.
+mobile:
+  provider: tailscale
+  enabled: false
+  host: "0.0.0.0"
+  port: 19705
+  # Legacy manual mode only: a public origin and certificate trusted by the phone.
+  public_origin: ""
+  tls_certfile: ""
+  tls_keyfile: ""
+  # Development relay: only with loopback HTTPS and a matching public certificate.
+  tls_relay: false
 privacy:
   # Controls extra LLM-based learning/curation. Normal agent requests still
   # include applicable user rules and memory context; see PRIVACY.md.

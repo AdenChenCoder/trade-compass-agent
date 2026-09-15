@@ -7,7 +7,7 @@ import threading
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from trade_compass_agent.config import load_app_config, update_scheduler_config
+from trade_compass_agent.config import AppConfig, load_app_config, update_scheduler_config
 from trade_compass_agent.data import ChainProvider, DataQualityLayer
 from trade_compass_agent.data.providers import ProviderError
 from trade_compass_agent.domain import AccountKind, PaperTrade
@@ -1590,7 +1590,10 @@ def patch_scheduler_config(body: s.SchedulerConfigUpdateRequest) -> s.SchedulerC
 
 @router.get("/notifications", response_model=list[s.NotificationPayload])
 def get_notifications(limit: int = Query(30, ge=1, le=500)) -> list[s.NotificationPayload]:
-    config = load_app_config()
+    return notifications_payload(load_app_config(), limit)
+
+
+def notifications_payload(config: AppConfig, limit: int) -> list[s.NotificationPayload]:
     store = JsonNotificationStore(
         config.data_dir / "notifications.jsonl",
         max_records=config.notifications.max_records,
