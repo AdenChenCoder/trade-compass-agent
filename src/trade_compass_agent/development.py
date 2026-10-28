@@ -68,8 +68,8 @@ def run_development(*, api_port: int, open_browser: bool, no_scheduler: bool) ->
         _fail(f"the API and Web UI cannot both use port {api_port}")
     if probe_port(DEV_HOST, api_port):
         _fail(
-            f"API port {api_port} is already in use. If the persistent service is running, "
-            "stop it first with `uv run trade-compass service stop`"
+            f"API port {api_port} is already in use. Keep the persistent service running "
+            "and choose an unused development port with --port"
         )
     if probe_port(DEV_HOST, DEV_WEB_PORT):
         _fail(f"Web UI port {DEV_WEB_PORT} is already in use")

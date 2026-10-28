@@ -90,7 +90,9 @@ def test_dev_rejects_running_service_port(capsys: pytest.CaptureFixture[str]) ->
         run_development(api_port=19704, open_browser=False, no_scheduler=False)
 
     assert exc.value.code == 1
-    assert "trade-compass service stop" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "--port" in error
+    assert "service stop" not in error
     popen.assert_not_called()
 
 
