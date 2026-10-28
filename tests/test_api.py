@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 from fastapi.testclient import TestClient
 
@@ -415,7 +416,12 @@ def test_jobs_listing_and_run(client: TestClient, monkeypatch) -> None:
     assert run_response.status_code == 200, run_response.text
     run_body = run_response.json()
     assert run_body["job_id"] == "postmarket"
-    assert run_body["id"] and run_body["status"] == "completed"
+    assert run_body["id"] and run_body["status"] in {"running", "completed"}
+    deadline = time.monotonic() + 5
+    while run_body["status"] == "running" and time.monotonic() < deadline:
+        time.sleep(0.01)
+        run_body = _get(client, f"/api/jobs/runs/{run_body['id']}")
+    assert run_body["status"] == "completed"
 
     runs = _get(client, "/api/jobs/runs?limit=5")
     assert isinstance(runs, list) and runs

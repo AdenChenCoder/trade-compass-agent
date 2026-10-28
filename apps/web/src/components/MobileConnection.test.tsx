@@ -12,7 +12,11 @@ let container: HTMLDivElement;
 let client: QueryClient;
 
 async function settle() {
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+  await vi.waitFor(async () => {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(client.isFetching()).toBe(0);
+  });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
 }
 async function render(status: object, access: (enabled: boolean) => object, devices: object[] = []) {
   let state = status;
