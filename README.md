@@ -131,7 +131,7 @@ trade-compass serve
 
 Web UI 集中提供 Agent 对话、历史会话、模拟组合、记忆、审计记录、用户规则、Skills、定时任务和设置。交互式 API 文档位于 `http://127.0.0.1:19704/docs`。
 
-当前开发分支还提供 **设置 → 连接手机**：开启连接、完成账号授权、扫码批准后，手机使用项目自带 PWA 继续同一会话并接收任务提醒。此功能尚未发布到 PyPI；使用步骤、源码准备和验证范围见[手机连接](docs/mobile-managed-connection.md)。
+0.3.0 提供 **设置 → 连接手机**：开启连接、完成账号授权、扫码配对后，手机使用项目自带 PWA 继续同一会话并接收任务提醒。使用步骤和验证范围见[手机连接](docs/mobile-managed-connection.md)。
 
 不启动后台定时任务：
 
@@ -234,11 +234,18 @@ uv tool install --force --python 3.12 'trade-compass-agent[forecast]'
 uv sync --extra dev
 pnpm install --frozen-lockfile
 
-uv run trade-compass dev --open    # API: :19704 + Web UI: :3000
+TRADE_COMPASS_DATA_DIR="$PWD/temp/development/data" \
+TRADE_COMPASS_MEMORY_DIR="$PWD/temp/development/memory_vault" \
+uv run trade-compass dev --port 19706 --no-scheduler --open
 ```
 
-如果常驻服务正在占用 `19704`，先运行 `uv run trade-compass service stop`。统一开发命令
-会同时管理后端和前端进程，按 `Ctrl+C` 可一起停止；使用 `--no-scheduler` 可禁用开发环境调度器。
+源码仅用于开发和验证。以上命令使用独立的数据、记忆目录和 API 端口 `19706`，
+Web UI 使用 `3000`，按 `Ctrl+C` 可一起停止开发进程。开发配置应关闭生产渠道和手机连接，
+不要共享正式账户状态、生产授权或安装常驻服务。
+
+正式投资服务使用从 PyPI 安装并验收的固定版本，默认状态目录为 `~/.trade-compass`，
+API 端口为 `19704`。源码变更和本地构建不能直接替换正式服务；发布与切换步骤见
+[发布](docs/releasing.md#production-installation-and-upgrade)。
 
 提交 Pull Request 前运行：
 

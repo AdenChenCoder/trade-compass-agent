@@ -32,8 +32,8 @@ Run the `TestPyPI Publish` workflow manually. It:
 Create and push a tag that exactly matches the package version:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 The release workflow verifies the tag, builds once, installs the wheel in an
@@ -65,3 +65,37 @@ and document the failure in the release notes.
 PyPI files and versions are immutable. A bad release can be yanked to discourage
 new installations, but consumers may still possess it. Restore service by
 publishing a corrected version and keeping the affected release notes explicit.
+
+## Production installation and upgrade
+
+Source checkouts are development and validation environments. Keep their ports,
+data, memory and channel/mobile credentials separate from the permanent service.
+Do not stop production to run a development server or install a source checkout
+as the production service.
+
+Only switch the service after the reviewed commit is pushed, the tagged release
+is published, and the published version passes installed-package acceptance
+outside the repository. Pin the version and preserve the extras already in use:
+
+```bash
+uv tool install --python 3.12 'trade-compass-agent==0.3.0'
+```
+
+For an existing tool installation use `--force`; append the existing optional
+extras to the package name. Installation does not restart the running process.
+Use the existing supervisor to stop and start the service at the agreed cutover.
+
+Before switching, wait for active work to finish and make a consistent backup of
+the configuration, environment, complete data and memory roots, and supervisor
+definition. Keep the backup outside the checkout and the active state directory.
+The installed default root is `~/.trade-compass`; retain model choices, account
+records, history, human rules, learned Skills, channel credentials and the full
+mobile state. Never run two copies of the same mobile identity concurrently.
+When moving roots, update structured artifact and attachment path references;
+preserve historical prose and stable record IDs.
+
+Verify the service imports the published package, uses the intended writable
+roots, serves its packaged UI, retains historical results and balances, and
+restores the same mobile origin and pairing after restart. Preserve the previous
+program and matching state backup until acceptance. A rollback must account for
+any new writes; never replay trades or overwrite newer records without review.

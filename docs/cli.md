@@ -31,13 +31,16 @@ and `Enter` to confirm the current item.
 From a source checkout, start the hot-reloading API and Web UI together:
 
 ```bash
-uv run trade-compass dev --open
+TRADE_COMPASS_DATA_DIR="$PWD/temp/development/data" \
+TRADE_COMPASS_MEMORY_DIR="$PWD/temp/development/memory_vault" \
+uv run trade-compass dev --port 19706 --no-scheduler --open
 ```
 
-The API listens on `127.0.0.1:19704` and Vite on `127.0.0.1:3000`. Both stop
-together on `Ctrl+C`. Stop the persistent service first if it is using the API
-port, or pass `--port` to use another API port. Pass `--no-scheduler` to avoid
-running scheduled jobs during development.
+This starts the API on `127.0.0.1:19706` and Vite on `127.0.0.1:3000`, with
+separate development data and memory and no scheduled jobs. Both stop together
+on `Ctrl+C`. Keep production channels and mobile access disabled in development
+configuration. The installed production service can continue on `19704` with
+its own state; do not run source `service` commands against it.
 
 ## Research and automation
 
