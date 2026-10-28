@@ -82,8 +82,10 @@ uv tool install --python 3.12 'trade-compass-agent==0.3.0'
 ```
 
 For an existing tool installation use `--force`; append the existing optional
-extras to the package name. Installation does not restart the running process.
-Use the existing supervisor to stop and start the service at the agreed cutover.
+extras to the package name. Accept the new version in a separate environment
+first, then stop the service before replacing its installed tool environment.
+Installation does not restart the process. Use the existing supervisor to start
+the service at the agreed cutover.
 
 Before switching, wait for active work to finish and make a consistent backup of
 the configuration, environment, complete data and memory roots, and supervisor
