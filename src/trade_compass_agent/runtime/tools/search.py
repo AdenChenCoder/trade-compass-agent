@@ -4,6 +4,7 @@ import json
 import math
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 from trade_compass_agent.data.network import (
     extend_no_proxy_for_eastmoney,
@@ -274,8 +275,11 @@ def tool_search_announcements(stack: MarketStack, *, symbol: str, limit: int = 8
 
 
 def tool_web_search(*, query: str, limit: int = 5) -> str:
-    """Free web search by default; Tavily requires an explicit provider choice."""
+    """Free web search by default; paid providers require an explicit choice."""
     provider = os.getenv("WEB_SEARCH_PROVIDER", "auto").strip().lower()
+    if provider == "deepseek":
+        api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        return _web_search_deepseek(query=query, limit=limit, api_key=api_key)
     api_key = os.getenv("TAVILY_API_KEY", "").strip()
     if provider == "tavily" and api_key:
         return _web_search_tavily(query=query, limit=limit, api_key=api_key)
@@ -283,7 +287,153 @@ def tool_web_search(*, query: str, limit: int = 5) -> str:
         return json.dumps({"query": query, "error": "TAVILY_API_KEY not configured", "results": []}, ensure_ascii=False)
     if provider not in {"auto", "free", ""}:
         return json.dumps({"query": query, "error": f"Unknown WEB_SEARCH_PROVIDER: {provider}", "results": []}, ensure_ascii=False)
-    return _web_search_ddg(query=query, limit=limit)
+    import time
+    deadline = time.monotonic() + 12
+    result = _web_search_ddg(query=query, limit=limit, deadline=deadline)
+    payload = json.loads(result)
+    if payload.get("error"):
+        try:
+            return _web_search_news(query=query, limit=limit, deadline=deadline)
+        except Exception as exc:
+            payload["error"] += "; news search: " + short_error_message(exc)
+        fallback = os.getenv("WEB_SEARCH_FALLBACK_PROVIDER", "").strip().lower()
+        if not fallback:
+            return json.dumps(payload, ensure_ascii=False)
+        if fallback != "deepseek":
+            payload["error"] += f"; Unknown WEB_SEARCH_FALLBACK_PROVIDER: {fallback}"
+            return json.dumps(payload, ensure_ascii=False)
+        fallback_payload = json.loads(_web_search_deepseek(
+            query=query, limit=limit, api_key=os.getenv("DEEPSEEK_API_KEY", "").strip(),
+        ))
+        fallback_payload["fallback_from"] = "free"
+        fallback_payload["fallback_reason"] = payload["error"]
+        if fallback_payload.get("results") and not fallback_payload.get("error"):
+            fallback_payload["data_status"] = "fallback"
+            fallback_payload["warnings"] = [
+                "免费网页和新闻搜索均未取得可用结果，以下结果由 DeepSeek 提供。",
+            ]
+        return json.dumps(fallback_payload, ensure_ascii=False)
+    return result
+
+
+def _web_search_news(*, query: str, limit: int, deadline: float) -> str:
+    """Free news-only fallback. Its narrower scope is explicit to every consumer."""
+    import html
+    import re
+    import time
+    import xml.etree.ElementTree as ET
+    from email.utils import parsedate_to_datetime
+    import requests
+
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("search time budget exhausted")
+    chinese = any("\u4e00" <= ch <= "\u9fff" for ch in query)
+    params = {"q": query, "hl": "zh-CN" if chinese else "en-US", "gl": "CN" if chinese else "US",
+              "ceid": "CN:zh-Hans" if chinese else "US:en"}
+    proxy = _web_search_proxy()
+
+    def fetch():
+        response = requests.get("https://news.google.com/rss/search", params=params,
+            timeout=(min(1.5, remaining), min(3, remaining)),
+            proxies={"http": proxy, "https": proxy} if proxy else None)
+        response.raise_for_status()
+        return response.content
+
+    root = ET.fromstring(run_with_timeout(fetch, remaining, "news search"))
+    results = []
+    for item in root.findall(".//item")[:max(1, min(limit, 20))]:
+        url, title = item.findtext("link", ""), item.findtext("title", "")
+        if not url.startswith(("https://", "http://")) or not title:
+            continue
+        row = {"title": title, "url": url,
+               "snippet": html.unescape(re.sub(r"<[^>]+>", " ", item.findtext("description", "")))[:300],
+               "source": item.findtext("source", "")}
+        if item.findtext("pubDate"):
+            row["published_date"] = parsedate_to_datetime(item.findtext("pubDate")).isoformat()
+        results.append(row)
+    if not results:
+        raise ValueError("no usable news results")
+    return json.dumps({"query": query, "provider": "google_news", "data_scope": "news", "data_status": "fallback",
+        "count": len(results), "results": results, "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "warnings": ["通用网页搜索不可用；以下仅为新闻检索结果，未覆盖完整网页内容。"]}, ensure_ascii=False)
+
+
+def _web_search_deepseek(*, query: str, limit: int, api_key: str) -> str:
+    import requests
+
+    if not api_key:
+        return json.dumps({"query": query, "provider": "deepseek", "error": "DEEPSEEK_API_KEY not configured", "data_status": "unavailable", "results": []}, ensure_ascii=False)
+    count = max(1, min(limit, 50))
+
+    def fetch() -> dict:
+        response = requests.post(
+            "https://api.deepseek.com/v1/tools/search",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"query": query, "count": count, "need_content": False},
+            timeout=(2, 7),
+        )
+        response.raise_for_status()
+        return response.json()
+
+    try:
+        # Keep site/date operators intact rather than silently truncating queries.
+        if not query.strip() or len(query) > 128:
+            raise ValueError("query must contain 1–128 Unicode characters and not be blank")
+        response = run_with_timeout(fetch, 10, "DeepSeek search")
+        rows = response.get("results") if isinstance(response, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("invalid search results response")
+        results: list[dict] = []
+        for item in rows[:count]:
+            if not isinstance(item, dict) or not item.get("url"):
+                continue
+            summary = item.get("summary") or ""
+            result = {
+                "title": item.get("title", ""),
+                "url": item["url"],
+                "snippet": (item.get("snippet") or item.get("summary") or "")[:300],
+                "summary": summary[:2000],
+                "site_name": item.get("site_name"),
+                # Vendor ranking metadata, not verified claim confidence.
+                "rerank_score": item.get("rerank_score"),
+                "authority": item.get("authority"),
+            }
+            if len(summary) > 2000:
+                result["summary_truncated"] = True
+            if item.get("date"):
+                result["published_date"] = item["date"]
+                result["published_date_verified"] = False
+            results.append(result)
+        if rows and not results:
+            raise ValueError("no usable search results")
+    except Exception as exc:
+        safe_message = str(exc).replace(api_key, "[redacted]") or exc.__class__.__name__
+        payload = {
+            "query": query,
+            "provider": "deepseek",
+            "error": f"DeepSeek search failed: {short_error_message(RuntimeError(safe_message))}",
+            "data_status": "unavailable",
+            "results": [],
+        }
+        error_response = getattr(exc, "response", None)
+        if error_response is not None:
+            payload["http_status"] = error_response.status_code
+            if retry_after := error_response.headers.get("Retry-After"):
+                payload["retry_after"] = retry_after
+        return json.dumps(payload, ensure_ascii=False)
+
+    return json.dumps(
+        {
+            "query": query,
+            "provider": "deepseek",
+            "count": len(results),
+            "results": results,
+            "data_status": "available" if results else "empty",
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        },
+        ensure_ascii=False,
+    )
 
 
 def _web_search_tavily(*, query: str, limit: int, api_key: str) -> str:
@@ -359,7 +509,7 @@ def _web_search_proxy() -> str | None:
     return proxies.get("https") or proxies.get("all") or proxies.get("http")
 
 
-def _web_search_ddg(*, query: str, limit: int) -> str:
+def _web_search_ddg(*, query: str, limit: int, deadline: float | None = None) -> str:
     import time
 
     try:
@@ -369,7 +519,7 @@ def _web_search_ddg(*, query: str, limit: int) -> str:
         return json.dumps({"error": "ddgs search dependency missing; reinstall trade-compass-agent", "query": query}, ensure_ascii=False)
 
     failures: list[str] = []
-    deadline = time.monotonic() + 12
+    deadline = min(deadline or float("inf"), time.monotonic() + 8)
     # Separate attempts preserve successful results even when another engine fails.
     for backend in ("brave", "duckduckgo", "yahoo", "google"):
         # DDGS silently falls back to 'auto' for disabled engines, losing provenance.
@@ -382,11 +532,11 @@ def _web_search_ddg(*, query: str, limit: int) -> str:
             break
         try:
             def fetch(backend=backend):
-                with DDGS(timeout=min(3, remaining), proxy=_web_search_proxy()) as ddgs:
+                with DDGS(timeout=min(2, remaining), proxy=_web_search_proxy()) as ddgs:
                     region = "cn-zh" if any("\u4e00" <= ch <= "\u9fff" for ch in query) else "us-en"
                     return list(ddgs.text(query, max_results=limit, backend=backend, region=region))
 
-            raw_results = run_with_timeout(fetch, min(3, remaining), f"web search {backend}")
+            raw_results = run_with_timeout(fetch, min(2, remaining), f"web search {backend}")
             results = [{
                 "title": item.get("title", ""),
                 "url": item.get("href", ""),
@@ -890,50 +1040,120 @@ def tool_search_x(
 # Direct HTTP data sources (bypass akshare, high availability)
 # ---------------------------------------------------------------------------
 
-def tool_sina_realtime_quote(*, symbols: str) -> str:
-    """Get real-time quotes from Sina Finance API. Works 24/7 (returns last close after hours).
+_SINA_US_INDICES = {"gb_dji", "gb_ixic", "gb_inx"}
 
-    symbols: comma-separated stock codes, e.g. "600519,300750,000001"
+
+def _parse_sina_us_index_quote(symbol: str, fields: list[str]) -> dict:
+    """Map Sina's hqParser.us fields; index snapshots do not certify a close.
+
+    Reference: https://n.sinaimg.cn/finance/ushttps/js/tool.js?v=2024101716
+    Field 3 is Beijing time; field 25 independently carries EDT/EST time.
+    """
+    from zoneinfo import ZoneInfo
+
+    if len(fields) < 27 or not fields[0]:
+        raise ValueError("incomplete Sina US index quote")
+
+    def number(index: int) -> float | None:
+        value = fields[index].strip()
+        if value in {"", "--", "N/A"}:
+            return None
+        result = float(value)
+        return result if math.isfinite(result) else None
+
+    price = number(1)
+    if price is None or price <= 0:
+        raise ValueError("Sina US index price unavailable")
+    as_of = datetime.strptime(fields[3], "%Y-%m-%d %H:%M:%S").replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+    market_time = as_of.astimezone(ZoneInfo("America/New_York"))
+    return {
+        "symbol": symbol, "name": fields[0], "market": "US", "instrument_kind": "index",
+        "source": "sina", "price": price, "price_unit": "index_points",
+        "price_type": "latest_quote", "change_pct": number(2), "change": number(4),
+        "open": number(5), "high": number(6), "low": number(7),
+        "prev_close": number(26), "volume": number(10), "amount": None,
+        "date": as_of.date().isoformat(), "time": as_of.strftime("%H:%M:%S"),
+        "timezone": "Asia/Shanghai", "as_of": as_of.isoformat(),
+        "market_date": market_time.date().isoformat(), "market_time": market_time.isoformat(),
+        "warnings": ["指数行情可能延迟；最新报价不代表已核实的收盘价。"],
+    }
+
+
+def tool_sina_realtime_quote(*, symbols: str) -> str:
+    """Get A-share quotes or US index snapshots (gb_dji, gb_ixic, gb_inx).
+
+    US index snapshots may be delayed and do not certify a session close.
+    A failed symbol does not discard the other symbols in a batch.
     """
     import requests
 
     codes = [s.strip() for s in symbols.split(",") if s.strip()]
-    try:
-        sina_codes = [to_sina_code(code) for code in codes]
-    except ProviderError as exc:
-        return json.dumps({"error": str(exc), "symbols": codes}, ensure_ascii=False)
+    requested: dict[str, list[str]] = {}
+    errors: dict[str, str] = {}
+    for code in codes:
+        try:
+            sina_code = code.lower() if code.lower() in _SINA_US_INDICES else to_sina_code(code)
+            requested.setdefault(sina_code, []).append(code)
+        except ProviderError:
+            errors[code] = "Unsupported symbol; use A-share codes or gb_dji, gb_ixic, gb_inx"
+    invalid_symbols = list(errors)
+    input_errors = {"invalid_symbols": invalid_symbols,
+                    "retry_hint": "仅查询A股代码或gb_dji、gb_ixic、gb_inx；港股指数不受此工具支持，不能当作网络故障重试。"} if invalid_symbols else {}
+    if not requested:
+        return json.dumps({"count": 0, "quotes": [], "errors": errors,
+                           "error": "No supported symbols supplied", "error_type": "invalid_arguments",
+                           "symbols": codes, **input_errors}, ensure_ascii=False)
 
-    url = f"https://hq.sinajs.cn/list={','.join(sina_codes)}"
+    url = f"https://hq.sinajs.cn/list={','.join(requested)}"
     try:
         resp = requests.get(url, timeout=5, headers={"Referer": "https://finance.sina.com.cn"})
         resp.raise_for_status()
     except Exception as exc:
-        return json.dumps({"error": short_error_message(exc), "symbols": codes}, ensure_ascii=False)
+        return json.dumps({"error": short_error_message(exc), "symbols": codes, **input_errors}, ensure_ascii=False)
 
     results = []
+    seen: set[str] = set()
     for line in resp.text.strip().split("\n"):
         if "=" not in line:
             continue
         var_part, data_part = line.split("=", 1)
-        data = data_part.strip('";').split(",")
-        if len(data) < 32:
+        code = var_part.strip().removeprefix("var hq_str_")
+        if code not in requested or code in seen:
             continue
-        code = var_part.split("_")[-1]
-        results.append({
-            "symbol": dict(zip(sina_codes, codes)).get(code, code[2:]),
-            "name": data[0],
-            "open": float(data[1] or 0),
-            "prev_close": float(data[2] or 0),
-            "price": float(data[3] or 0),
-            "high": float(data[4] or 0),
-            "low": float(data[5] or 0),
-            "volume": int(float(data[8] or 0)),
-            "amount": float(data[9] or 0),
-            "date": data[30],
-            "time": data[31],
-        })
+        seen.add(code)
+        data = data_part.strip().strip('";').split(",")
+        try:
+            if code in _SINA_US_INDICES:
+                quote = _parse_sina_us_index_quote(code, data)
+            else:
+                if len(data) < 32:
+                    raise ValueError("Sina returned no complete quote")
+                quote = {
+                    "name": data[0],
+                    "open": float(data[1] or 0),
+                    "prev_close": float(data[2] or 0),
+                    "price": float(data[3] or 0),
+                    "high": float(data[4] or 0),
+                    "low": float(data[5] or 0),
+                    "volume": int(float(data[8] or 0)),
+                    "amount": float(data[9] or 0),
+                    "date": data[30],
+                    "time": data[31],
+                }
+        except (ValueError, IndexError) as exc:
+            errors.update({original: short_error_message(exc) for original in requested[code]})
+            continue
+        results.extend({**quote, "symbol": original} for original in requested[code])
 
-    return json.dumps({"count": len(results), "quotes": results}, ensure_ascii=False)
+    for code in requested.keys() - seen:
+        errors.update({original: "Sina returned no quote" for original in requested[code]})
+
+    payload: dict = {"count": len(results), "quotes": results, **input_errors}
+    if errors:
+        payload["errors"] = errors
+        if not results:
+            payload["error"] = "No quotes available"
+    return json.dumps(payload, ensure_ascii=False)
 
 
 _DEFAULT_KOL_HANDLES: list[str] = ["aleabitoreddit"]

@@ -5,7 +5,6 @@ import hashlib
 import uuid
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +29,7 @@ from trade_compass_agent.runtime.tools.policy import default_tool_policy
 from trade_compass_agent.runtime.tools.readers import run_reader_tool
 from trade_compass_agent.runtime.tools.registry import ToolRegistry
 from trade_compass_agent.runtime.types import TurnEvent
+from trade_compass_agent.llm.providers import LLMExecutionCancelled, llm_request_deadline
 
 BUILTIN_WORKFLOW_DIR = PACKAGE_ROOT / "workflows"
 
@@ -91,8 +91,12 @@ class WorkflowRunContext:
     started_at: str
     inputs_hash: str
     cancelled: threading.Event = field(default_factory=threading.Event, compare=False, repr=False)
+    external_cancelled: threading.Event | None = field(default=None, compare=False, repr=False)
     active_steps: dict[str, dict] = field(default_factory=dict, compare=False, repr=False)
     state_lock: threading.Lock = field(default_factory=threading.Lock, compare=False, repr=False)
+
+    def is_cancelled(self) -> bool:
+        return self.cancelled.is_set() or bool(self.external_cancelled and self.external_cancelled.is_set())
 
     @property
     def trace_path(self) -> Path:
@@ -194,6 +198,7 @@ def run_workflow_asset(
     data_dir: Path | None = None,
     trigger: str = "runtime",
     run_id: str | None = None,
+    cancel_event: threading.Event | None = None,
     _depth: int = 0,
     _visited: tuple[str, ...] = (),
 ) -> dict[str, Any]:
@@ -214,6 +219,7 @@ def run_workflow_asset(
         trace_writer=TurnTraceWriter(root / "workflow_runs" / workflow_run_id),
         started_at=_utc_now(),
         inputs_hash=_hash(inputs),
+        external_cancelled=cancel_event,
     )
     context.record("builtin.started", {"workflow_id": manifest.id, "trigger": trigger})
     outputs: dict[str, WorkflowStepResult] = {}
@@ -222,21 +228,24 @@ def run_workflow_asset(
     status = "completed"
     error = ""
     try:
-        _execute_steps_with_retry(
-            manifest,
-            inputs,
-            outputs,
-            warnings,
-            artifact_paths,
-            market_stack,
-            app_config,
-            context,
-            data_dir=root,
-            persist=persist,
-            trigger=trigger,
-            depth=_depth,
-            visited=(*_visited, manifest.id),
-        )
+        with llm_request_deadline(time.monotonic() + manifest.timeout_seconds, is_cancelled=context.is_cancelled):
+            _execute_steps_with_retry(
+                manifest,
+                inputs,
+                outputs,
+                warnings,
+                artifact_paths,
+                market_stack,
+                app_config,
+                context,
+                data_dir=root,
+                persist=persist,
+                trigger=trigger,
+                depth=_depth,
+                visited=(*_visited, manifest.id),
+            )
+        if cancel_event is not None and cancel_event.is_set():
+            raise TimeoutError(f"{manifest.id}: scheduler deadline reached")
         output = _with_metadata(manifest, inputs, _compose_workflow_output(manifest, inputs, outputs, warnings), context)
         if output.get("degraded"):
             status = "degraded"
@@ -249,11 +258,13 @@ def run_workflow_asset(
                 artifact_paths.append(str(artifact))
                 context.record("builtin.artifact_written", {"path": str(artifact)})
         return output
-    except Exception as exc:
-        status = "failed"
+    except (Exception, LLMExecutionCancelled) as exc:
+        status = "timed_out" if isinstance(exc, LLMExecutionCancelled) or context.is_cancelled() else "failed"
         error = f"{type(exc).__name__}: {exc}"
         context.finish_active_steps(error)
         context.record("builtin.failed", {"workflow_id": manifest.id, "error": error})
+        if status == "timed_out":
+            raise TimeoutError(error) from exc
         if not _should_degrade(manifest):
             raise
         output = _degraded_output(manifest, inputs, context, error, warnings)
@@ -304,9 +315,16 @@ def _execute_steps_with_retry(
     backoff = max(0, int(manifest.retry_policy.get("backoff_seconds") or 0))
     last_error: Exception | None = None
     for attempt in range(attempts):
+        if context.is_cancelled():
+            raise TimeoutError(f"{manifest.id}: workflow cancelled")
         if attempt:
             context.record("builtin.retry", {"attempt": attempt + 1})
-            time.sleep(backoff)
+            if context.external_cancelled is not None:
+                context.external_cancelled.wait(backoff)
+            else:
+                time.sleep(backoff)
+            if context.is_cancelled():
+                raise TimeoutError(f"{manifest.id}: workflow cancelled")
         outputs.clear()
         warnings.clear()
         try:
@@ -328,7 +346,7 @@ def _execute_steps_with_retry(
         except Exception as exc:
             last_error = exc
             context.record("builtin.attempt_failed", {"attempt": attempt + 1, "error": str(exc)})
-            if context.cancelled.is_set():
+            if context.is_cancelled():
                 raise
             continue
         return
@@ -352,32 +370,26 @@ def _execute_steps_with_timeout(
     depth: int,
     visited: tuple[str, ...],
 ) -> None:
-    pool = ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(
-        _execute_steps_once,
-        manifest,
-        inputs,
-        outputs,
-        warnings,
-        artifact_paths,
-        stack,
-        config,
-        context,
-        data_dir=data_dir,
-        persist=persist,
-        trigger=trigger,
-        depth=depth,
-        visited=visited,
-    )
+    deadline = time.monotonic() + manifest.timeout_seconds
+
+    def execute_steps() -> None:
+        with llm_request_deadline(deadline, is_cancelled=context.is_cancelled):
+            _execute_steps_once(
+                manifest, inputs, outputs, warnings, artifact_paths, stack, config, context,
+                data_dir=data_dir, persist=persist, trigger=trigger, depth=depth, visited=visited,
+            )
+
+    from trade_compass_agent.data.network import drain_timeout_workers, run_with_timeout
+    message = f"{manifest.id}: workflow timed out after {manifest.timeout_seconds}s"
     try:
-        future.result(timeout=max(1, manifest.timeout_seconds))
-    except FutureTimeoutError as exc:
-        future.cancel()
-        context.finish_active_steps(f"{manifest.id}: workflow timed out after {manifest.timeout_seconds}s")
+        with drain_timeout_workers():
+            run_with_timeout(execute_steps, max(.01, manifest.timeout_seconds), manifest.id,
+                             is_cancelled=context.is_cancelled,
+                             on_timeout=lambda: context.finish_active_steps(message))
+    except TimeoutError as exc:
+        context.finish_active_steps(message)
         context.record("builtin.timeout", {"timeout_seconds": manifest.timeout_seconds})
-        raise TimeoutError(f"{manifest.id}: workflow timed out after {manifest.timeout_seconds}s") from exc
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+        raise TimeoutError(message) from exc
 
 
 def _execute_steps_once(
@@ -397,7 +409,7 @@ def _execute_steps_once(
     visited: tuple[str, ...],
 ) -> None:
     for step in _topological_steps(manifest.steps):
-        if context.cancelled.is_set():
+        if context.is_cancelled():
             context.record("builtin.cancelled", {"before_step": step.id})
             return
         context.record("builtin.step_started", {"step_id": step.id, "type": step.type, "uses": step.uses})
@@ -422,8 +434,9 @@ def _execute_steps_once(
                 visited=visited,
                 workflow_directory=_workflow_asset_directory(manifest),
                 manifest=manifest,
+                cancel_event=context.cancelled,
             )
-        if context.cancelled.is_set():
+        if context.is_cancelled():
             return
         outputs[step.id] = result
         warnings.extend(result.warnings)
@@ -439,7 +452,7 @@ def _execute_steps_once(
             {
                 "step_id": step.id,
                 "warning_count": len(result.warnings),
-                "status": "failed" if result_error else "completed",
+                "status": "failed" if result_error else "degraded" if result_data.get("degraded") or result_output.get("degraded") else "completed",
                 **({"error": result_error} if result_error else {}),
             },
         )
@@ -456,6 +469,7 @@ def run_workflow_asset_by_id(
     data_dir: Path | None = None,
     trigger: str = "runtime",
     run_id: str | None = None,
+    cancel_event: threading.Event | None = None,
     _depth: int = 0,
     _visited: tuple[str, ...] = (),
 ) -> dict[str, Any]:
@@ -472,6 +486,7 @@ def run_workflow_asset_by_id(
         data_dir=data_dir,
         trigger=trigger,
         run_id=run_id,
+        cancel_event=cancel_event,
         _depth=_depth,
         _visited=_visited,
     )
@@ -522,6 +537,19 @@ def _compose_workflow_output(
         merged_warnings.extend(str(item) for item in primary["warnings"])
     if primary.get("error"):
         merged_warnings.append(f"primary output step failed: {primary_step_id}: {primary['error']}")
+    degraded = bool(primary.get("error") or primary.get("degraded"))
+    degraded_steps = []
+    degradation_errors = []
+    for result in outputs.values():
+        step_output = _output_as_dict(result.output)
+        data = step_output.get("data") if isinstance(step_output.get("data"), dict) else step_output
+        if data.get("degraded") or data.get("error") or step_output.get("degraded") or step_output.get("error"):
+            degraded = True
+            degraded_steps.append(result.step_id)
+            step_warnings = [str(item) for item in data.get("warnings", [])]
+            merged_warnings.extend(step_warnings)
+            reason = data.get("error") or step_output.get("error") or "; ".join(step_warnings) or "degraded"
+            degradation_errors.append(f"{result.step_id}: {reason}")
     return {
         **primary,
         "workflow_id": manifest.id,
@@ -530,7 +558,10 @@ def _compose_workflow_output(
         "primary_step_id": primary_step_id,
         "warnings": list(dict.fromkeys(merged_warnings)),
         "no_trade_disclaimer": not manifest.risk_policy.get("executes_paper_trades", False),
-        **({"degraded": True} if primary.get("error") else {}),
+        **({"degraded": True, "degraded_steps": degraded_steps,
+            "primary_output_failed": bool(primary.get("primary_output_failed", primary.get("error")
+                or (isinstance(primary.get("data"), dict) and primary["data"].get("error")))),
+            "error": "; ".join(degradation_errors) or str(primary.get("error") or "workflow degraded")} if degraded else {}),
     }
 
 
@@ -729,6 +760,7 @@ def _run_step(
     visited: tuple[str, ...],
     workflow_directory: Path,
     manifest: WorkflowManifest,
+    cancel_event: threading.Event | None = None,
 ) -> WorkflowStepResult:
     if step.type == "specialist":
         specialist_id = _prefixed_id(step.uses, "specialist")
@@ -756,6 +788,7 @@ def _run_step(
             run_id=f"{parent_run_id}-{step.id}",
             _depth=depth + 1,
             _visited=visited,
+            cancel_event=cancel_event,
         )
         return WorkflowStepResult(
             step_id=step.id,

@@ -207,9 +207,13 @@ class PromptJobExecutor:
             session = ScheduledAgentSession(
                 self.config,
                 job_id=f"prompt-{job.id}",
+                run_id=run.id,
             )
             text = session.run(job.prompt)
-            self.run_store.complete_run(run, message=text)
+            if getattr(session, "degraded", False) is True:
+                self.run_store.degrade_run(run, message=text, error="关键数据未完整取得")
+            else:
+                self.run_store.complete_run(run, message=text)
         except Exception as exc:
             logger.error("Prompt job %s failed: %s", job.name, exc)
             self.run_store.fail_run(run, error=str(exc), message=f"Prompt job '{job.name}' 执行失败")

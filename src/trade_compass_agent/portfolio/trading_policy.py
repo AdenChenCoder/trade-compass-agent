@@ -58,13 +58,18 @@ class AutonomousTradingStore:
         return enabled
 
 
-def buying_power(portfolio: PaperPortfolio, data_dir: Path, account: AccountKind) -> float:
+def require_single_account(data_dir: Path, account: AccountKind):
     matches = [a for a in AccountStore(data_dir / "accounts.json").list() if a.kind == account]
     if len(matches) != 1:
-        raise ValueError(f"账户类型 {account.value} 对应 {len(matches)} 个账户，无法确定可用资金")
-    capital = matches[0].capital
+        raise ValueError(f"账户类型 {account.value} 对应 {len(matches)} 个账户，无法确定持仓归属")
+    return matches[0]
+
+
+def buying_power(portfolio: PaperPortfolio, data_dir: Path, account: AccountKind) -> float:
+    matched = require_single_account(data_dir, account)
+    capital = matched.capital
     if not math.isfinite(capital) or capital < 0:
-        raise ValueError(f"账户 {matches[0].name} 的总资金无效")
+        raise ValueError(f"账户 {matched.name} 的总资金无效")
     return portfolio.cash_balance(account, capital)
 
 

@@ -18,6 +18,8 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from trade_compass_agent.runtime.compression.budget import estimate_message_tokens
+
 if TYPE_CHECKING:
     from trade_compass_agent.llm.providers import ChatMessage
 
@@ -35,6 +37,8 @@ _ARGS_HEAD_CHARS = 200         # keep first N chars of truncated args
 # ---- Tools that should NEVER lose their data in trimming ----
 # Market data tools are critical for trading decisions.
 _PROTECTED_TOOLS: set[str] = {
+    "load_skill",
+    "skill_manage",
     "get_bars",
     "kline_forecast",
     "get_market_pulse",
@@ -197,6 +201,7 @@ def _resolve_protect_tail_boundary(
     messages: list[ChatMessage],
     protect_count: int,
     protect_tokens: int,
+    message_token_counter=None,
 ) -> int:
     """Determine how many messages from the end to protect from trimming.
 
@@ -212,16 +217,15 @@ def _resolve_protect_tail_boundary(
     boundary = n
     for i in range(n - 1, -1, -1):
         msg = messages[i]
-        msg_tokens = len(msg.content) // 4 + 10
-        for tc in msg.tool_calls or []:
-            fn = tc.get("function", {})
-            msg_tokens += len(fn.get("arguments", "")) // 4
+        # This quota protects source material; total request budgeting separately
+        # includes the model's transient reasoning.
+        msg_tokens = message_token_counter(msg) if message_token_counter else estimate_message_tokens(msg, include_reasoning=False)
         if accumulated + msg_tokens > protect_tokens and (n - i) >= min_protected:
             boundary = i + 1
             break
         accumulated += msg_tokens
         boundary = i
-    return max(boundary, n - min_protected)
+    return min(boundary, n - min_protected)
 
 
 def trim_tool_results(

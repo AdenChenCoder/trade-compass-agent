@@ -59,6 +59,27 @@ export function agentStreamUrl(sessionId: string): string {
   return `/api/agent/stream?${params.toString()}`;
 }
 
+export interface AgentConnectionSettings {
+  provider: string;
+  model: string;
+  options: { provider: string; label: string; model: string }[];
+}
+
+export async function fetchAgentConnection(): Promise<AgentConnectionSettings> {
+  return parseJson(await fetch("/api/agent/connection"));
+}
+
+export async function saveAgentConnection(provider: string, model: string): Promise<AgentConnectionSettings> {
+  return parseJson(await fetch("/api/agent/connection", {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, model }),
+  }));
+}
+
+export async function checkAgentConnection(): Promise<{ status: string; message: string }> {
+  return parseJson(await fetch("/api/agent/connection/check", { method: "POST" }));
+}
+
 export interface TurnAttachment {
   type: "text" | "url" | "image";
   content?: string;

@@ -1,8 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/agent-api";
-import { fetchForecast } from "@/lib/workbench-api";
+import { fetchForecast, saveResearchStrategy } from "@/lib/workbench-api";
+import type { StrategyDefinition } from "@/lib/research-types";
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("shows the server's research validation reason when a save is rejected", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    detail: [{ loc: ["body", "parameters"], msg: "快均线窗口必须小于慢均线窗口" }],
+  }), { status: 422, statusText: "Unprocessable Entity" })));
+  await expect(saveResearchStrategy({} as StrategyDefinition)).rejects.toMatchObject({
+    message: "快均线窗口必须小于慢均线窗口", status: 422,
+  });
+});
 
 describe("fetchForecast", () => {
   it("rejects the legacy HTTP-200 error object before render", async () => {

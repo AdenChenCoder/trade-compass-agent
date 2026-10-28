@@ -213,6 +213,7 @@ def test_summarize_reduces_message_count():
 
     compressed, summary, summarized, saved = summarize_middle_turns(
         msgs, llm_call=_fake_llm, protect_recent_count=8,
+        protect_recent_tokens=0,
     )
     assert summarized > 0
     assert len(compressed) < pre_len
@@ -230,6 +231,7 @@ def test_summarize_preserves_system_prompt():
 
     compressed, _, summarized, _ = summarize_middle_turns(
         msgs, llm_call=_fake_llm, protect_recent_count=5,
+        protect_recent_tokens=0,
     )
     assert summarized > 0
     assert compressed[0].role == "system"
@@ -241,6 +243,7 @@ def test_summarize_summary_prefix_present():
     msgs = _build_long_conversation(40, with_system=True)
     compressed, _, summarized, _ = summarize_middle_turns(
         msgs, llm_call=_fake_llm, protect_recent_count=5,
+        protect_recent_tokens=0,
     )
     assert summarized > 0
     found = [m for m in compressed if _SUMMARY_PREFIX[:10] in (m.content or "")]
@@ -290,12 +293,14 @@ def test_full_pipeline_phase1_then_phase2():
     # Phase 1
     trimmed, p1_count, p1_saved = trim_tool_results(
         msgs, protect_recent_count=10,
+        protect_recent_tokens=0,
     )
     assert p1_count > 0 or len(msgs) > 0  # at least runs
 
     # Phase 2 on trimmed
     compressed, summary, p2_count, p2_saved = summarize_middle_turns(
         trimmed, llm_call=_fake_llm, protect_recent_count=8,
+        protect_recent_tokens=0,
     )
     assert p2_count > 0
     assert len(compressed) < len(msgs)

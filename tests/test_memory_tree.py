@@ -51,6 +51,19 @@ def test_fts_index(tmp_path: Path) -> None:
     assert hits
 
 
+def test_exact_chinese_correction_precedes_loose_matches_after_reopen(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    query = "预设止损价不等于已提交且已接受的止损委托"
+    for _ in range(8):
+        tool_write_memory(memory_dir, "trade-log", "止损：旧计划。执行：待确认。")
+    receipt = json.loads(tool_write_memory(memory_dir, "trade-log", f"复核更正\n\n{query}。\n原始日记保留。"))
+    for _ in range(2):
+        hits = json.loads(tool_search_memory(memory_dir, query, limit=3))["results"]
+        assert hits[0]["path"] == receipt["path"] and "复核更正" in hits[0]["content"]
+        assert len({hit["path"] for hit in hits}) == len(hits)
+        assert MemorySearchIndex(memory_dir / "tree/chunks.db").search(query, limit=1)[0].path == receipt["path"]
+
+
 def test_reindex_memory_vault(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
     tree = memory_dir / "tree" / "insights"

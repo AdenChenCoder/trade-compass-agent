@@ -73,6 +73,12 @@ def _reconcile(
             changed_ids.add(decision.id)
         before = asdict(decision)
         decision.entry_trade_id = trade.trade_id
+        decision.signal_id = trade.signal_id
+        decision.strategy_id = trade.strategy_id
+        decision.strategy_version = trade.strategy_version
+        decision.research_run_id = trade.research_run_id
+        if trade.source_skills:
+            decision.source_skills = list(trade.source_skills)
         decision.reconciliation_status = decision.reconciliation_status or "open"
         if asdict(decision) != before:
             changed_ids.add(decision.id)

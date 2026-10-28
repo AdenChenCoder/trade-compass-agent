@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/table";
 import { fetchAgentMcp, fetchAgentSkills } from "@/lib/agent-api";
 import { MobileConnection } from "@/components/MobileConnection";
+import { AgentConnection } from "@/components/AgentConnection";
 
 export function SettingsPage() {
   const skillsQuery = useQuery({
@@ -40,10 +41,11 @@ export function SettingsPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">设置</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            管理手机连接，查看 Agent 的 Skills 与 MCP 服务状态。
+            管理 Agent 接入与手机连接，查看 Skills 和 MCP 服务状态。
           </p>
         </div>
 
+        <AgentConnection />
         <MobileConnection />
 
         {loading ? (
@@ -62,8 +64,7 @@ export function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">
-              请确认 FastAPI 已启动（<code>trade-compass serve</code>，端口 19704），且{" "}
-              <code>/api/agent/skills</code> 与 <code>/api/agent/mcp</code> 可用。
+              请稍后刷新重试；若持续失败，请检查交易罗盘服务是否正常运行。
             </CardContent>
           </Card>
         ) : null}
@@ -75,7 +76,7 @@ export function SettingsPage() {
               Skills
             </CardTitle>
             <CardDescription>
-              项目外置 Skills（.trade-compass/skills/），由 config/agent_skills.yaml 控制
+              查看可用的研究技能及启用状态。
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -122,7 +123,7 @@ export function SettingsPage() {
               <Server className="h-4 w-4" />
               MCP Servers
             </CardTitle>
-            <CardDescription>.trade-compass/mcp.json 合并后的服务状态</CardDescription>
+            <CardDescription>查看外部工具服务的连接状态。</CardDescription>
           </CardHeader>
           <CardContent>
             {mcpQuery.isLoading ? (

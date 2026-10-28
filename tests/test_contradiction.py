@@ -77,6 +77,8 @@ def test_scan_active_conflicts_min_lot_fixture(tmp_path: Path) -> None:
     active = store.list_active("memory", min_confidence=0.5)
 
     def fake_llm(system: str, user: str) -> str:
+        if "独立知识复核者" in system:
+            return json.dumps({"reviews": [{"entry_id": active[0].entry_id, "valid": True, "reason": "33股违反所给手数约束。"}]})
         return json.dumps([{
             "verdict": "SUPERSEDE",
             "entry_prefix": "100股减",
@@ -133,6 +135,8 @@ def test_curator_preserves_concurrent_correction(tmp_path, verdict):
     corrected = "成交量扩大时需要观察价格确认；集合竞价期间不能据此下结论。"
 
     def evaluate(system, prompt):
+        if "独立知识复核者" in system:
+            return json.dumps({"reviews": [{"entry_id": original["entry_id"], "valid": True, "reason": "仅验证旧快照，提交仍须检查版本。"}]})
         assert writer.replace("", corrected, entry_id=original["entry_id"],
                               expected_version=original["version"], source="curator")["ok"]
         return json.dumps([{"verdict": verdict, "entry_prefix": "成交量扩大时",

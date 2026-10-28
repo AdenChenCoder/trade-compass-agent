@@ -31,6 +31,9 @@ def curate_turn_insight(
         model=config.llm.model,
         api_key_env=api_key_env,
         enabled=config.llm.provider not in {"", "disabled"},
+        data_dir=config.data_dir,
+        usage_timezone=config.scheduler.timezone,
+        config=config,
     )
     if provider.name == "disabled":
         return None
@@ -59,7 +62,7 @@ def compact_memory_summary(config: AppConfig) -> Path | None:
     NOTE: v3.0 redesign — no longer writes to MEMORY.md directly.
     Compaction results go to the Memory Tree only.
     """
-    if not config.agent.learning_enabled:
+    if not config.agent.learning_enabled or not config.allow_external_llm_memory:
         return None
 
     store = MemoryTreeStore(config.memory_dir)
@@ -73,6 +76,9 @@ def compact_memory_summary(config: AppConfig) -> Path | None:
         model=config.llm.model,
         api_key_env=config.llm.api_key_env,
         enabled=config.llm.provider not in {"", "disabled"},
+        data_dir=config.data_dir,
+        usage_timezone=config.scheduler.timezone,
+        config=config,
     )
     if provider.name == "disabled":
         chunk = store.write("compaction", combined[:2000])

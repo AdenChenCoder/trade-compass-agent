@@ -168,6 +168,12 @@ class PaperTrade:
     is_t0: bool = False
     price_limit_pct: float = 0.10
 
+    signal_id: str | None = None
+    strategy_id: str | None = None
+    strategy_version: str | None = None
+    research_run_id: str | None = None
+    source_skills: tuple[str, ...] = ()
+
 
 @dataclass(frozen=True)
 class PortfolioPosition:

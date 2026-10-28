@@ -1115,6 +1115,15 @@ def main() -> None:
 
     sub.add_parser("market-pulse", help=command_help("market-pulse"))
 
+    p_research = sub.add_parser("research", help="Inspect strategy hypotheses and backtests")
+    p_research_sub = p_research.add_subparsers(dest="research_command", required=True)
+    for action in ("list", "save", "run", "show"):
+        research_action = p_research_sub.add_parser(action, help=command_help("research", action))
+        if action in {"save", "run"}:
+            research_action.add_argument("file", help="JSON definition or run request")
+        elif action == "show":
+            research_action.add_argument("run_id")
+
     p_agent = sub.add_parser("agent", help=command_help("agent"))
     p_agent.add_argument("message")
 
@@ -1314,7 +1323,23 @@ def main() -> None:
     load_project_dotenv()
     setup_logging()
 
-    if args.command == "market-pulse":
+    if args.command == "research":
+        from trade_compass_agent.evaluation.research import ResearchRequest, ResearchStore, StrategyDefinition, run_strategy_research
+        store = ResearchStore(load_app_config().data_dir)
+        try:
+            if args.research_command == "list":
+                research_result = {"strategies": store.list_strategies(), "runs": store.list_runs()}
+            elif args.research_command == "show":
+                research_result = store.get_run(args.run_id)
+            elif args.research_command == "save":
+                research_result = store.save_strategy(StrategyDefinition.model_validate_json(Path(args.file).read_text(encoding="utf-8")))
+            else:
+                research_result = run_strategy_research(MarketStack.from_config(), ResearchRequest.model_validate_json(Path(args.file).read_text(encoding="utf-8")))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            raise SystemExit(2) from exc
+        print(json.dumps(research_result, ensure_ascii=False, indent=2, allow_nan=False))
+    elif args.command == "market-pulse":
         run_market_pulse()
     elif args.command == "agent":
         run_agent(args.message)

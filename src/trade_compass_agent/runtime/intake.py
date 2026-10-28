@@ -257,11 +257,9 @@ def _vision_describe(client, data_url: str, mime: str | None) -> str:
             content="Describe this trading-related image briefly in Chinese (chart, table, or screenshot).",
         )
     ]
-    # OpenAI vision via raw client when available
-    if hasattr(client, "_client"):
-        response = client._client.chat.completions.create(
-            model=client.model,
-            messages=[
+    if hasattr(client, "complete_raw"):
+        completion = client.complete_raw(
+            [
                 {
                     "role": "user",
                     "content": [
@@ -272,7 +270,7 @@ def _vision_describe(client, data_url: str, mime: str | None) -> str:
             ],
             max_tokens=300,
         )
-        return (response.choices[0].message.content or "").strip() or "(empty vision response)"
+        return (completion.content or "").strip() or "(empty vision response)"
 
     completion = client.complete(messages)
     return (completion.content or "").strip() or "(empty vision response)"

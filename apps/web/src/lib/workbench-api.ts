@@ -1,4 +1,5 @@
 import { ApiError, type ApiErrorMetadata } from "@/lib/agent-api";
+import type { ResearchRun, StrategyDefinition, StrategyVersion } from "@/lib/research-types";
 import {
   isForecastPayload,
   type ForecastPayload,
@@ -37,6 +38,7 @@ async function parseJson<T>(res: Response): Promise<T> {
       const body = JSON.parse(text) as {
         detail?:
           | string
+          | { msg?: string }[]
           | {
               code?: string;
               message?: string;
@@ -46,6 +48,9 @@ async function parseJson<T>(res: Response): Promise<T> {
       };
       if (typeof body.error === "string") detail = body.error;
       else if (typeof body.detail === "string") detail = body.detail;
+      else if (Array.isArray(body.detail)) {
+        detail = body.detail.map((item) => item.msg).filter(Boolean).join("；") || detail;
+      }
       else if (body.detail && typeof body.detail === "object") {
         if (typeof body.detail.message === "string") detail = body.detail.message;
         metadata = {
@@ -73,6 +78,32 @@ async function parseJson<T>(res: Response): Promise<T> {
 export async function fetchPortfolio(): Promise<PortfolioResponse> {
   const res = await fetch("/api/portfolio");
   return parseJson<PortfolioResponse>(res);
+}
+
+export async function fetchResearchStrategies(): Promise<StrategyVersion[]> {
+  return (await parseJson<{ strategies: StrategyVersion[] }>(await fetch("/api/research/strategies"))).strategies;
+}
+
+export async function saveResearchStrategy(definition: StrategyDefinition): Promise<StrategyVersion> {
+  return parseJson<StrategyVersion>(await fetch("/api/research/strategies", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(definition),
+  }));
+}
+
+export async function fetchResearchRuns(): Promise<ResearchRun[]> {
+  return (await parseJson<{ runs: ResearchRun[] }>(await fetch("/api/research/runs"))).runs;
+}
+
+export async function fetchResearchRun(runId: string): Promise<ResearchRun> {
+  return parseJson<ResearchRun>(await fetch(`/api/research/runs/${encodeURIComponent(runId)}`));
+}
+
+export async function runResearchBacktest(request: {
+  strategy_id: string; version: string; symbol: string; limit: number;
+}): Promise<ResearchRun> {
+  return parseJson<ResearchRun>(await fetch("/api/research/runs", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
+  }));
 }
 
 export async function fetchAutonomousTrading(): Promise<AutonomousTradingSettings> {

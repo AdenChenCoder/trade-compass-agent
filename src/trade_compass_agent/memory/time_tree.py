@@ -90,6 +90,8 @@ class TimeTree:
         return self._row_to_node(row) if row else None
 
     def upsert_node(self, node: TimeNode) -> None:
+        from trade_compass_agent.llm.providers import check_execution_active
+        check_execution_active()
         conn = self._get_conn()
         conn.execute(
             "INSERT OR REPLACE INTO time_nodes (id, level, summary, source_count, key_concepts, key_symbols, sealed_at, created_at) "
@@ -102,6 +104,8 @@ class TimeTree:
         conn.commit()
 
     def add_sources(self, node_id: str, source_type: str, source_ids: list[str]) -> None:
+        from trade_compass_agent.llm.providers import check_execution_active
+        check_execution_active()
         conn = self._get_conn()
         conn.executemany(
             "INSERT OR IGNORE INTO time_node_sources (node_id, source_type, source_id) VALUES (?, ?, ?)",

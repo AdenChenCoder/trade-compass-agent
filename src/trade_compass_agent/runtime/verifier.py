@@ -12,6 +12,74 @@ import re
 from dataclasses import dataclass, field
 
 
+def unverified_execution_claim(text: str, tool_results: list[tuple[str, str]]) -> bool:
+    """Reject affirmative current-trade claims without an execution receipt.
+
+    Advice, rejected orders, and queried historical trades are not executions.
+    This is a high-precision check; it does not infer orders from natural language.
+    """
+    plain = re.sub(r"[*`#]", "", text)
+    # Remove only an attributed quote immediately and explicitly withdrawn.
+    # Keep surrounding current claims: negation in a later clause cannot hide them.
+    plain = re.sub(
+        r"(?:此前|旧|原|历史)(?:记忆|记录|报告|日志|摘要|文)(?:中|里)?\s*[「“『][^」”』\n]*[」”』]"
+        r"(?=\s*(?:与[^。\n；;]{0,30}不符|(?:为|是|属于)?(?:错误|有误|不实|作废|未证实)))",
+        "", plain,
+    )
+    claims = []
+    for line in re.split(r"[。；;，,\n]", plain):
+        # An empty status heading is not a fill. Inspect any following text normally.
+        line = re.sub(r"^\s*[-•]?\s*(?:(?:本轮|本次)\s*)?已成交(?:[（(](?:本轮|本次)[）)])?"
+                      r"\s*[:：|]\s*(?:无|0\s*笔?)(?=$|[\s（(])", "", line.strip().strip("|"))
+        if re.search(r"未|没有|不曾|失败|拒绝|建议|计划|方案|如果|假设|例如|示例", line):
+            continue
+        if re.search(r"已(?:经)?(?:成功)?(?:执行)?(?:模拟|自动)?(?:买入|卖出|下单|成交)|"
+                     r"已完成[^。\n]{0,30}(?:买入|卖出)[^。\n]{0,12}(?:\d+|一百)\s*股|"
+                     r"成交成功|交易已记录|交易状态[^。\n]{0,25}executed|"
+                     r"执行成功[^。\n]{0,45}(?:买入|卖出|下单|成交|\d+\s*股)", line, re.IGNORECASE):
+            claims.append(line)
+    if not claims:
+        return False
+    ledger_facts = False
+    fills = []
+    for name, raw in tool_results:
+        if name not in {"place_paper_trade", "batch_paper_trades", "analyze_portfolio"}:
+            continue
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict) or payload.get("error"):
+            continue
+        rows = payload.get("results", []) if name == "batch_paper_trades" else [payload]
+        if name == "analyze_portfolio":
+            ledger_facts = ledger_facts or any(isinstance(row, dict) and row.get("trade_id")
+                                             for row in payload.get("recent_trades", []))
+        else:
+            fills.extend(row for row in rows if isinstance(row, dict)
+                         and row.get("status") == "executed" and row.get("trade_id"))
+    if fills:
+        fills = list({str(row["trade_id"]): row for row in fills}.values())
+        for claim in claims:
+            symbols = set(re.findall(r"(?<!\d)\d{6}(?!\d)(?!\s*股)", claim))
+            scoped = [r for r in fills if not symbols or r.get("symbol") in symbols]
+            if symbols and all(r.get("symbol") for r in fills) and not scoped:
+                return True
+            quantities = re.findall(r"(\d+)\s*股", claim)
+            if len(scoped) == 1 and quantities and scoped[0].get("quantity") is not None:
+                if any(int(q) != scoped[0]["quantity"] for q in quantities):
+                    return True
+            ids = re.findall(r"(?:trade_id|成交ID|成交 ID)\s*[:：=]?\s*[`\"]?([\w-]+)", claim)
+            if ids and any(identity not in {str(r["trade_id"]) for r in fills} for identity in ids):
+                return True
+            for word, side in (("买入", "buy"), ("卖出", "sell")):
+                if word in claim and scoped and all(r.get("side") for r in scoped):
+                    if not any(r["side"] == side for r in scoped):
+                        return True
+        return False
+    return not ledger_facts or any(re.search(r"本轮|本次|刚刚", line) for line in claims)
+
+
 def trade_receipt_section(tool_results: list[tuple[str, str]]) -> str:
     """Render today's queried ledger facts and current executions without an LLM.
 

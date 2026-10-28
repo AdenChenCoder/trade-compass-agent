@@ -89,7 +89,6 @@ jobs:
           python scripts/check_dist.py
           python -m pip install dist/*.whl
           export TRADE_COMPASS_HOME="$RUNNER_TEMP/trade-compass-home"
-          export DEEPSEEK_API_KEY="ci-placeholder"
           cd "$RUNNER_TEMP"
           trade-compass --version
           trade-compass commands --json
@@ -120,7 +119,10 @@ jobs:
           assert resolve_config_path().resolve() == (home / "config.yaml").resolve()
           assert config.data_dir.resolve() == (home / "data").resolve()
           assert config.memory_dir.resolve() == (home / "memory_vault").resolve()
-          assert config.llm.provider == "deepseek"
+          import yaml
+          defaults = yaml.safe_load((PACKAGE_ROOT / "default.yaml").read_text())
+          assert config.llm.provider == defaults["llm"]["provider"]
+          assert config.llm.model == defaults["llm"]["model"]
           assert not str(config.data_dir).startswith(str(PACKAGE_ROOT))
           print("installed config, runtime paths, and package assets ok")
           PY

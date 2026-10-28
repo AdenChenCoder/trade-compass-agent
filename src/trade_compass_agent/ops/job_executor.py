@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
+import time
 from datetime import date
 from typing import Any
 
@@ -49,6 +51,7 @@ class JobExecutor:
         *,
         trigger: str = "scheduler",
         reflection_context: str | None = None,
+        as_of: date | None = None,
     ) -> RunRecord:
         run = self.run_store.create_run(job.id, trigger=trigger)
 
@@ -67,6 +70,8 @@ class JobExecutor:
             self.run_store.skip_run(run, reason="同一 Job 正在运行（overlap guard）")
             return run
 
+        deadline = time.monotonic() + job.timeout_seconds
+
         # Resolve stale pending reflections, then inject past lessons
         if job.agent_session:
             from trade_compass_agent.memory.memory_store import MemoryStore
@@ -76,12 +81,36 @@ class JobExecutor:
                 self.config.memory_dir,
                 min_inject_confidence=self.config.memory.governance.min_inject_confidence,
             )
-            self.reflection.resolve_pending(
-                job.id,
-                resolve_fn=make_market_resolve_fn(self.config),
-                mem_store=mem_store,
-                config=self.config,
-            )
+            from trade_compass_agent.llm.providers import LLMExecutionCancelled, llm_request_deadline
+            from trade_compass_agent.data.network import drain_timeout_workers, run_with_timeout
+
+            stopped = threading.Event()
+
+            def resolve_reflections():
+                with llm_request_deadline(deadline, is_cancelled=stopped.is_set):
+                    self.reflection.resolve_pending(
+                        job.id, resolve_fn=make_market_resolve_fn(self.config),
+                        mem_store=mem_store, config=self.config,
+                    )
+
+            def bounded_reflections():
+                with drain_timeout_workers():
+                    return run_with_timeout(
+                        resolve_reflections, max(.001, deadline - time.monotonic()),
+                        "Resolve pending reflections", is_cancelled=stopped.is_set,
+                        on_timeout=stopped.set,
+                    )
+
+            try:
+                await asyncio.to_thread(bounded_reflections)
+            except (LLMExecutionCancelled, TimeoutError):
+                stopped.set()
+                self.run_store.timeout_run(run)
+                return run
+            except asyncio.CancelledError:
+                stopped.set()
+                self.run_store.fail_run(run, error="cancelled", message="任务已取消")
+                raise
             if reflection_context is None:
                 reflection_context = self.reflection.get_context(
                     job.id,
@@ -91,7 +120,7 @@ class JobExecutor:
 
         ctx = StepContext(
             config=self.config,
-            date=date.today(),
+            date=as_of or date.today(),
             reflection_context=reflection_context,
             job_id=job.id,
             run_id=run.id,
@@ -111,7 +140,7 @@ class JobExecutor:
             self.hooks.fire(HookContext(job=job, run=run, phase="post_job", ctx=ctx))
             return run
 
-        await self._execute_workflow_job(job, run, ctx, trigger)
+        await self._execute_workflow_job(job, run, ctx, trigger, deadline)
         self.hooks.fire(HookContext(job=job, run=run, phase="post_job", ctx=ctx))
         return run
 
@@ -121,25 +150,41 @@ class JobExecutor:
         run: RunRecord,
         ctx: StepContext,
         trigger: str,
+        deadline: float,
     ) -> None:
         from trade_compass_agent.runtime.workflows.engine import run_workflow_asset_by_id
+        from trade_compass_agent.llm.providers import llm_request_deadline
 
         step_rec = self.run_store.create_step_run(run.id, "workflow")
         self.run_store.start_step(step_rec)
         workflow_inputs = _workflow_job_inputs(job, run, ctx)
+        cancel_event = threading.Event()
+
+        def execute_workflow():
+            with llm_request_deadline(deadline, is_cancelled=cancel_event.is_set):
+                return run_workflow_asset_by_id(
+                    job.workflow_id, workflow_inputs, config=self.config,
+                    data_dir=self.config.data_dir, trigger=f"{trigger}:{job.id}",
+                    run_id=run.id, cancel_event=cancel_event,
+                )
+
+        def bounded_workflow():
+            from trade_compass_agent.data.network import drain_timeout_workers, run_with_timeout
+            with drain_timeout_workers():
+                return run_with_timeout(
+                    execute_workflow, max(.001, deadline - time.monotonic()),
+                    f"Workflow {job.workflow_id}", is_cancelled=cancel_event.is_set,
+                    on_timeout=cancel_event.set,
+                )
+
+        # The asyncio executor only waits for this bounded wrapper. The actual
+        # workflow has cancellation-aware commit guards and runs on a daemon.
+        workflow_task = asyncio.create_task(asyncio.to_thread(bounded_workflow))
         try:
-            output = await asyncio.wait_for(
-                asyncio.to_thread(
-                    run_workflow_asset_by_id,
-                    job.workflow_id,
-                    workflow_inputs,
-                    config=self.config,
-                    data_dir=self.config.data_dir,
-                    trigger=f"{trigger}:{job.id}",
-                    run_id=run.id,
-                ),
-                timeout=job.timeout_seconds,
-            )
+            done, _pending = await asyncio.wait({workflow_task}, timeout=max(0, deadline - time.monotonic()))
+            if not done:
+                raise TimeoutError("Workflow scheduler deadline reached")
+            output = workflow_task.result()
             analysis = extract_analysis_from_workflow_output(output)
             data = {
                 "workflow_id": job.workflow_id,
@@ -175,9 +220,24 @@ class JobExecutor:
             if job.agent_session and not output.get("degraded"):
                 self.reflection.store_pending(job.id, run.id, predictions={"workflow": output}, summary=run.message)
         except asyncio.TimeoutError:
+            cancel_event.set()
+            try:
+                await workflow_task
+            except Exception:
+                pass
             self.run_store.fail_step(step_rec, error=f"Workflow {job.workflow_id} timed out")
             self.run_store.timeout_run(run)
             self.hooks.fire(HookContext(job=job, run=run, phase="on_failure", ctx=ctx, error="timeout"))
+        except asyncio.CancelledError:
+            cancel_event.set()
+            try:
+                await workflow_task
+            except Exception:
+                pass
+            error = f"Workflow {job.workflow_id} cancelled"
+            self.run_store.fail_step(step_rec, error=error)
+            self.run_store.fail_run(run, error=error, message="任务已取消")
+            raise
         except Exception as exc:
             self.run_store.fail_step(step_rec, error=str(exc))
             self.run_store.fail_run(run, error=str(exc), message=f"Workflow 执行失败: {exc}")

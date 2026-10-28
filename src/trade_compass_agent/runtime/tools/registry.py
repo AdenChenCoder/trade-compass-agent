@@ -5,8 +5,10 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from trade_compass_agent.data.providers import ALL_TIMEFRAMES
 from trade_compass_agent.runtime.types import TurnEvent
 from trade_compass_agent.runtime.market_stack import MarketStack
+from trade_compass_agent.runtime.tools.research import RESEARCH_TOOL_SCHEMAS, tool_strategy_research
 from trade_compass_agent.runtime.tools.dispatch import tool_dispatch_specialists
 from trade_compass_agent.runtime.tools.fetch_url import tool_fetch_url
 from trade_compass_agent.runtime.tools.market import (
@@ -106,12 +108,12 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_bars",
-            "description": "Fetch OHLCV bars for a symbol.",
+            "description": "Fetch OHLCV bars for exactly one symbol. For multiple symbols use batch_get_bars; never put a comma-separated list in symbol.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {"type": "string"},
-                    "timeframe": {"type": "string", "default": "1d"},
+                    "symbol": {"type": "string", "description": "Exactly one instrument code, e.g. 600519. No lists."},
+                    "timeframe": {"type": "string", "enum": sorted(ALL_TIMEFRAMES), "default": "1d"},
                     "limit": {"type": "integer", "default": 60},
                 },
                 "required": ["symbol"],
@@ -267,7 +269,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "symbol": {"type": "string"},
-                    "timeframe": {"type": "string", "default": "1d"},
+                    "timeframe": {"type": "string", "enum": sorted(ALL_TIMEFRAMES), "default": "1d"},
                     "period": {"type": "integer", "default": 14},
                 },
                 "required": ["symbol"],
@@ -283,7 +285,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "symbol": {"type": "string"},
-                    "timeframe": {"type": "string", "default": "1d"},
+                    "timeframe": {"type": "string", "enum": sorted(ALL_TIMEFRAMES), "default": "1d"},
                 },
                 "required": ["symbol"],
             },
@@ -298,7 +300,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "symbol": {"type": "string"},
-                    "timeframe": {"type": "string", "default": "1d"},
+                    "timeframe": {"type": "string", "enum": sorted(ALL_TIMEFRAMES), "default": "1d"},
                     "period": {"type": "integer", "default": 20},
                 },
                 "required": ["symbol"],
@@ -314,7 +316,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "symbol": {"type": "string"},
-                    "timeframe": {"type": "string", "default": "1d"},
+                    "timeframe": {"type": "string", "enum": sorted(ALL_TIMEFRAMES), "default": "1d"},
                     "period": {"type": "integer", "default": 5},
                 },
                 "required": ["symbol"],
@@ -330,7 +332,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "symbol": {"type": "string"},
-                    "timeframe": {"type": "string", "default": "1d"},
+                    "timeframe": {"type": "string", "enum": sorted(ALL_TIMEFRAMES), "default": "1d"},
                     "periods": {"type": "string", "default": "5,10,20,60", "description": "Comma-separated MA periods"},
                 },
                 "required": ["symbol"],
@@ -371,7 +373,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "General web search for market research, industry analysis, or any topic. Uses Tavily (if key set) or DuckDuckGo (zero config).",
+            "description": "General web search for market research, industry analysis, or any topic. Free multi-engine search by default; DeepSeek or Tavily when explicitly configured. Results are research leads. Publication dates and ranking scores are provider metadata, not verified evidence; check original sources for dates and claims even with date filters. For DeepSeek, keep queries within 128 characters, including site:/after:/before: filters.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -547,11 +549,11 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "sina_realtime_quote",
-            "description": "Get real-time stock quotes from Sina Finance. Works 24/7 (returns last close after hours). Fast, no token needed.",
+            "description": "Get Sina A-share quotes and US index snapshots: gb_dji (Dow), gb_ixic (Nasdaq Composite), gb_inx (S&P 500). US indices may be delayed; use market_date/as_of and do not treat latest_quote as a verified close. Other overseas markets are unsupported. Partial failures are returned per symbol. No token needed.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbols": {"type": "string", "description": "Comma-separated stock codes, e.g. '600519,300750,000001'"},
+                    "symbols": {"type": "string", "description": "Comma-separated A-share codes and/or supported US indices, e.g. '600519,gb_dji,gb_ixic,gb_inx'"},
                 },
                 "required": ["symbols"],
             },
@@ -913,7 +915,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "symbols": {"type": "string", "description": "Comma-separated stock codes, e.g. '600519,300750,000001' (max 20)"},
-                    "timeframe": {"type": "string", "default": "1d"},
+                    "timeframe": {"type": "string", "enum": sorted(ALL_TIMEFRAMES), "default": "1d"},
                     "limit": {"type": "integer", "default": 60},
                     "summary_only": {"type": "boolean", "default": True, "description": "If true, return compact per-symbol summaries; if false, return full bar data"},
                 },
@@ -952,7 +954,20 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
 ]
 
-BASE_TOOL_SCHEMAS.extend([CATALYST_CALENDAR_TOOL_SCHEMA, IDEA_GENERATION_TOOL_SCHEMA])
+BASE_TOOL_SCHEMAS.extend([CATALYST_CALENDAR_TOOL_SCHEMA, IDEA_GENERATION_TOOL_SCHEMA, *RESEARCH_TOOL_SCHEMAS])
+for _schema in BASE_TOOL_SCHEMAS:
+    _function = _schema["function"]
+    if _function["name"] == "emit_signal":
+        _function["parameters"]["properties"].update({
+            "account": {"type": "string", "description": "Account this signal applies to; omit for an unscoped view."},
+            "strategy_id": {"type": "string", "description": "Saved research strategy ID; provide with strategy_version."},
+            "strategy_version": {"type": "string", "description": "Exact saved strategy version."},
+            "research_run_id": {"type": "string", "description": "Optional saved run for this symbol and version; evidence reference only."},
+        })
+    elif _function["name"] == "place_paper_trade":
+        _function["parameters"]["properties"]["signal_id"] = {
+            "type": "string", "description": "Explicit signal reference for this symbol and account. Omit if unrelated; never infer from latest symbol alone.",
+        }
 TOOL_SCHEMAS = BASE_TOOL_SCHEMAS
 
 def _refresh_dynamic_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -1045,6 +1060,7 @@ class ToolRegistry:
         self._trade_authorization: dict | None = None
         self._trade_context_evidence: dict = {}
         self.trade_execution_guard = None
+        self.planning_reference_date = None
 
     def set_trade_context(self, message: str, *, attachments: str = "", previous_reply: str = "") -> None:
         self._trade_user_message = message if self._memory_actor == "agent" else ""
@@ -1099,6 +1115,8 @@ class ToolRegistry:
 
     def execute(self, name: str, arguments: str | dict | None) -> str:
         from trade_compass_agent.portfolio.trading_policy import TradeRejected
+        from trade_compass_agent.llm.providers import check_execution_active
+        check_execution_active()
 
         if name in self._exclude_tools:
             return json.dumps({"error": f"Tool '{name}' is not available in this context"}, ensure_ascii=False)
@@ -1122,6 +1140,11 @@ class ToolRegistry:
             return json.dumps(exc.payload, ensure_ascii=False)
         except Exception as exc:
             error_payload: dict[str, Any] = {"error": str(exc), "tool": name}
+            try:
+                args = json.loads(arguments) if isinstance(arguments, str) else arguments or {}
+                error_payload.update({k: args[k] for k in ("symbol", "timeframe", "query") if k in args})
+            except (TypeError, ValueError):
+                pass
             if name in _CRITICAL_TOOLS:
                 count = self._consecutive_failures.get(name, 0) + 1
                 self._consecutive_failures[name] = count
@@ -1139,6 +1162,9 @@ class ToolRegistry:
         elif isinstance(arguments, dict):
             args = arguments
         memory_dir = self.stack.config.memory_dir
+
+        if name in {"save_strategy_research", "run_strategy_backtest", "get_strategy_research"}:
+            return tool_strategy_research(self.stack, name, args)
 
         if name == "get_bars":
             return tool_get_bars(
@@ -1385,9 +1411,13 @@ class ToolRegistry:
                 source_specialist=args.get("source_specialist", "agent"),
                 source_tools=args.get("source_tools"),
                 source_skills=args.get("source_skills"),
+                account=args.get("account"),
+                strategy_id=args.get("strategy_id"),
+                strategy_version=args.get("strategy_version"),
+                research_run_id=args.get("research_run_id"),
             )
         if name == "analyze_portfolio":
-            return tool_analyze_portfolio(self.stack)
+            return tool_analyze_portfolio(self.stack, planning_reference_date=self.planning_reference_date)
         if name == "place_paper_trade":
             if self.trade_execution_guard is not None:
                 self.trade_execution_guard()
@@ -1407,6 +1437,7 @@ class ToolRegistry:
                 price=args.get("price"),
                 price_source=args.get("price_source", "market_quote"),
                 record_decision=args.get("record_decision", True),
+                signal_id=args.get("signal_id"),
                 reason=args.get("reason", ""),
                 account=args.get("account", "short_stock"),
                 previous_close=args.get("previous_close"),

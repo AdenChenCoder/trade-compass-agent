@@ -7,15 +7,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from trade_compass_agent.config import AppConfig, load_app_config
-from trade_compass_agent.runtime.exceptions import TurnInterruptedError
+from trade_compass_agent.runtime.exceptions import AgentTurnError, LLMIncompleteResponseError, TurnInterruptedError
 from trade_compass_agent.runtime.activity_events import (
     build_tool_end_payload,
     build_tool_start_payload,
 )
-from trade_compass_agent.llm.providers import ChatMessage, create_chat_client
+from trade_compass_agent.llm.providers import ChatMessage, create_chat_client, is_lmstudio_qwen
+from trade_compass_agent.llm.usage import llm_usage_context
 from trade_compass_agent.runtime.context import ContextBuilder, _sanitize_tool_calls
 from trade_compass_agent.runtime.compression.budget import TokenBudget
-from trade_compass_agent.runtime.compression.trim import trim_tool_results
 from trade_compass_agent.runtime.compression.summarizer import (
     latest_persisted_summary,
     summarize_middle_turns,
@@ -102,6 +102,8 @@ def _execute_tool_calls(
     tool_calls,
     tools: ToolRegistry,
     is_cancelled: Callable[[], bool] | None,
+    prior_tool_results=(),
+    reference_date=None,
 ) -> dict[str, str]:
     """Execute tool calls with selective parallelism.
 
@@ -110,6 +112,7 @@ def _execute_tool_calls(
     the parallel batch completes.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    from contextvars import copy_context
 
     results: dict[str, str] = {}
 
@@ -120,17 +123,19 @@ def _execute_tool_calls(
         try:
             result = run_with_timeout(
                 lambda: tools.execute(tc.name, tc.arguments),
-                timeout=_SEARCH_TOOL_TIMEOUT_SECONDS if tc.name in {"search_x", "search_x_kol"} else _PARALLEL_TOOL_TIMEOUT_SECONDS,
+                timeout=_SEARCH_TOOL_TIMEOUT_SECONDS if tc.name in {"web_search", "search_x", "search_x_kol"} else _PARALLEL_TOOL_TIMEOUT_SECONDS,
                 description=f"tool:{tc.name}",
             )
         except TimeoutError as exc:
-            result = json.dumps({"error": str(exc), "timed_out": True}, ensure_ascii=False)
+            args = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments or {}
+            result = json.dumps({"error": str(exc), "timed_out": True,
+                **{k: args[k] for k in ("symbol", "query", "timeframe") if k in args}}, ensure_ascii=False)
         return tc.id, result
 
     if len(parallel) > 1:
         workers = min(_MAX_PARALLEL_WORKERS, len(parallel))
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="tool_par") as pool:
-            futures = {pool.submit(_run_parallel, tc): tc for _, tc in parallel}
+            futures = {pool.submit(copy_context().run, _run_parallel, tc): tc for _, tc in parallel}
             for future in as_completed(futures):
                 if is_cancelled and is_cancelled():
                     pool.shutdown(wait=False, cancel_futures=True)
@@ -147,6 +152,19 @@ def _execute_tool_calls(
     for _, tc in sequential:
         if is_cancelled and is_cancelled():
             break
+        if tc.name == "write_memory":
+            from trade_compass_agent.runtime.report_quality import report_issues
+            try:
+                arguments = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+                content = arguments.get("content", "") if isinstance(arguments, dict) else ""
+                evidence = [*prior_tool_results, *((call.name, results[call.id]) for call in tool_calls if call.id in results)]
+                issues = report_issues(content, evidence, reference_date=reference_date) if isinstance(content, str) else []
+            except (ValueError, TypeError):
+                issues = []  # Normal tool argument validation owns malformed arguments.
+            if issues:
+                results[tc.id] = json.dumps({"error": "记忆内容与本轮事实不一致，未保存；请修正后再提交",
+                    "scope": arguments.get("scope", ""), "fact_check_failed": True, "issues": issues}, ensure_ascii=False)
+                continue
         if tc.name in {"batch_get_bars", "batch_get_fundamentals", "batch_search_news"}:
             try:
                 results[tc.id] = run_with_timeout(
@@ -173,6 +191,10 @@ class AgentLoop:
     on_event: Callable[[TurnEvent], None] | None = None
     memory_actor: str = "agent"
     skill_actor: str = "agent"
+    report_date: str | None = None
+    planning_reference_date: str | None = None
+    initial_portfolio: dict | None = None
+    verify_report_grounding: bool = False
     _tools: ToolRegistry = field(init=False)
     _event_seq: int = field(init=False, default=0)
     _nudge: ReviewNudgeTracker = field(init=False)
@@ -196,12 +218,15 @@ class AgentLoop:
         self._session_summaries = SessionSummaryStore(self.config.data_dir / "sessions.db")
 
         def _consolidation_llm(system_prompt: str, user_content: str) -> str:
-            client = create_chat_client(self.config)
-            msgs = [
-                ChatMessage(role="system", content=system_prompt),
-                ChatMessage(role="user", content=user_content),
-            ]
-            return client.complete(msgs).content or ""
+            from trade_compass_agent.llm.providers import llm_maintenance_mode
+
+            with llm_usage_context(job_id="memory-consolidation"), llm_maintenance_mode():
+                client = create_chat_client(self.config)
+                msgs = [
+                    ChatMessage(role="system", content=system_prompt),
+                    ChatMessage(role="user", content=user_content),
+                ]
+                return client.complete(msgs).content or ""
 
         self._consolidation = shared_consolidation_worker(
             obs_store=self._obs_store,
@@ -248,10 +273,12 @@ class AgentLoop:
         """Check nudge thresholds and spawn background review if needed."""
         if self.memory_actor == "background_review":
             return
+        if not self.config.allow_external_llm_memory:
+            return
         resume_background_reviews(self.config)
         review_memory, review_skills = self._nudge.should_review()
-        review_memory = review_memory or self._memory_store.review_due()
-        if not review_memory and not review_skills:
+        maintenance_due = self._memory_store.review_due()
+        if not review_memory and not review_skills and not maintenance_due:
             return
 
         def llm_call(system_prompt: str, msgs: list) -> str:
@@ -289,17 +316,34 @@ class AgentLoop:
                      "tool_calls": getattr(m, "tool_calls", [])}
                     for m in messages[start:]]
 
-        spawn_background_review(
-            messages_snapshot=snapshot,
-            review_memory=review_memory,
-            review_skills=review_skills,
-            llm_call=llm_call,
-            memory_write=memory_write,
-            skill_manage=skill_manage,
-            memory_store=self._memory_store,
-            config=self.config, source_session_id=source_session_id, source_turn_id=source_turn_id,
-            on_complete=self._nudge.reset_after_review,
-        )
+        if maintenance_due:
+            review_snapshot = self._memory_store.background_review_snapshot()
+            spawn_background_review(
+                messages_snapshot=snapshot,
+                review_memory=True,
+                review_skills=False,
+                llm_call=llm_call,
+                memory_write=memory_write,
+                skill_manage=skill_manage,
+                memory_store=self._memory_store,
+                config=self.config, source_session_id=source_session_id, source_turn_id=source_turn_id,
+                maintenance_fingerprint=review_snapshot["fingerprint"],
+                maintenance_entry_ids=review_snapshot["entry_ids"],
+                maintenance_snapshot=review_snapshot,
+            )
+        if review_memory or review_skills:
+            spawn_background_review(
+                messages_snapshot=snapshot,
+                review_memory=review_memory,
+                review_skills=review_skills,
+                llm_call=llm_call,
+                memory_write=memory_write,
+                skill_manage=skill_manage,
+                memory_store=self._memory_store,
+                config=self.config, source_session_id=source_session_id, source_turn_id=source_turn_id,
+            )
+            # The durable request owns retries, even when this AgentLoop exits.
+            self._nudge.reset_after_review(review_memory, review_skills)
 
     def _update_session_summary(
         self,
@@ -336,6 +380,25 @@ class AgentLoop:
         turn_id: str | None = None,
         is_cancelled: Callable[[], bool] | None = None,
     ) -> TurnResponse:
+        resolved_session = self.session_store.get_or_create(session_id)
+        with llm_usage_context(session_id=resolved_session.session_id):
+            return self._run_turn(
+                message,
+                session_id=resolved_session.session_id,
+                attachments=attachments,
+                turn_id=turn_id,
+                is_cancelled=is_cancelled,
+            )
+
+    def _run_turn(
+        self,
+        message: str,
+        *,
+        session_id: str | None = None,
+        attachments: list[dict] | None = None,
+        turn_id: str | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
+    ) -> TurnResponse:
         def _check_cancelled() -> None:
             if is_cancelled and is_cancelled():
                 raise TurnInterruptedError(final_text)
@@ -362,6 +425,7 @@ class AgentLoop:
             ),
         )
         session = self.session_store.get_or_create(session_id)
+        publish_after_verification = session.session_id.startswith("scheduler-")
         if turn_id:
             self._emit(
                 "turn_started",
@@ -381,80 +445,97 @@ class AgentLoop:
         messages = context.build_messages(history, enriched)
 
         # Phase 0: token budget check — Phase 1 trim (in ContextBuilder) + Phase 2 summarize
-        _budget = TokenBudget(self.config)
-        if _budget.enabled:
-            _est_tokens = _budget.estimate(
-                messages, tools_schemas=self._tools.schemas,
-                system_prompt_tokens=context.system_prompt_tokens,
-            )
-            _usage = _budget.usage_pct(_est_tokens)
-            if _budget.should_summarize(_est_tokens):
-                logger.info(
-                    "context: ~%s tokens (%.0f%% of %s budget) — triggering Phase 2 summarization",
-                    f"{_est_tokens:,}", _usage * 100, f"{_budget.context_budget:,}",
+        window = getattr(client, "context_window", None)
+        reserve = getattr(client, "response_token_limit", 0)
+        _budget = TokenBudget(self.config, context_window=window,
+                              output_reserve=reserve if type(reserve) is int else 0)
+        def compact_context(*, in_turn, request_tools):
+            nonlocal messages
+            if _budget.enabled:
+                measured = None
+                if str(getattr(client, "name", "")).startswith("lmstudio"):
+                    counter = getattr(client, "measure_input_tokens", None)
+                    if callable(counter):
+                        measured = counter(messages, tools=request_tools)
+                _est_tokens = measured.input_tokens if measured is not None else _budget.estimate(
+                    messages, tools_schemas=request_tools,
                 )
-                self._emit("status", {"text": "🗜️ 上下文过长，生成摘要中…"})
-                try:
-                    def _summarize_llm(sys_prompt: str, user_prompt: str) -> str:
-                        msgs = [
-                            ChatMessage(role="system", content=sys_prompt),
-                            ChatMessage(role="user", content=user_prompt),
-                        ]
-                        return client.complete(msgs).content or ""
-
-                    compressed, _summary_text, summarized, saved = summarize_middle_turns(
-                        messages,
-                        llm_call=_summarize_llm,
-                        protect_recent_count=_budget.protect_recent_count,
-                        protect_recent_tokens=_budget.protect_recent_tokens,
-                        previous_summary=latest_persisted_summary(history),
+                source_counts = dict(zip(map(id, messages), measured.public_message_tokens)) if measured is not None else {}
+                source_counter = (lambda item: source_counts[id(item)]) if len(source_counts) == len(messages) else None
+                _usage = _budget.usage_pct(_est_tokens)
+                if _budget.should_summarize(_est_tokens):
+                    logger.info(
+                        "context: ~%s tokens (%.0f%% of %s budget) — triggering Phase 2 summarization",
+                        f"{_est_tokens:,}", _usage * 100, f"{_budget.context_budget:,}",
                     )
-                    if summarized > 0:
-                        compacted_messages = _sanitize_tool_calls(compressed)
-                        if not compacted_messages or compacted_messages[-1].role != "user":
-                            raise RuntimeError("compacted context lost the current user message")
-                        durable_history = [
-                            SessionMessageRecord(
-                                role=item.role,
-                                content=item.content or "",
-                                timestamp=datetime.now(),
-                                tool_call_id=item.tool_call_id,
-                                name=item.name,
-                                tool_calls=list(item.tool_calls or []),
+                    self._emit("status", {"text": "🗜️ 上下文过长，生成摘要中…"})
+                    try:
+                        def _summarize_llm(sys_prompt: str, user_prompt: str) -> str:
+                            msgs = [
+                                ChatMessage(role="system", content=sys_prompt),
+                                ChatMessage(role="user", content=user_prompt),
+                            ]
+                            from trade_compass_agent.llm.providers import llm_maintenance_mode
+                            with llm_maintenance_mode():
+                                return client.complete(msgs).content or ""
+
+                        compressed, _summary_text, summarized, saved = summarize_middle_turns(
+                            messages,
+                            llm_call=_summarize_llm,
+                            protect_recent_count=_budget.protect_recent_count,
+                            protect_recent_tokens=_budget.protect_recent_tokens,
+                            previous_summary=latest_persisted_summary(messages),
+                            message_token_counter=source_counter,
+                        )
+                        if summarized > 0:
+                            compacted_messages = _sanitize_tool_calls(compressed)
+                            if not compacted_messages or compacted_messages[-1] != messages[-1]:
+                                raise RuntimeError("compacted context lost the current user message")
+                            durable_history = [
+                                SessionMessageRecord(
+                                    role=item.role,
+                                    content=item.content or "",
+                                    timestamp=datetime.now(),
+                                    tool_call_id=item.tool_call_id,
+                                    name=item.name,
+                                    tool_calls=list(item.tool_calls or []),
+                                )
+                                for item in (compacted_messages[1:] if in_turn else compacted_messages[1:-1])
+                            ]
+                            archive_path = self.session_store.replace_context(
+                                session,
+                                durable_history,
                             )
-                            for item in compacted_messages[1:-1]
-                        ]
-                        archive_path = self.session_store.replace_context(
-                            session,
-                            durable_history,
-                        )
-                        messages = compacted_messages
-                        _pre_chars = sum(len(m.content or "") for m in messages) + saved
-                        _savings_ratio = saved / max(_pre_chars, 1)
-                        logger.info(
-                            "summarization: %d messages → durable summary, ~%d chars saved "
-                            "(%.1f%% reduction, archive=%s)",
-                            summarized, saved, _savings_ratio * 100, archive_path,
-                        )
-                        self._emit(
-                            "status",
-                            {"text": f"🗜️ 已压缩并保存 {summarized} 条历史消息"},
-                        )
-                except Exception as _sum_err:
-                    logger.error("Phase 2 summarization failed: %s", _sum_err)
-            elif _budget.is_emergency(_est_tokens):
-                logger.warning(
-                    "context: ~%s tokens (%.0f%% of %s budget) — emergency zone",
-                    f"{_est_tokens:,}", _usage * 100, f"{_budget.context_budget:,}",
-                )
-            elif _budget.should_trim(_est_tokens):
-                logger.debug(
-                    "context: ~%s tokens (%.0f%% of %s budget) — trim applied in build_messages",
-                    f"{_est_tokens:,}", _usage * 100, f"{_budget.context_budget:,}",
-                )
+                            messages = compacted_messages
+                            _pre_chars = sum(len(m.content or "") for m in messages) + saved
+                            _savings_ratio = saved / max(_pre_chars, 1)
+                            logger.info(
+                                "summarization: %d messages → durable summary, ~%d chars saved "
+                                "(%.1f%% reduction, archive=%s)",
+                                summarized, saved, _savings_ratio * 100, archive_path,
+                            )
+                            self._emit(
+                                "status",
+                                {"text": f"🗜️ 已压缩并保存 {summarized} 条历史消息"},
+                            )
+                    except Exception as _sum_err:
+                        logger.error("Phase 2 summarization failed: %s", _sum_err)
+                elif _budget.is_emergency(_est_tokens):
+                    logger.warning(
+                        "context: ~%s tokens (%.0f%% of %s budget) — emergency zone",
+                        f"{_est_tokens:,}", _usage * 100, f"{_budget.context_budget:,}",
+                    )
+                elif _budget.should_trim(_est_tokens):
+                    logger.debug(
+                        "context: ~%s tokens (%.0f%% of %s budget) — trim applied in build_messages",
+                        f"{_est_tokens:,}", _usage * 100, f"{_budget.context_budget:,}",
+                    )
 
         user_record = SessionMessageRecord(role="user", content=enriched, timestamp=datetime.now(),
                                            autonomous_trading_enabled=autonomous_trading_enabled)
+
+        compact_context(in_turn=False, request_tools=None if self.config.agent.max_tool_rounds == 1 else self._tools.schemas)
+
         self.session_store.append(session, user_record)
         if not session.title:
             user_count = sum(1 for item in session.messages if item.role == "user")
@@ -472,23 +553,53 @@ class AgentLoop:
         max_rounds = self.config.agent.max_tool_rounds
         tool_calls_log: list[tuple[str, str]] = []
 
+        def record_tool_effects(name: str, arguments: str, result: str) -> None:
+            self._nudge.on_tool_iteration()
+            if should_capture(name, result):
+                summary = extract_summary(name, result)
+                from trade_compass_agent.memory.observation_store import estimate_importance, extract_concepts
+                self._obs_store.append(
+                    session_id=session.session_id,
+                    tool_name=name,
+                    summary=summary,
+                    raw_preview=result[:2000],
+                    importance=estimate_importance(name, summary),
+                    concepts=extract_concepts(summary),
+                )
+            if name == "write_knowledge" and is_committed_mutation(name, arguments, result):
+                self._nudge.on_memory_write()
+            elif name == "skill_manage" and is_committed_mutation(name, arguments, result):
+                self._nudge.on_skill_write()
+            section = _section_from_tool(name, result)
+            if section:
+                sections.append(section)
+                self._emit("section", _section_to_dict(section))
+
         try:
             for _round in range(max_rounds):
                 _check_cancelled()
+                is_last_round = (_round == max_rounds - 1)
+                if _round:
+                    compact_context(in_turn=True, request_tools=None if is_last_round else self._tools.schemas)
+                    _check_cancelled()
                 self._emit("status", {"text": "思考中…"})
 
                 def _on_delta(chunk: str) -> None:
                     nonlocal final_text
                     final_text += chunk
-                    self._emit("delta", {"text": chunk})
+                    if not publish_after_verification:
+                        self._emit("delta", {"text": chunk})
 
-                is_last_round = (_round == max_rounds - 1)
-                completion = client.stream_complete(
-                    messages,
-                    tools=None if is_last_round else self._tools.schemas,
-                    on_delta=_on_delta,
-                    is_cancelled=is_cancelled,
-                )
+                try:
+                    completion = client.stream_complete(
+                        messages,
+                        tools=None if is_last_round else self._tools.schemas,
+                        on_delta=_on_delta,
+                        is_cancelled=is_cancelled,
+                    )
+                except LLMIncompleteResponseError:
+                    final_text = ""
+                    break
                 _check_cancelled()
                 effective_tool_calls = completion.tool_calls
                 if not effective_tool_calls and completion.content and not is_last_round:
@@ -505,6 +616,8 @@ class AgentLoop:
                             tool_calls=dsml_calls,
                             model=completion.model,
                             provider=completion.provider,
+                            **({"reasoning_content": completion.reasoning_content}
+                               if getattr(completion, "reasoning_content", "") else {}),
                         )
                 if effective_tool_calls:
                     assistant_tool_calls = [
@@ -519,6 +632,7 @@ class AgentLoop:
                         role="assistant",
                         content=completion.content or "",
                         tool_calls=assistant_tool_calls,
+                        reasoning_content=getattr(completion, "reasoning_content", ""),
                     )
                     messages.append(assistant_tc_msg)
                     self.session_store.append(
@@ -535,6 +649,8 @@ class AgentLoop:
                         completion.tool_calls,
                         self._tools,
                         is_cancelled,
+                        tool_calls_log,
+                        self.report_date,
                     )
                     tool_batch_timed_out = False
                     for tc in completion.tool_calls:
@@ -565,26 +681,7 @@ class AgentLoop:
                                 name=tc.name,
                             ),
                         )
-                        self._nudge.on_tool_iteration()
-                        if should_capture(tc.name, result):
-                            summary = extract_summary(tc.name, result)
-                            from trade_compass_agent.memory.observation_store import estimate_importance, extract_concepts
-                            self._obs_store.append(
-                                session_id=session.session_id,
-                                tool_name=tc.name,
-                                summary=summary,
-                                raw_preview=result[:2000],
-                                importance=estimate_importance(tc.name, summary),
-                                concepts=extract_concepts(summary),
-                            )
-                        if tc.name == "write_knowledge" and is_committed_mutation(tc.name, tc.arguments, result):
-                            self._nudge.on_memory_write()
-                        elif tc.name == "skill_manage" and is_committed_mutation(tc.name, tc.arguments, result):
-                            self._nudge.on_skill_write()
-                        section = _section_from_tool(tc.name, result)
-                        if section:
-                            sections.append(section)
-                            self._emit("section", _section_to_dict(section))
+                        record_tool_effects(tc.name, tc.arguments, result)
                     if tool_batch_timed_out:
                         self._emit("status", {"text": "部分数据源超时，基于已有结果整理结论…"})
                         break
@@ -602,7 +699,7 @@ class AgentLoop:
                 force_prompt = ChatMessage(
                     role="user",
                     content=(
-                        "工具调用轮次已耗尽。不要再调用工具。"
+                        "本轮工具阶段已经结束。不要再调用工具。"
                         "请只基于本轮用户问题、已有上下文和上方所有 tool 结果，直接输出最终结论。"
                         "必须给出可读的总结，不要写“请查看上方工具输出”。"
                     ),
@@ -612,15 +709,34 @@ class AgentLoop:
                 def _on_forced_delta(chunk: str) -> None:
                     nonlocal forced_text
                     forced_text += chunk
-                    self._emit("delta", {"text": chunk})
+                    if not publish_after_verification:
+                        self._emit("delta", {"text": chunk})
 
                 try:
-                    completion = client.stream_complete(
-                        [*messages, force_prompt],
-                        tools=None,
-                        on_delta=_on_forced_delta,
-                        is_cancelled=is_cancelled,
-                    )
+                    if is_lmstudio_qwen(getattr(client, "name", ""), getattr(client, "model", "")):
+                        from trade_compass_agent.runtime.report_quality import report_portfolio_facts
+                        summary_messages = [
+                            ChatMessage(role="system", content=(
+                                "你是执行报告整理器。仅依据给定任务和真实工具结果生成最终报告。"
+                                "没有成交回执时必须明确本轮未成交，不得编造工具调用、交易或trade_id。"
+                                "分别报告账户本金和当前可用现金；可用现金合计以portfolio_facts.total_available_cash为准，不得用本金额度替代。"
+                                "该现金合计为null时须标注未确认，不能填零或其他确定金额。"
+                                "数据不足则明确缺口；遵守原系统规则。\n" + messages[0].content
+                            )),
+                            ChatMessage(role="user", content=json.dumps({
+                                "task": message, "tool_results": tool_calls_log,
+                                "portfolio_facts": report_portfolio_facts(tool_calls_log),
+                                "instruction": force_prompt.content,
+                            }, ensure_ascii=False)),
+                        ]
+                        completion = client.stream_complete(
+                            summary_messages, tools=None, on_delta=_on_forced_delta, is_cancelled=is_cancelled,
+                        )
+                    else:
+                        completion = client.stream_complete(
+                            [*messages, force_prompt], tools=None,
+                            on_delta=_on_forced_delta, is_cancelled=is_cancelled,
+                        )
                     _check_cancelled()
                     raw_forced = (completion.content or forced_text).strip()
                     final_text, _leftover = _parse_dsml_tool_calls(raw_forced)
@@ -635,7 +751,81 @@ class AgentLoop:
             if not final_text:
                 final_text = TOOL_ROUND_LIMIT_MESSAGE
 
+            from trade_compass_agent.runtime.verifier import unverified_execution_claim
+            from trade_compass_agent.runtime.report_quality import (
+                assess_data_quality, report_facts, report_issues, report_portfolio_facts, report_settlement_facts, retain_rejected_report,
+                review_report_evidence,
+            )
+            def review_call(system, user):
+                _check_cancelled()
+                review_messages = [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
+                reviewed = client.stream_complete(review_messages, tools=None,
+                    on_delta=lambda _chunk: None, is_cancelled=is_cancelled)
+                return reviewed.content or ""
+
+            if publish_after_verification and unverified_execution_claim(final_text, tool_calls_log):
+                retain_rejected_report(self.config.data_dir, session.session_id, final_text,
+                                       ["成交声明缺少匹配的本轮回执"])
+                raise AgentTurnError("报告声称已成交，但缺少本轮成交回执；本轮执行未确认，请核对账本")
+            issues = report_issues(final_text, tool_calls_log, reference_date=self.report_date)
+            if self.verify_report_grounding and final_text != TOOL_ROUND_LIMIT_MESSAGE:
+                try:
+                    issues.extend(review_report_evidence(final_text, message, tool_calls_log, review_call))
+                except AgentTurnError as exc:
+                    retain_rejected_report(self.config.data_dir, session.session_id, final_text, [str(exc)])
+                    raise
+            if issues:
+                retain_rejected_report(self.config.data_dir, session.session_id, final_text, issues)
+                correction_limit = 2 if self.verify_report_grounding else 1
+                correction_issues = list(issues)
+                for correction_index in range(correction_limit):
+                    correction = [ChatMessage(role="system", content=(
+                        "只校正报告，不执行任何操作。以给定本轮事实修正标的名称、日期、高低价、数值关系和证据缺口，"
+                        "保留有依据的结论与数据缺口；不能编造成交或补造数据。只输出最终完整报告，"
+                        "仅改已指出的错处，保留其余正确内容；不要新增计算结果，无法核实的派生百分比直接删除并保留原始数值。"
+                        "对问题涉及的整句或表格整行重新核对数值、单位、日期和来源归属，不能只替换数字或引用标签。"
+                        "新闻中的历史估值与基本面工具的当前估值必须分别表述，不能把工具数值写成新闻曾披露的数值；"
+                        "若无法清楚区分来源，删去冲突断言并保留待核实说明。先前指出的问题也不能再次引入。"
+                        "历史日期的当日不能改成今日；FIFO净盈亏已扣分配费用，不能用价差乘数量替换。"
+                        "不写校正过程、行号、审查步骤或开发说明。")),
+                        ChatMessage(role="user", content=json.dumps({"report": final_text,
+                            "issues": issues, "previous_issues": correction_issues, "facts": report_facts(tool_calls_log),
+                            "portfolio_facts": report_portfolio_facts(tool_calls_log),
+                            "settlement_facts": report_settlement_facts(tool_calls_log),
+                            "report_date": self.report_date,
+                            **({"task": message, "tool_results": tool_calls_log} if self.verify_report_grounding else {
+                                "market_tool_results": [(name, raw) for name, raw in tool_calls_log
+                                                        if name in {"get_market_pulse", "get_fund_flow"}]
+                            })}, ensure_ascii=False))]
+                    _check_cancelled()
+                    corrected = client.stream_complete(correction, tools=None,
+                        on_delta=lambda _chunk: None, is_cancelled=is_cancelled)
+                    candidate = (corrected.content or "").strip()
+                    remaining = report_issues(candidate, tool_calls_log, reference_date=self.report_date)
+                    if self.verify_report_grounding and candidate:
+                        remaining.extend(review_report_evidence(candidate, message, tool_calls_log, review_call))
+                    if not candidate or unverified_execution_claim(candidate, tool_calls_log):
+                        retain_rejected_report(self.config.data_dir, session.session_id, candidate,
+                                               remaining or ["校正报告为空或成交声明未核实"])
+                        raise AgentTurnError("报告中的标的或数值关系未能核实，本轮结果未发布")
+                    if not remaining:
+                        final_text = candidate
+                        break
+                    retain_rejected_report(self.config.data_dir, session.session_id, candidate, remaining)
+                    if correction_index + 1 == correction_limit:
+                        raise AgentTurnError("报告中的标的或数值关系未能核实，本轮结果未发布")
+                    final_text, issues = candidate, remaining
+                    correction_issues = list(dict.fromkeys([*correction_issues, *remaining]))
+            initial_data = ([("analyze_portfolio", json.dumps(self.initial_portfolio))]
+                            if self.initial_portfolio is not None else [])
+            quality = assess_data_quality([*initial_data, *tool_calls_log], planning_reference_date=self.planning_reference_date)
+            if quality.warnings:
+                final_text += "\n\n数据可用性：\n" + "\n".join(f"- {w}" for w in quality.warnings)
+            if quality.execution_warnings:
+                final_text += "\n\n未成交记录：\n" + "\n".join(f"- {w}" for w in quality.execution_warnings)
             final_text += "".join(build_report_evidence(final_text, tool_calls_log))
+            if publish_after_verification:
+                self._emit("delta", {"text": final_text})
 
             section_payload = [_section_to_dict(s) for s in sections]
             self.session_store.append(
@@ -652,12 +842,16 @@ class AgentLoop:
                 summary=final_text,
                 sections=sections,
                 turn_id=turn_id,
+                warnings=quality.warnings,
+                degraded=quality.degraded,
             )
-            curate_turn_insight(config=self.config, user_message=message, response=response)
+            if not quality.degraded:
+                curate_turn_insight(config=self.config, user_message=message, response=response)
             self._nudge.on_user_turn()
             review_messages = messages + [ChatMessage(role="assistant", content=final_text)]
             try:
-                self._maybe_background_review(review_messages, source_session_id=session.session_id, source_turn_id=turn_id)
+                if not quality.degraded:
+                    self._maybe_background_review(review_messages, source_session_id=session.session_id, source_turn_id=turn_id)
             except Exception:
                 logger.exception("Analysis completed; background review dispatch failed")
             self._update_session_summary(session, tool_calls_log, final_text)
@@ -669,6 +863,8 @@ class AgentLoop:
                     "sections": section_payload,
                     "ok": True,
                     "turn_id": turn_id,
+                    "warnings": quality.warnings,
+                    "degraded": quality.degraded,
                 },
             )
             return response
@@ -703,42 +899,6 @@ class AgentLoop:
             )
             return response
         except Exception as exc:
-            error_text = str(exc)
-            # Reactive compression: context overflow → trim and retry once
-            if TokenBudget.is_context_overflow_error(error_text) and _budget.enabled:
-                logger.warning(
-                    "context overflow detected, attempting aggressive trim: %s",
-                    type(exc).__name__,
-                )
-                try:
-                    system_msg = messages[0] if messages and messages[0].role == "system" else None
-                    middle = messages[1:] if system_msg else messages
-                    trimmed, pruned, saved = trim_tool_results(
-                        middle,
-                        protect_recent_count=5,   # aggressive: only keep 5 recent
-                        protect_recent_tokens=4000,  # ~4K token tail
-                        protect_head_count=1,
-                    )
-                    if pruned > 0:
-                        logger.info(
-                            "emergency trim: %d messages pruned, ~%s chars saved; retrying",
-                            pruned, f"{saved:,}",
-                        )
-                        self._emit("status", {"text": "上下文过长，压缩后重试…"})
-                        messages = [system_msg] + trimmed if system_msg else trimmed
-                        if system_msg is None and messages[0].role != "system":
-                            messages.insert(0, ChatMessage(role="system", content=context.system_prompt))
-                        # Retry the entire tool-calling loop with compressed context
-                        return self.run_turn(
-                            message,
-                            session_id=session_id,
-                            attachments=attachments,
-                            turn_id=turn_id,
-                            is_cancelled=is_cancelled,
-                        )
-                except Exception as trim_err:
-                    logger.error("emergency trim failed: %s", trim_err)
-
             error_summary = f"分析过程中出现错误：{type(exc).__name__}"
             self.session_store.append(
                 session,
@@ -874,7 +1034,18 @@ import re
 _DIRECTIONAL_PATTERN = re.compile(
     r"(买入|卖出|加仓|减仓|建仓|清仓|做多|做空|追涨|抄底|建议介入|可以买|适合买|建议卖)",
 )
-_SYMBOL_PATTERN = re.compile(r"(?<![A-Za-z0-9_])(\d{6})(?![A-Za-z0-9_])")
+_SYMBOL_PATTERN = re.compile(r"(?<![A-Za-z0-9_.])(\d{6})(?![A-Za-z0-9_]|\.\d)")
+
+
+def _instrument_mentions(text: str) -> set[str]:
+    """Keep instrument codes while excluding explicitly labelled model budgets."""
+    numbers = r"\d+(?:\s*[/、,，]\s*\d+)*(?:\s*(?:逐轮)?(?:增至|至)\s*\d+)?"
+    budgets = [rf"{numbers}\s*(?:输入\s*)?(?:tokens?|字符|窗口)",
+               rf"(?:估算输入|输入\s*tokens?|输出预留|已加载窗口|上下文窗口|窗口上限|窗口)"
+               rf"\s*(?:tokens?\s*)?(?:分别为|固定为?|为|从|[:：=])?\s*{numbers}"]
+    for pattern in budgets:
+        text = re.sub(pattern, lambda match: re.sub(r"\d", " ", match[0]), text, flags=re.IGNORECASE)
+    return set(_SYMBOL_PATTERN.findall(text))
 
 
 def build_report_evidence(analysis_text: str, tool_calls_log: list[tuple[str, str]]) -> list[str]:
@@ -888,7 +1059,7 @@ def _check_data_gap(final_text: str, tool_calls_log: list[tuple[str, str]]) -> s
     """If directional advice is given without supporting get_bars data, return a warning."""
     if not _DIRECTIONAL_PATTERN.search(final_text):
         return None
-    symbols_mentioned = set(_SYMBOL_PATTERN.findall(final_text))
+    symbols_mentioned = _instrument_mentions(final_text)
     if not symbols_mentioned:
         return None
     symbols_with_bars = set()

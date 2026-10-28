@@ -105,7 +105,17 @@ def test_fact_store_deduplicates_by_stable_id(tmp_path: Path):
     assert store.query(start=date(2026, 6, 26), end=date(2026, 6, 26), limit=10)
 
 
-def test_workflow_manifests_load_and_run_without_persistence():
+def test_workflow_manifests_load_and_run_without_persistence(tmp_path, monkeypatch):
+    from trade_compass_agent.config import LLMConfig
+    from trade_compass_agent.ops.job_definition import StepOutput
+    from trade_compass_agent.runtime.tools import builtin_operations
+    # persist=False still records diagnostics and nested workflow state.
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory",
+                       data_provider="sample", llm=LLMConfig(provider="disabled"))
+    async def analysis(_ctx):
+        return StepOutput(message="test report", data={"analysis": "test report"})
+    monkeypatch.setattr(builtin_operations, "check_global_markets", analysis)
+    monkeypatch.setattr(builtin_operations, "agent_premarket_briefing", analysis)
     workflows = load_workflow_assets()
 
     assert {
@@ -120,7 +130,7 @@ def test_workflow_manifests_load_and_run_without_persistence():
         "weekend_review",
     } <= set(workflows)
     morning_steps = {step.id: step for step in workflows["morning_plan"].steps}
-    assert morning_steps["agent_plan"].timeout_seconds == 900
+    assert morning_steps["agent_plan"].timeout_seconds == 1800
 
     catalyst = run_workflow_asset_by_id(
         "catalyst_calendar_cn",
@@ -141,6 +151,7 @@ def test_workflow_manifests_load_and_run_without_persistence():
             ],
         },
         persist=False,
+        config=config,
     )
     assert catalyst["events"][0]["no_trade_disclaimer"] is True
     assert catalyst["schema_version"] == 2
@@ -163,6 +174,7 @@ def test_workflow_manifests_load_and_run_without_persistence():
             ],
         },
         persist=False,
+        config=config,
     )
     assert ideas["ideas"][0]["direction"] == "watch"
     assert ideas["ideas"][0]["no_trade_disclaimer"] is True
@@ -175,6 +187,7 @@ def test_workflow_manifests_load_and_run_without_persistence():
             "upstream": {"overnight_news": "unit test research context"},
         },
         persist=False,
+        config=config,
     )
     assert research["workflow_id"] == "premarket_briefing"
     assert research["no_trade_disclaimer"] is True

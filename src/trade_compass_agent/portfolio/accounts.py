@@ -88,12 +88,14 @@ class AccountStore:
         capital: float = 0.0,
     ) -> Account:
         data = self._load()
+        kind = AccountKind(kind)
+        if any(d["kind"] == kind.value for d in data):
+            raise ValueError(f"账户类型 {kind.value} 已存在")
         account_id = str(uuid.uuid4())[:8]
         now = datetime.now(timezone.utc).isoformat()
-        kind_value = kind.value if isinstance(kind, AccountKind) else kind
         entry = {
             "id": account_id,
-            "kind": kind_value,
+            "kind": kind.value,
             "name": name,
             "description": description,
             "capital": capital,
@@ -109,8 +111,11 @@ class AccountStore:
             if d["id"] == account_id:
                 for k, v in kwargs.items():
                     if k in ("name", "description", "capital", "kind"):
-                        if k == "kind" and isinstance(v, AccountKind):
-                            v = v.value
+                        if k == "kind":
+                            kind = AccountKind(v)
+                            if kind.value != d["kind"]:
+                                raise ValueError("账户类型不可更改；成交记录按账户类型归属")
+                            v = kind.value
                         d[k] = v
                 data[i] = d
                 self._save(data)

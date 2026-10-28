@@ -103,6 +103,32 @@ class InstrumentStore:
         content = "\n".join(entries).strip()
         return self.update_section(symbol, "交易历史", content, name=name)
 
+    def reconcile_name(self, symbol: str, name: str, *, recovery_dir: Path) -> dict:
+        """Correct current quote identity while retaining all historical reasons."""
+        import hashlib
+
+        if not name.strip() or "\n" in name:
+            return {"ok": False, "changed": False}
+        path = self._path_for(symbol)
+        if not path.exists():
+            self._create(symbol, name)
+        page = path.read_text(encoding="utf-8")
+        identity = f"证券身份核对：{symbol}={name}"
+        header = f"# {symbol} - {name}"
+        if page.splitlines()[0] == header and identity in page:
+            return {"ok": True, "changed": False}
+        recovery_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        backup = recovery_dir / f"{symbol}-{hashlib.sha256(page.encode()).hexdigest()[:16]}.md"
+        if not backup.exists():
+            self._atomic_write(backup, page)
+        updated = re.sub(r"^#[^\n]*", header, page, count=1)
+        notes = self._get_section_content(updated, "笔记")
+        if identity not in notes:
+            note = f"{identity}（新浪行情，{datetime.now(timezone.utc).date()}核对）。历史摘要中的名称不代表当前证券身份；交易代码、数量和价格以账本为准。"
+            updated = self._replace_section(updated, "笔记", (notes + "\n" + note).strip())
+        self._atomic_write(path, self._update_timestamp(updated))
+        return {"ok": True, "changed": True, "backup": str(backup)}
+
     def list_instruments(self) -> list[str]:
         """List all tracked instrument symbols."""
         return sorted(

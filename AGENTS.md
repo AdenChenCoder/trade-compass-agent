@@ -22,6 +22,28 @@ Preserve these load-bearing contracts unless the task explicitly changes them:
 - Web, CLI, API, scheduled jobs, and services must not invent separate business
   semantics for the same operation.
 
+## Development and stable runtime
+
+- Source checkouts are for development and isolated validation. The stable,
+  long-running investment service must use an installed, versioned package
+  published from reviewed code pushed to the remote repository.
+- Local builds, editable installs, passing tests, and source service restarts do
+  not constitute a production release. Acceptance must include installing the
+  published version outside the checkout and exercising its supported entry point.
+- Development and validation must use separate configuration, data, memory,
+  ports, and process supervision from the stable service. Tests must not execute
+  live investment tasks or replay missed trades to establish correctness.
+- Before editing or restarting, confirm which executable, configuration, data,
+  memory, and assets the stable service actually uses. If a legacy service still
+  runs from source, validate in an isolated copy and preserve the existing
+  service until the replacement package has passed acceptance and cutover is
+  authorized. Never assume running Python has already loaded every source file.
+- Cutover and upgrades must preserve account records, sessions, schedules,
+  memory, credentials, mobile identity and pairings, and a recoverable backup.
+  Only one service may write to the production roots. Retain the previous
+  package version and service definition; verify data compatibility before rollback.
+- Follow `docs/development-production.md` for release and cutover gates.
+
 ## Repository map
 
 | Path | Responsibility |
@@ -77,9 +99,96 @@ python scripts/check_dist.py
 Run installed-wheel checks outside the repository so Python cannot accidentally
 import `src/` instead of the built package.
 
+Workflow tests must pass isolated data and memory roots even with `persist=False`;
+diagnostics and nested workflows can still write state. Mock model execution in
+unit tests explicitly: clearing API keys does not disable a local LLM service.
+
 ## Known pitfalls
 
+- Report and memory checks must preserve flow signs, rounding, units, category
+  scope, explicit historical references, and mixed stock/sector prose. Pair each
+  new rejection with valid-output checks; indicator labels are not company names.
+  Fetch time does not certify observation time, and zero quotes are unavailable.
+  Company identity columns in tables remain identity claims inside conditional
+  plans; generic indicator columns are not names. Opening-market assertions need
+  dated post-open quotes. Shadow comparisons preserve production context order
+  and distinguish generated drafts from reviewed, publishable reports.
+  Report correction receives the market receipts that triggered its checks;
+  a dated price bar cannot supply the missing date of an industry snapshot.
+- Explicit dates constrain memory recall without removing historical records.
+  Autonomous runs read the exact-day morning workflow artifact with its full
+  caveats and latest failure state; it is research context, not a trading order.
+- A missing item in a Top-N snapshot does not prove sector retreat or outflow;
+  comparisons need compatible dates, providers, and classification scopes.
+- Research patterns must retain tool-verified instrument identity and observation
+  provenance. Repeated searches or Skill reads are not independent trade outcomes;
+  every cited day needs matching observations before a pattern can be persisted.
+- Count pattern evidence days and select daily archive sources in the configured
+  scheduler timezone. Preserve raw UTC timestamps, observation IDs, and legacy
+  naive calendar dates; crossing UTC midnight alone is not a second local day.
+- Promotion counts and learning summaries must distinguish accepted memory writes
+  from archived or rejected review results; a completed review is not an adoption.
+- Memory review commits use store-owned snapshot versions and atomic concurrency
+  checks. Models judge content by exact entry ID; any returned version must still
+  match. Repeated recalled content must not crowd distinct evidence out of ranking.
+  Background completion must compare the original versions plus its own accepted
+  write receipts; concurrent edits remain eligible for review. Persist each source
+  task before serializing execution so a busy worker cannot discard another input.
+- Keep new review batches bounded while reusing valid older batch checkpoints.
+  Direct memory model calls honor the configured agent budget and earlier parent
+  deadline/cancellation; an HTTP read timeout alone is not a wall-clock budget.
+  Timeout and cancellation must reach a visible terminal state without unbounded
+  thread joins, including reflection preflight. Check the execution budget at
+  trade and learning publication boundaries, and reject late worker results.
+- Model reasoning used across a tool sequence is transient operational context.
+  Count its input tokens separately from recent-source protection, and keep it
+  out of public session records and factual summary inputs.
+- Trading rejections are execution outcomes, distinct from data availability.
+  Preserve the actual rejection reason without reporting a functioning tool as
+  unavailable or treating queried historical trades as new executions.
+- Reports and learned profit claims use authoritative FIFO net settlements,
+  including allocated entry and exit fees, and verified post-trade balances.
+  Quantity/price annotations are not company-name claims; retain checks for
+  genuine explicit instrument-name mismatches without triggering false repairs.
+  Account capital is distinct from available cash. Verify monetary aggregates
+  from account balances, retain unknown balances, and exclude decimal amounts
+  and timestamp fractions from instrument-code extraction.
+- Report checks preserve signed and grouped amounts, distinguish transaction
+  counts from compared amounts, and retain exchange prefixes such as N/C/*ST
+  in verified instrument names. Single and batch data retries resolve only the
+  matching instrument and timeframe; another successful query cannot hide a gap.
+  Retain dated OHLC evidence for historical claims, scope anaphoric dates to their
+  clause or section, and distinguish tool calls/metadata from explicit company
+  names. Review and correction use the same fee-inclusive FIFO allocations;
+  returned allocation totals never imply full account history.
+- Daily journals, close analyses, daily reflections, and weekly strategy reviews
+  use distinct execution sessions per run. Keep prior sessions searchable, and
+  verify actual current-turn reads before
+  accepting claims that historical tool results are current facts.
+  Review factual claims against current receipts before publication; report
+  correction must not repeat trades or other mutations.
+  Deterministic checks must distinguish explicit current facts from dated history,
+  anaphoric references, and conditional or future thresholds. Keep corrections
+  bounded by the original deadline and recheck the same receipts before publication.
+- Review totals come from the full dated run ledger, not a capped recent-detail
+  list. Preserve trigger types and actual failure reasons in every review path.
+  A planned stop price is not evidence of an accepted or executable stop order.
+- Exact Chinese memory phrases must reach the matching record before loose FTS
+  matches. Verify the actual tool result after updates and reopen, not only index presence.
 - Editable builds and release builds have different frontend behavior.
+- Updating source does not reload an already running service. After service
+  changes, restart through its existing supervisor and verify the new process
+  and affected task entry point. Do not mix freshly imported handlers with
+  cached modules or replay missed autonomous trades to validate a restart.
+- Scheduled model steps need a budget for multiple tool rounds with the configured
+  model. Verify inference profiles, output reserves, and transient reasoning for
+  every supported model after a switch. Scope tools to the task; preserve evidence checks.
+- Premarket plans may use the exact previous trading session's dated close as a
+  planning reference. Keep it separate from last-trade fallbacks and live valuation;
+  reference coverage cannot make a price fresh or relax execution quote checks.
+  Missing, older, undated, or sample data still constitutes a gap. Report recovery
+  appends a verified revision while preserving the original run status and receipts;
+  it must not replay trading, learning, or delivery.
 - `.trade-compass/skills/` becomes
   `trade_compass_agent/builtin_skills/` inside a wheel.
 - Source and packaged configuration defaults are separate files.

@@ -432,8 +432,9 @@ def test_agent_daily_journal_injects_reflection_context() -> None:
 
     captured: dict[str, str] = {}
 
-    async def capture_run_agent_step(_ctx, prompt, _job_id, *, step_id=None):
+    async def capture_run_agent_step(_ctx, prompt, _job_id, *, step_id=None, tool_whitelist=None):
         captured["prompt"] = prompt
+        assert tool_whitelist and "place_paper_trade" not in tool_whitelist
         return StepOutput(message="done", data={})
 
     with patch("trade_compass_agent.runtime.tools.builtin_operations.run_agent_step", capture_run_agent_step):

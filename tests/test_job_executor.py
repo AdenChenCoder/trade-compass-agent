@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import date
 
 import pytest
 
 from trade_compass_agent.config import AppConfig
+from trade_compass_agent.llm.providers import ChatCompletion, ToolCall
 from trade_compass_agent.ops.agent_session import ScheduledAgentSession, run_agent_step
 from trade_compass_agent.ops.job_definition import JobDefinition, StepContext, StepOutput
 from trade_compass_agent.ops.job_executor import JobExecutor
@@ -58,6 +60,69 @@ def test_run_agent_step_respects_step_timeout(monkeypatch):
     asyncio.run(_run())
 
 
+def test_sector_flow_agent_keeps_market_and_history_tools_scoped(tmp_path, monkeypatch):
+    import json
+
+    seen_tools = []
+
+    class FlowClient:
+        name = "mock"
+        model = "mock"
+
+        def stream_complete(self, messages, *, tools=None, on_delta=None, is_cancelled=None):
+            names = {tool["function"]["name"] for tool in tools or []}
+            seen_tools.append(names)
+            assert {"get_fund_flow", "search_industry_boards", "search_concept_boards",
+                    "search_memory", "recall_timeline", "sina_realtime_quote"} <= names
+            assert not names & {"place_paper_trade", "batch_paper_trades", "dispatch_specialists"}
+            assert len(names) <= 11
+            if len(seen_tools) == 1:
+                return ChatCompletion(content="", model=self.model, provider=self.name, tool_calls=[
+                    ToolCall(id="flow", name="get_fund_flow", arguments='{"category":"industry","limit":5}'),
+                ])
+            assert any(message.role == "tool" and message.name == "get_fund_flow"
+                       and json.loads(message.content)["source"] == "unit-test" for message in messages)
+            return ChatCompletion(content="板块资金流报告：本次仅为行业快照，昨日同口径数据缺失，无法判断趋势。",
+                                  model=self.model, provider=self.name)
+
+    monkeypatch.setattr("trade_compass_agent.runtime.loop.create_chat_client", lambda config: FlowClient())
+    monkeypatch.setattr("trade_compass_agent.data.fund_flow.tool_get_fund_flow",
+                        lambda **kwargs: {"source": "unit-test", "category": "industry", "rows": []})
+    ctx = StepContext(config=AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory",
+                                      data_provider="sample"), date=date.today())
+
+    output = asyncio.run(builtin_operations.scan_sector_capital_flow(ctx))
+
+    assert "无法判断趋势" in output.data["analysis"]
+    assert len(seen_tools) == 2
+
+
+@pytest.mark.parametrize("symbols", [[], ["600519"], ["600519", "000001"]])
+def test_overnight_news_keeps_held_symbols_and_news_tools_scoped(tmp_path, monkeypatch, symbols):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("trade_compass_agent.portfolio.JsonPaperPortfolio.positions",
+                        lambda self: [SimpleNamespace(symbol=symbol) for symbol in symbols])
+    agent = AsyncMock(return_value=StepOutput(message="隔夜新闻", data={"analysis": "公告核验结果"}))
+    monkeypatch.setattr(builtin_operations, "run_agent_step", agent)
+    ctx = StepContext(config=AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory"),
+                      date=date(2026, 10, 21))
+
+    output = asyncio.run(builtin_operations.scan_overnight_news(ctx))
+
+    if not symbols:
+        agent.assert_not_called()
+        assert "空仓" in output.message
+        return
+    agent.assert_awaited_once()
+    assert all(symbol in agent.call_args.args[1] for symbol in symbols)
+    tools = agent.call_args.kwargs["tool_whitelist"]
+    assert {"search_stock_news", "search_announcements", "get_events", "fetch_url", "web_search"} <= tools
+    assert not tools & {"place_paper_trade", "batch_paper_trades", "dispatch_specialists"}
+    assert len(tools) <= 10
+
+
 def test_job_executor_marks_degraded_primary_output(tmp_path, monkeypatch):
     config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory")
     store = SqliteRunStore(config.data_dir / "scheduler.db")
@@ -88,6 +153,39 @@ def test_job_executor_marks_degraded_primary_output(tmp_path, monkeypatch):
     assert run.status == "degraded"
     assert run.ok is False
     assert run.error == "Agent 执行失败: read timed out"
+
+
+def test_job_timeout_waits_for_worker_exit_before_terminal_status(tmp_path, monkeypatch):
+    from trade_compass_agent.runtime.workflows import engine
+
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+    def slow_workflow(*_args, cancel_event, **_kwargs):
+        started.set()
+        assert cancel_event.wait(2)
+        assert release.wait(2)
+        finished.set()
+        return {}
+
+    monkeypatch.setattr(engine, "run_workflow_asset_by_id", slow_workflow)
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory")
+    store = SqliteRunStore(config.data_dir / "scheduler.db")
+    job = JobDefinition(id="timeout_probe", name="timeout", description="", schedule="",
+                        workflow_id="probe", trading_day_only=False, timeout_seconds=.05)
+
+    async def run():
+        task = asyncio.create_task(JobExecutor(config, store).execute(job, trigger="api"))
+        try:
+            assert await asyncio.to_thread(started.wait, 1)
+            await asyncio.sleep(.1)
+            assert store.recent_runs()[0].status == "running"
+        finally:
+            release.set()
+        result = await task
+        assert finished.is_set()
+        assert result.status == store.get_run(result.id).status == "timed_out"
+
+    asyncio.run(run())
 
 
 def test_l5_screener_returns_structured_signals_and_summary(tmp_path, monkeypatch):

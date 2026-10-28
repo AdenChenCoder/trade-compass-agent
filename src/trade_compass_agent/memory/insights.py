@@ -14,12 +14,13 @@ import json
 import logging
 from collections import Counter
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import date
 from enum import Enum
 from pathlib import Path
 
+from trade_compass_agent.memory.calendar import record_day
 from trade_compass_agent.memory.decision_store import DecisionStore
-from trade_compass_agent.memory.observation_store import ObservationStore
+from trade_compass_agent.memory.observation_store import ObservationStore, validated_concepts
 from trade_compass_agent.memory.patterns import TradingPattern
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,13 @@ class TradingInsight:
     confidence: float
 
 
+
+def _dated_decisions(decisions: list, as_of: date | None, timezone_name: str) -> list:
+    if as_of is None:
+        return decisions
+    return [d for d in decisions if d.decided_at and record_day(d.decided_at, timezone_name) <= as_of
+            and (not d.resolved_at or record_day(d.resolved_at, timezone_name) <= as_of)]
+
 # ------------------------------------------------------------------
 # Hotness spike detection
 # ------------------------------------------------------------------
@@ -52,9 +60,13 @@ def _detect_hotness_spikes(
     recent_days: int = 3,
     baseline_days: int = 7,
     min_growth: float = 2.0,
+    *, as_of: date | None = None, timezone_name: str = "Asia/Shanghai",
 ) -> list[TradingInsight]:
-    recent_freq = obs_store.concept_frequency(lookback_days=recent_days)
-    baseline_freq = obs_store.concept_frequency(lookback_days=baseline_days)
+    kwargs = {"as_of": as_of, "timezone_name": timezone_name} if as_of is not None else {}
+    recent = [(obs, validated_concepts(obs)) for obs in obs_store.recent_by_days(recent_days, **kwargs)]
+    baseline = [(obs, validated_concepts(obs)) for obs in obs_store.recent_by_days(baseline_days, **kwargs)]
+    recent_freq = Counter(concept for _, concepts in recent for concept in concepts)
+    baseline_freq = Counter(concept for _, concepts in baseline for concept in concepts)
 
     insights: list[TradingInsight] = []
     for concept, recent_count in recent_freq.items():
@@ -69,14 +81,14 @@ def _detect_hotness_spikes(
         growth = recent_rate / baseline_rate
         if growth >= min_growth and recent_count >= 3:
             confidence = min(1.0, growth / 5.0)
-            related_obs = obs_store.search(concept, limit=5)
-            evidence_ids = [obs.id for obs in related_obs if obs.id]
+            evidence_ids = [obs.id for obs, concepts in recent if concept in concepts and obs.id][:5]
             insights.append(TradingInsight(
                 kind=InsightKind.HOTNESS_SPIKE,
                 title=f"{concept} 关注度激增 ({growth:.1f}x)",
-                body=f"近 {recent_days} 天出现 {recent_count} 次，相比前 {baseline_days} 天的 {baseline_count} 次显著增加",
+                body=(f"近 {recent_days} 天出现 {recent_count} 次；近 {baseline_days} 天（含近{recent_days}天）共 {baseline_count} 次，"
+                      f"按日均记录次数比较为 {growth:.1f} 倍。仅表示观察记录中的关注频率，不代表市场资金或收益。"),
                 evidence=evidence_ids,
-                actionable=f"关注 {concept} 是否有新的交易机会或风险变化",
+                actionable=f"核对 {concept} 的观察来源与记录覆盖，仅作为研究线索",
                 confidence=confidence,
             ))
     return sorted(insights, key=lambda x: -x.confidence)[:5]
@@ -85,6 +97,7 @@ def _detect_hotness_spikes(
 def _find_obs_ids_for_decisions(
     obs_store: ObservationStore,
     decisions: list,
+    *, as_of: date | None = None, timezone_name: str = "Asia/Shanghai",
 ) -> list[str]:
     """Find observation IDs related to a set of decisions by searching their symbols."""
     seen: set[str] = set()
@@ -92,6 +105,8 @@ def _find_obs_ids_for_decisions(
     symbols = {d.symbol for d in decisions if d.symbol}
     for symbol in symbols:
         for obs in obs_store.search(symbol, limit=3):
+            if as_of is not None and record_day(obs.created_at, timezone_name) > as_of:
+                continue
             if obs.id and obs.id not in seen:
                 seen.add(obs.id)
                 result.append(obs.id)
@@ -105,8 +120,9 @@ def _find_obs_ids_for_decisions(
 def _detect_cross_source(
     patterns: list[TradingPattern],
     dec_store: DecisionStore,
+    *, as_of: date | None = None, timezone_name: str = "Asia/Shanghai",
 ) -> list[TradingInsight]:
-    pending = dec_store.get_pending()
+    pending = _dated_decisions(dec_store.get_pending(), as_of, timezone_name)
     if not pending or not patterns:
         return []
 
@@ -134,9 +150,10 @@ def _detect_cross_source(
 def _detect_decision_patterns(
     dec_store: DecisionStore,
     obs_store: ObservationStore,
+    *, as_of: date | None = None, timezone_name: str = "Asia/Shanghai",
 ) -> list[TradingInsight]:
     insights: list[TradingInsight] = []
-    all_decisions = dec_store.search(limit=100)
+    all_decisions = _dated_decisions(dec_store.search(limit=100), as_of, timezone_name)
     if len(all_decisions) < 3:
         return []
 
@@ -145,7 +162,7 @@ def _detect_decision_patterns(
     side_counts = Counter(d.side for d in recent)
     dominant_side, dominant_count = side_counts.most_common(1)[0]
     if dominant_count >= 7:
-        evidence_ids = _find_obs_ids_for_decisions(obs_store, recent)
+        evidence_ids = _find_obs_ids_for_decisions(obs_store, recent, as_of=as_of, timezone_name=timezone_name)
         insights.append(TradingInsight(
             kind=InsightKind.DECISION_PATTERN,
             title=f"近期交易集中 {dominant_side}",
@@ -162,7 +179,7 @@ def _detect_decision_patterns(
         win_rate = len(wins) / len(resolved)
         if win_rate < 0.3:
             avg_loss = sum(d.outcome_pnl_pct for d in resolved if d.outcome_pnl_pct <= 0) / max(1, len(resolved) - len(wins))
-            evidence_ids = _find_obs_ids_for_decisions(obs_store, resolved[-10:])
+            evidence_ids = _find_obs_ids_for_decisions(obs_store, resolved[-10:], as_of=as_of, timezone_name=timezone_name)
             insights.append(TradingInsight(
                 kind=InsightKind.DECISION_PATTERN,
                 title=f"胜率偏低 ({win_rate:.0%})",
@@ -173,7 +190,7 @@ def _detect_decision_patterns(
             ))
         elif win_rate > 0.7 and len(resolved) >= 10:
             avg_gain = sum(d.outcome_pnl_pct for d in wins) / len(wins) if wins else 0
-            evidence_ids = _find_obs_ids_for_decisions(obs_store, wins[-5:])
+            evidence_ids = _find_obs_ids_for_decisions(obs_store, wins[-5:], as_of=as_of, timezone_name=timezone_name)
             insights.append(TradingInsight(
                 kind=InsightKind.DECISION_PATTERN,
                 title=f"高胜率策略 ({win_rate:.0%})",
@@ -194,9 +211,10 @@ def _detect_risk_signals(
     dec_store: DecisionStore,
     patterns: list[TradingPattern],
     obs_store: ObservationStore,
+    *, as_of: date | None = None, timezone_name: str = "Asia/Shanghai",
 ) -> list[TradingInsight]:
     insights: list[TradingInsight] = []
-    pending = dec_store.get_pending()
+    pending = _dated_decisions(dec_store.get_pending(), as_of, timezone_name)
     if not pending:
         return []
 
@@ -207,7 +225,7 @@ def _detect_risk_signals(
         most_common_sym, count = symbol_freq.most_common(1)[0]
         if count >= 3:
             concentrated = [d for d in pending if d.symbol == most_common_sym]
-            evidence_ids = _find_obs_ids_for_decisions(obs_store, concentrated)
+            evidence_ids = _find_obs_ids_for_decisions(obs_store, concentrated, as_of=as_of, timezone_name=timezone_name)
             insights.append(TradingInsight(
                 kind=InsightKind.RISK_SIGNAL,
                 title=f"持仓集中度过高: {most_common_sym}",
@@ -219,7 +237,7 @@ def _detect_risk_signals(
 
     # Losing streak
     resolved = dec_store.search(status="resolved", limit=20) + dec_store.search(status="reflected", limit=20)
-    resolved = sorted(resolved, key=lambda d: d.resolved_at or d.decided_at)
+    resolved = sorted(_dated_decisions(resolved, as_of, timezone_name), key=lambda d: d.resolved_at or d.decided_at)
     if len(resolved) >= 3:
         streak = 0
         for d in reversed(resolved):
@@ -229,7 +247,7 @@ def _detect_risk_signals(
                 break
         if streak >= 3:
             streak_decisions = resolved[-streak:]
-            evidence_ids = _find_obs_ids_for_decisions(obs_store, streak_decisions)
+            evidence_ids = _find_obs_ids_for_decisions(obs_store, streak_decisions, as_of=as_of, timezone_name=timezone_name)
             insights.append(TradingInsight(
                 kind=InsightKind.RISK_SIGNAL,
                 title=f"连续亏损 {streak} 笔",
@@ -249,11 +267,12 @@ def _detect_risk_signals(
 def _detect_opportunities(
     patterns: list[TradingPattern],
     dec_store: DecisionStore,
+    *, as_of: date | None = None, timezone_name: str = "Asia/Shanghai",
 ) -> list[TradingInsight]:
     if not patterns:
         return []
 
-    all_decisions = dec_store.search(limit=200)
+    all_decisions = _dated_decisions(dec_store.search(limit=200), as_of, timezone_name)
     decision_symbols = {d.symbol for d in all_decisions}
 
     insights: list[TradingInsight] = []
@@ -277,14 +296,14 @@ def _detect_opportunities(
 # Public API
 # ------------------------------------------------------------------
 
-def _load_previous_insights(memory_dir: Path) -> list[dict]:
+def _load_previous_insights(memory_dir: Path, *, as_of: date | None = None) -> list[dict]:
     """Load the most recent past insights file for dedup."""
     insights_dir = memory_dir / "dreaming" / "insights"
     if not insights_dir.is_dir():
         return []
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = (as_of or date.today()).isoformat()
     for f in sorted(insights_dir.glob("*.json"), reverse=True):
-        if f.stem == today:
+        if f.stem >= today:
             continue
         try:
             return json.loads(f.read_text(encoding="utf-8"))
@@ -310,20 +329,22 @@ def generate_insights(
     patterns: list[TradingPattern],
     *,
     memory_dir: Path | None = None,
+    as_of: date | None = None,
+    timezone_name: str = "Asia/Shanghai",
 ) -> list[TradingInsight]:
     """Generate all trading insights. Returns sorted by confidence desc.
 
     When memory_dir is provided, deduplicates against previous day's insights.
     """
     all_insights: list[TradingInsight] = []
-    all_insights.extend(_detect_hotness_spikes(obs_store))
-    all_insights.extend(_detect_cross_source(patterns, dec_store))
-    all_insights.extend(_detect_decision_patterns(dec_store, obs_store))
-    all_insights.extend(_detect_risk_signals(dec_store, patterns, obs_store))
-    all_insights.extend(_detect_opportunities(patterns, dec_store))
+    all_insights.extend(_detect_hotness_spikes(obs_store, as_of=as_of, timezone_name=timezone_name))
+    all_insights.extend(_detect_cross_source(patterns, dec_store, as_of=as_of, timezone_name=timezone_name))
+    all_insights.extend(_detect_decision_patterns(dec_store, obs_store, as_of=as_of, timezone_name=timezone_name))
+    all_insights.extend(_detect_risk_signals(dec_store, patterns, obs_store, as_of=as_of, timezone_name=timezone_name))
+    all_insights.extend(_detect_opportunities(patterns, dec_store, as_of=as_of, timezone_name=timezone_name))
 
     if memory_dir:
-        prev = _load_previous_insights(memory_dir)
+        prev = _load_previous_insights(memory_dir, as_of=as_of)
         if prev:
             all_insights = _dedup_insights(all_insights, prev)
 
@@ -331,9 +352,11 @@ def generate_insights(
     return all_insights
 
 
-def persist_insights(memory_dir: Path, insights: list[TradingInsight]) -> Path:
+def persist_insights(memory_dir: Path, insights: list[TradingInsight], *, as_of: date | None = None) -> Path:
     """Save insights to memory_vault/dreaming/insights/{date}.json."""
-    today = datetime.now().strftime("%Y-%m-%d")
+    from trade_compass_agent.llm.providers import check_execution_active
+    check_execution_active()
+    today = (as_of or date.today()).isoformat()
     out_dir = memory_dir / "dreaming" / "insights"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{today}.json"

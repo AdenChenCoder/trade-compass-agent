@@ -208,4 +208,8 @@ def shared_consolidation_worker(
                 llm_call=llm_call,
             )
             _singleton.start()
+        elif llm_call is not None:
+            # A new turn may use a newly selected connection. Do not retain the
+            # first AgentLoop's provider for all later maintenance operations.
+            _singleton._llm_call = llm_call
         return _singleton

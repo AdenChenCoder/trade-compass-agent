@@ -62,7 +62,9 @@ def test_procedure_extraction_prefers_patch_before_create():
     assert '才 skill_manage(action="create")' in PROCEDURE_EXTRACTION_PROMPT
 
 
-def test_procedure_extraction_uses_dreaming_skill_actor(monkeypatch):
+def test_procedure_extraction_uses_dreaming_skill_actor(monkeypatch, tmp_path):
+    from trade_compass_agent.config import AppConfig, LLMConfig
+
     captured = {}
 
     class FakeSession:
@@ -71,12 +73,15 @@ def test_procedure_extraction_uses_dreaming_skill_actor(monkeypatch):
             captured["memory_actor"] = memory_actor
 
         def run(self, prompt, *, timeout):
+            captured["timeout"] = timeout
             return "ok"
 
     monkeypatch.setattr("trade_compass_agent.ops.agent_session.ScheduledAgentSession", FakeSession)
 
-    assert run_procedure_extraction(config=object(), strong_patterns=[]) == "ok"
-    assert captured == {"job_id": "dreaming-procedural", "memory_actor": "dreaming"}
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory",
+                       llm=LLMConfig(agent_timeout=3600))
+    assert run_procedure_extraction(config=config, strong_patterns=[]) == "ok"
+    assert captured == {"job_id": "dreaming-procedural", "memory_actor": "dreaming", "timeout": 3600}
 
     def test_mark_promoted(self, tmp_path: Path):
         store = self._make_store(tmp_path)
@@ -358,3 +363,29 @@ class TestDreamDiary:
         append_dream_diary(tmp_path, "第二天的反思。")
         content2 = path.read_text()
         assert "第二天的反思" in content2
+
+
+def test_dreaming_background_sessions_are_scoped_to_workflow_run(monkeypatch, tmp_path):
+    from trade_compass_agent.config import AppConfig, LLMConfig
+    from trade_compass_agent.memory.dream_diary import run_dream_diary
+    calls = []
+
+    class FakeSession:
+        def __init__(self, config, **kwargs):
+            calls.append(kwargs)
+
+        def run(self, prompt, *, timeout):
+            assert timeout == 3600
+            return "finished"
+
+    monkeypatch.setattr("trade_compass_agent.ops.agent_session.ScheduledAgentSession", FakeSession)
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory",
+                       llm=LLMConfig(agent_timeout=3600))
+    run_procedure_extraction(config, [], run_id="daily-run")
+    run_procedure_extraction(config, [], weekly=True, run_id="weekly-run")
+    run_dream_diary(config, "evidence", run_id="daily-run")
+    run_dream_diary(config, "evidence", weekly=True, run_id="weekly-run")
+    assert [c["job_id"] for c in calls] == ["dreaming-procedural", "dreaming-weekly-procedural",
+                                          "dreaming-diary", "dreaming-weekly-diary"]
+    assert [c["step_id"] for c in calls] == ["daily-run", "weekly-run", "daily-run", "weekly-run"]
+    assert [c["run_id"] for c in calls] == ["daily-run", "weekly-run", "daily-run", "weekly-run"]

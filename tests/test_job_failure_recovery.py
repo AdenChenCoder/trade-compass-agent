@@ -215,30 +215,77 @@ def test_workflow_timeout_finishes_trace_and_ignores_late_success(tmp_path, monk
     from trade_compass_agent.runtime.workflows import engine
 
     release = threading.Event()
+    finished = threading.Event()
     original = engine.load_workflow_assets()["close_check"]
-    manifest = replace(original, timeout_seconds=1, steps=(replace(original.steps[-1], depends_on=()),))
+    manifest = replace(original, timeout_seconds=.03, steps=(replace(original.steps[-1], depends_on=()),))
 
     def slow_step(step, *args, **kwargs):
-        release.wait(3)
+        release.wait(2)
+        finished.set()
         return engine.WorkflowStepResult(step.id, step.type, step.uses, {"analysis": "late report"})
 
     monkeypatch.setattr(engine, "_run_step", slow_step)
     try:
-        output = engine.run_workflow_asset(
-            manifest, {"as_of": "2026-09-11"},
-            config=AppConfig(data_dir=tmp_path, data_provider="sample"), run_id="timeout-test",
-        )
-        assert output["degraded"]
+        with pytest.raises(TimeoutError, match="workflow timed out"):
+            engine.run_workflow_asset(
+                manifest, {"as_of": "2026-09-11"},
+                config=AppConfig(data_dir=tmp_path, memory_dir=tmp_path / "memory", data_provider="sample"), run_id="timeout-test",
+            )
+        assert not finished.is_set()
+        record = json.loads((tmp_path / "workflow_runs/timeout-test/run.json").read_text())
+        assert record["status"] == "timed_out"
+        assert record["artifact_paths"] == []
         path = tmp_path / "workflow_runs/timeout-test/trace.jsonl"
         before = path.read_text()
         events = [json.loads(line) for line in before.splitlines()]
-        finished = [e for e in events if e["event"] == "builtin.step_finished"]
-        assert len(finished) == 1
-        assert finished[0]["data"]["status"] == "failed"
+        finished_events = [e for e in events if e["event"] == "builtin.step_finished"]
+        assert len(finished_events) == 1
+        assert finished_events[0]["data"]["status"] == "failed"
     finally:
         release.set()
+        assert finished.wait(2)
     time.sleep(0.05)
     assert path.read_text() == before
+
+
+def test_scheduler_cancellation_stops_before_next_workflow_step(tmp_path, monkeypatch):
+    from trade_compass_agent.runtime.workflows import engine
+
+    original = engine.load_workflow_assets()["close_check"]
+    manifest = replace(original, steps=(
+        replace(original.steps[0], id="a", depends_on=()),
+        replace(original.steps[1], id="b", depends_on=()),
+    ))
+    entered, release, cancelled = threading.Event(), threading.Event(), threading.Event()
+    calls, errors = [], []
+
+    def run_step(step, *args, **kwargs):
+        calls.append(step.id)
+        entered.set()
+        release.wait(2)
+        return engine.WorkflowStepResult(step.id, step.type, step.uses, {"ok": True})
+
+    def run():
+        try:
+            engine.run_workflow_asset(manifest, {"as_of": "2026-09-11"},
+                config=AppConfig(data_dir=tmp_path, memory_dir=tmp_path / "memory", data_provider="sample"),
+                run_id="cancel-test", cancel_event=cancelled)
+        except TimeoutError as exc:
+            errors.append(str(exc))
+
+    monkeypatch.setattr(engine, "_run_step", run_step)
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        cancelled.set()
+    finally:
+        release.set()
+        worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert calls == ["a"] and errors
+    record = json.loads((tmp_path / "workflow_runs/cancel-test/run.json").read_text())
+    assert record["status"] == "timed_out"
 
 
 def test_partial_screening_warnings_reach_workflow_artifact(tmp_path, monkeypatch):
@@ -257,7 +304,7 @@ def test_partial_screening_warnings_reach_workflow_artifact(tmp_path, monkeypatc
     manifest = replace(original, steps=(original.steps[0], replace(original.steps[-1], depends_on=("screening",))))
     monkeypatch.setattr(engine, "ToolRegistry", Tools)
     output = engine.run_workflow_asset(manifest, {"as_of": "2026-09-11"},
-        config=AppConfig(data_dir=tmp_path, data_provider="sample"), run_id="partial")
+        config=AppConfig(data_dir=tmp_path, memory_dir=tmp_path / "memory", data_provider="sample"), run_id="partial")
     assert "行情覆盖1/2" in output["warnings"]
 
 
@@ -270,7 +317,7 @@ def test_primary_failure_is_degraded_in_persisted_workflow_record(tmp_path, monk
         step.id, step.type, step.uses, {"error": "data unavailable"},
     ))
     output = engine.run_workflow_asset(manifest, {"as_of": "2026-09-11"},
-        config=AppConfig(data_dir=tmp_path, data_provider="sample"), run_id="failed-primary")
+        config=AppConfig(data_dir=tmp_path, memory_dir=tmp_path / "memory", data_provider="sample"), run_id="failed-primary")
     record = json.loads((tmp_path / "workflow_runs/failed-primary/run.json").read_text())
     assert output["degraded"]
     assert record["status"] == "degraded"
@@ -297,8 +344,8 @@ def test_non_autonomous_scheduled_agent_stops_late_mutations(tmp_path, monkeypat
 
     agent.run_turn = run_turn
     monkeypatch.setattr(loop.AgentLoop, "from_config", lambda *a, **kw: agent)
-    session = ScheduledAgentSession(AppConfig(data_dir=tmp_path), job_id="close")
+    session = ScheduledAgentSession(AppConfig(data_dir=tmp_path, memory_dir=tmp_path / "memory"), job_id="close")
     with pytest.raises(TimeoutError):
         session.run("test", timeout=0.03)
-    assert done.wait(1)
+    assert done.is_set()
     assert seen == {"cancelled": True, "rejected": True}

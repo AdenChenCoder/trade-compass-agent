@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from trade_compass_agent.concurrency import file_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,18 @@ class TrackedSignal:
     lessons: list[str] = field(default_factory=list)
     source_skills: list[str] = field(default_factory=list)
     closed_at: str | None = None
+    account: str | None = None
+    strategy_id: str | None = None
+    strategy_version: str | None = None
+    research_run_id: str | None = None
+    entry_trade_ids: list[str] = field(default_factory=list)
+    exit_trade_ids: list[str] = field(default_factory=list)
+    entry_quantity: int = 0
+    resolved_quantity: int = 0
+    net_pnl: float | None = None
+    fees: float | None = None
+    attribution_status: str = "unlinked"
+    outcome_basis: str = "price_followthrough"
 
 
 class SignalTracker:
@@ -66,8 +79,12 @@ class SignalTracker:
             target_price=signal_data.get("target_price"),
             emitted_at=signal_data.get("timestamp", datetime.now().isoformat()),
             source_skills=list(signal_data.get("source_skills") or []),
+            account=signal_data.get("account"),
+            strategy_id=signal_data.get("strategy_id"),
+            strategy_version=signal_data.get("strategy_version"),
+            research_run_id=signal_data.get("research_run_id"),
         )
-        with self._lock:
+        with file_transaction(self.path.with_suffix(".lock")), self._lock:
             existing = self._load_all()
             if any(r.signal_id == signal_id for r in existing):
                 return tracked
@@ -76,7 +93,7 @@ class SignalTracker:
 
     def update_entry(self, signal_id: str, actual_entry: float) -> None:
         """Record that a position was opened."""
-        with self._lock:
+        with file_transaction(self.path.with_suffix(".lock")), self._lock:
             records = self._load_all()
             for r in records:
                 if r.signal_id == signal_id:
@@ -89,7 +106,7 @@ class SignalTracker:
         self, signal_id: str, actual_exit: float, days_held: int = 0
     ) -> TrackedSignal | None:
         """Record position closed and compute outcome."""
-        with self._lock:
+        with file_transaction(self.path.with_suffix(".lock")), self._lock:
             records = self._load_all()
             target: TrackedSignal | None = None
             for r in records:
@@ -115,14 +132,15 @@ class SignalTracker:
         """Get all signals with open positions."""
         return [r for r in self._load_all() if r.status == "active"]
 
-    def get_closed(self, limit: int = 50) -> list[TrackedSignal]:
+    def get_closed(self, limit: int = 50, *, outcome_basis: str | None = None) -> list[TrackedSignal]:
         """Get recently closed signals."""
-        closed = [r for r in self._load_all() if r.status == "closed"]
+        closed = [r for r in self._load_all() if r.status == "closed"
+                  and (outcome_basis is None or r.outcome_basis == outcome_basis)]
         return closed[-limit:]
 
-    def get_stats(self) -> dict[str, Any]:
+    def get_stats(self, *, outcome_basis: str | None = None) -> dict[str, Any]:
         """Compute aggregate tracking statistics."""
-        closed = [r for r in self._load_all() if r.status == "closed"]
+        closed = self.get_closed(limit=1_000_000, outcome_basis=outcome_basis)
         if not closed:
             return {"total": 0, "wins": 0, "losses": 0, "win_rate": 0.0}
 
@@ -133,6 +151,7 @@ class SignalTracker:
 
         return {
             "total": len(closed),
+            "outcome_basis": outcome_basis or (closed[0].outcome_basis if len({r.outcome_basis for r in closed}) == 1 else "mixed"),
             "wins": len(wins),
             "losses": len(losses),
             "win_rate": round(len(wins) / len(closed), 3) if closed else 0.0,
@@ -188,6 +207,11 @@ class SignalTracker:
             "lessons": r.lessons,
             "source_skills": r.source_skills,
             "closed_at": r.closed_at,
+            **{key: getattr(r, key) for key in (
+                "account", "strategy_id", "strategy_version", "research_run_id",
+                "entry_trade_ids", "exit_trade_ids", "entry_quantity", "resolved_quantity",
+                "net_pnl", "fees", "attribution_status", "outcome_basis",
+            )},
         }
 
     @staticmethod
@@ -212,4 +236,9 @@ class SignalTracker:
             lessons=data.get("lessons", []),
             source_skills=data.get("source_skills", []),
             closed_at=data.get("closed_at"),
+            **{key: data[key] for key in (
+                "account", "strategy_id", "strategy_version", "research_run_id",
+                "entry_trade_ids", "exit_trade_ids", "entry_quantity", "resolved_quantity",
+                "net_pnl", "fees", "attribution_status", "outcome_basis",
+            ) if key in data},
         )

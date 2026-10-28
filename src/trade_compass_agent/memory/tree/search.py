@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 
@@ -44,7 +45,17 @@ def _sanitize_fts5_query(raw: str) -> str:
 
     if not quoted:
         return ""
-    return " OR ".join(quoted)
+    broad = " OR ".join(quoted)
+    dates = []
+    for value in re.findall(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)", raw):
+        try:
+            date.fromisoformat(value)
+        except ValueError:
+            continue
+        dates.append(f'"{value}"')
+    # Explicit dates constrain recall. Other words still affect ranking, and
+    # multi-date comparisons can retrieve either date without deleting history.
+    return f'({" OR ".join(dict.fromkeys(dates))}) AND ({broad})' if dates else broad
 
 
 @dataclass(frozen=True)
@@ -99,6 +110,13 @@ class MemorySearchIndex:
             return []
         try:
             with self._connect() as conn:
+                # The default tokenizer does not split Chinese into bigrams.
+                # Keep an exact phrase ahead of unrelated broad OR matches.
+                exact = conn.execute(
+                    "SELECT scope, content, path, 0.0 AS rank FROM chunks_fts "
+                    "WHERE instr(lower(content), lower(?)) > 0 ORDER BY rowid DESC LIMIT ?",
+                    (q, limit),
+                ).fetchall() if len(q) > 2 and _CJK_RANGE.search(q) else []
                 rows = conn.execute(
                     """
                     SELECT scope, content, path, rank
@@ -107,8 +125,13 @@ class MemorySearchIndex:
                     ORDER BY rank
                     LIMIT ?
                     """,
-                    (fts_q, limit),
+                    (fts_q, limit + len(exact) if limit >= 0 else limit),
                 ).fetchall()
+                if exact:
+                    exact_paths = {row["path"] for row in exact}
+                    rows = exact + [row for row in rows if row["path"] not in exact_paths]
+                    if limit >= 0:
+                        rows = rows[:limit]
         except sqlite3.OperationalError:
             return []
         return [

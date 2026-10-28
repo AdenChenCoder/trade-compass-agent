@@ -4,7 +4,14 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-29
+
 ### Added
+
+- Versioned strategy hypotheses and exploratory backtests shared by Web, CLI,
+  and Agent tools, with explicit sample-data labels and fee-inclusive results.
+- Model connection settings that retain per-provider choices and a recovery
+  copy, plus local LM Studio context measurement and recorded model usage.
 
 - Added a bundled mobile PWA for creating conversations, continuing the same
   Agent sessions as the desktop workbench, and reading paginated history.
@@ -26,6 +33,19 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
   overrides of packaged built-ins while preserving user pin protection.
 
 ### Fixed
+
+- Refresh locked Python and frontend dependencies to pass the release security
+  audit, including image, PDF, network and build-tool vulnerability fixes.
+
+- Apply saved model choices to subsequent scheduled and channel tasks while
+  preserving tasks already in progress.
+- Bound timed-out or cancelled work and reject late trading and learning writes.
+- Keep distinct background-review inputs and leave concurrent memory edits due
+  for review rather than marking them reviewed against an older snapshot.
+- Check current cash totals with their units and rounding while preserving dated
+  historical statements and conditional plans.
+- Preserve Chinese exact-phrase recall, focused conversation actions, mobile
+  conversation controls with the keyboard open, and local health probes behind proxies.
 
 - Review low-trust memory candidates against current rules and saved evidence,
   with independent verification before admission or retirement; retain

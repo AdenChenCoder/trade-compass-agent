@@ -65,7 +65,7 @@ steps:
   - id: agent_plan
     type: tool
     uses: tool:builtin.agent_morning_plan
-    timeout_seconds: 900
+    timeout_seconds: 1800
     depends_on:
       - screening
       - screener_ai
@@ -97,7 +97,7 @@ persistence:
 risk_policy:
   may_recommend_trade: false
   produces_broker_order: false
-timeout_seconds: 1800
+timeout_seconds: 3600
 retry_policy:
   max_retries: 0
   backoff_seconds: 0

@@ -21,7 +21,7 @@ from trade_compass_agent.config import (
 )
 
 
-def test_source_and_packaged_defaults_use_deepseek_multimodal_model() -> None:
+def test_source_and_packaged_defaults_use_qwen38_multimodal_model() -> None:
     source = yaml.safe_load(SOURCE_CONFIG_PATH.read_text(encoding="utf-8"))
     packaged = yaml.safe_load(
         (PROJECT_ROOT / "config" / "packaged.yaml").read_text(encoding="utf-8")
@@ -29,14 +29,15 @@ def test_source_and_packaged_defaults_use_deepseek_multimodal_model() -> None:
 
     for raw in (source, packaged):
         assert raw["llm"] == {
-            "provider": "deepseek",
-            "model": "deepseek-flash",
-            "api_key_env": "DEEPSEEK_API_KEY",
-            "timeout": 60.0,
+            "provider": "lmstudio",
+            "model": "qwen3.8-27b",
+            "api_key_env": "",
+            "timeout": 900.0,
+            "agent_timeout": 3600.0,
             "max_retries": 2,
-            "vision_model": "deepseek-flash",
-            "vision_provider": "deepseek",
-            "vision_api_key_env": "DEEPSEEK_API_KEY",
+            "vision_model": "qwen3.8-27b",
+            "vision_provider": "lmstudio",
+            "vision_api_key_env": "",
         }
 
 

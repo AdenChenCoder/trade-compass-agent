@@ -194,10 +194,13 @@ def test_draft_created_between_batches_remains_eligible_for_next_review(tmp_path
             store.add("审查期间出现的新候选")
         return model(decision="defer", refs=[])(system, user)
     result = review_candidates(store, evaluate)
-    assert not result["ok"] and len(result["commits"]) == 8
+    assert not result["ok"] and len(result["commits"]) == 4
     assert not store.maintenance_marker("candidate_reviewed_fingerprint")
+    completed = {r["entry_id"] for r in result["reviews"]}
+    unfinished = {m.entry_id for m in store.get_entries_with_meta()} - completed
     result = review_candidates(store, model(decision="defer", refs=[]))
-    assert result["ok"] and len(result["reviews"]) == 10
+    assert result["ok"] and {r["entry_id"] for r in result["reviews"]} == unfinished
+    assert len(unfinished) == 6
 
 
 @pytest.mark.parametrize("failure", ["timeout", "unknown_reference", "empty_reason", "rules_changed", "memory_changed"])
@@ -323,6 +326,8 @@ def test_retirement_requires_reason_and_curator_sees_complete_rules_and_text(tmp
         return json.dumps([{"verdict": "ARCHIVE", "entry_prefix": text[:20], "reason": "长期未访问"}])
     assert scan_active_conflicts(store.list_active(), "约束", "", judge, user_rules="用户规则优先") == []
     def conflict(*args):
+        if "独立知识复核者" in args[0]:
+            return json.dumps({"reviews": [{"entry_id": row["entry_id"], "valid": True, "reason": "仅基于旧用户规则的核验。"}]})
         return json.dumps([{"verdict": "ARCHIVE", "entry_prefix": text[:20], "reason": "违反具体规则", "archive_basis": "contradiction"}])
     reports = scan_active_conflicts(store.list_active(), "约束", "", conflict, user_rules="用户规则优先")
     RulesStore(tmp_path).add("后来新增规则", actor="user")

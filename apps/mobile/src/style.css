@@ -25,7 +25,7 @@ h3 { font-size: 14px; line-height: 1.6; font-weight: 600; }
 .muted, small { color: var(--muted); }
 .muted { font-size: 12px; line-height: 1.8; margin-top: 8px; }
 .eyebrow { display: block; font-size: 10px; font-weight: 600; color: var(--muted); letter-spacing: .1em; }
-.app-shell { width: 100%; max-width: 760px; height: 100dvh; margin: 0 auto; display: flex; flex-direction: column; overflow: hidden; background: var(--canvas); }
+.app-shell { position: relative; top: var(--app-viewport-offset-top, 0px); width: 100%; max-width: 760px; height: var(--app-viewport-height, 100dvh); margin: 0 auto; display: flex; flex-direction: column; overflow: hidden; background: var(--canvas); }
 .app-shell.has-rail { padding-left: calc(var(--rail) + env(safe-area-inset-left)); }
 .app-header { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; gap: 10px; min-height: calc(var(--header) + env(safe-area-inset-top)); padding: calc(14px + env(safe-area-inset-top)) calc(18px + env(safe-area-inset-right)) 14px 18px; background: #fff; border-bottom: 1px solid var(--line); position: relative; z-index: 5; }
 .header-title { min-width: 0; flex: 1; }
@@ -36,9 +36,9 @@ h3 { font-size: 14px; line-height: 1.6; font-weight: 600; }
 .new-session-button svg { width: 21px; height: 21px; }
 .connection-indicator { width: 7px; height: 7px; border-radius: 50%; background: #a0a4ad; flex-shrink: 0; box-shadow: 0 0 0 4px #f2f3f5; margin-right: 4px; }
 .connection-indicator.online { background: var(--accent); box-shadow: 0 0 0 4px #edf6f0; }
-.side-rail { position: fixed; top: 0; bottom: 0; left: max(0px, calc((100vw - 760px) / 2)); width: calc(var(--rail) + env(safe-area-inset-left)); height: 100dvh; display: flex; flex-direction: column; align-items: center; padding: calc(18px + env(safe-area-inset-top)) 6px calc(18px + env(safe-area-inset-bottom)) calc(6px + env(safe-area-inset-left)); border-right: 1px solid var(--line); background: #fff; z-index: 6; }
+.side-rail { position: absolute; inset: 0 auto 0 0; width: calc(var(--rail) + env(safe-area-inset-left)); height: 100%; display: flex; flex-direction: column; align-items: center; overflow: clip; padding: calc(18px + env(safe-area-inset-top)) 6px calc(18px + env(safe-area-inset-bottom)) calc(6px + env(safe-area-inset-left)); border-right: 1px solid var(--line); background: #fff; z-index: 6; }
 .brand-mark { display: block; width: 34px; height: 34px; flex-shrink: 0; object-fit: contain; }
-.side-rail nav { display: flex; flex: 1; flex-direction: column; gap: 10px; width: 100%; padding-top: 32px; }
+.side-rail nav { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 10px; width: 100%; padding-top: 32px; }
 .rail-item { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; width: 100%; min-height: 56px; padding: 7px 0; border: 0; border-radius: 10px; background: transparent; color: #767b84; }
 .rail-item span { font-size: 9px; font-weight: 550; white-space: nowrap; }
 .rail-item svg { width: 20px; height: 20px; }
@@ -46,6 +46,9 @@ h3 { font-size: 14px; line-height: 1.6; font-weight: 600; }
 .rail-connection { margin-top: auto; }
 .rail-device { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 50%; background: var(--canvas); color: #6b7079; margin-top: 20px; }
 .rail-device svg { width: 15px; height: 15px; }
+html[data-keyboard-open] .side-rail { padding-top: calc(8px + env(safe-area-inset-top)); padding-bottom: 8px; }
+html[data-keyboard-open] .side-rail nav { gap: 4px; padding-top: 8px; }
+html[data-keyboard-open] .rail-device { margin-top: 8px; }
 main { flex: 1; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior-y: contain; padding: 24px calc(18px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) 18px; }
 main.chat-main { padding: 0; }
 .chat-main > .notice { margin: 16px 18px 0; }

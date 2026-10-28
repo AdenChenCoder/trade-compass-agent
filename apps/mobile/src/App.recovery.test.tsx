@@ -113,6 +113,38 @@ it('shows first-use pairing only after an explicit disconnected response', async
   expect(element.querySelector('input[placeholder="我的手机"]')).not.toBeNull();
 });
 
+it('keeps the app shell aligned with the visual viewport when the keyboard pans it', async () => {
+  network = true;
+  let viewportHeight = 844;
+  let viewportOffsetTop = 0;
+  const viewport = new EventTarget();
+  Object.defineProperties(viewport, {
+    height: { get: () => viewportHeight },
+    offsetTop: { get: () => viewportOffsetTop },
+  });
+  vi.stubGlobal('visualViewport', viewport as VisualViewport);
+
+  await act(async () => root.render(createElement(App))); await settle();
+  await click('原会话');
+  element.querySelector<HTMLTextAreaElement>('textarea')!.focus();
+  expect(document.documentElement.style.getPropertyValue('--app-viewport-height')).toBe('844px');
+  expect(document.documentElement.style.getPropertyValue('--app-viewport-offset-top')).toBe('0px');
+
+  viewportHeight = 420;
+  viewportOffsetTop = 106;
+  await act(async () => viewport.dispatchEvent(new Event('resize')));
+  expect(document.documentElement.style.getPropertyValue('--app-viewport-height')).toBe('420px');
+  expect(document.documentElement.style.getPropertyValue('--app-viewport-offset-top')).toBe('106px');
+  expect(document.documentElement.hasAttribute('data-keyboard-open')).toBe(true);
+
+  viewportHeight = 844;
+  viewportOffsetTop = 0;
+  await act(async () => viewport.dispatchEvent(new Event('scroll')));
+  expect(document.documentElement.style.getPropertyValue('--app-viewport-height')).toBe('844px');
+  expect(document.documentElement.style.getPropertyValue('--app-viewport-offset-top')).toBe('0px');
+  expect(document.documentElement.hasAttribute('data-keyboard-open')).toBe(false);
+});
+
 it('restores the connection tab without showing pairing while authorization is loading', async () => {
   network = true;
   sessionStorage.setItem('compass.resume-after-update', JSON.stringify({ computerId: computer.computer_id,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import socket
 import sys
 import urllib.error
@@ -74,9 +75,18 @@ class ServiceVerification:
 
 
 def probe_health(host: str, port: int, *, timeout: float = 3.0) -> tuple[bool, str]:
-    url = f"http://{host}:{port}/health"
+    local = host == "localhost"
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        address = ipaddress.ip_address(host.strip("[]"))
+        local = address.is_loopback or address.is_unspecified
+    except ValueError:
+        pass
+    authority = f"[{host.strip('[]')}]" if ":" in host else host
+    url = f"http://{authority}:{port}/health"
+    try:
+        # A local service probe must not depend on the user's outbound proxy.
+        open_url = urllib.request.build_opener(urllib.request.ProxyHandler({})).open if local else urllib.request.urlopen
+        with open_url(url, timeout=timeout) as resp:
             if resp.status == 200:
                 return True, "ok"
             return False, f"HTTP {resp.status}"

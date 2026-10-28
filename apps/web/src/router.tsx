@@ -9,6 +9,13 @@ export const router = createBrowserRouter([
       { index: true, element: <Navigate to="/agent" replace /> },
       { path: "/agent", element: <AgentPage /> },
       {
+        path: "/research",
+        lazy: async () => {
+          const { ResearchPage } = await import("@/routes/ResearchPage");
+          return { Component: ResearchPage };
+        },
+      },
+      {
         path: "/portfolio",
         lazy: async () => {
           const { PortfolioPage } = await import("@/routes/PortfolioPage");

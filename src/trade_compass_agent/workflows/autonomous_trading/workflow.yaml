@@ -13,12 +13,12 @@ steps:
   - id: execution
     type: tool
     uses: tool:builtin.agent_autonomous_trading
-    timeout_seconds: 840
+    timeout_seconds: 1770
     with:
       job_id: autonomous_trading
       as_of: "{inputs.as_of}"
       run_id: "{inputs.run_id}"
-      step_timeout_seconds: 780
+      step_timeout_seconds: 1740
     primary_output: true
 output_schema: schemas/output.schema.json
 persistence:
@@ -29,7 +29,7 @@ risk_policy:
   may_recommend_trade: true
   executes_paper_trades: true
   produces_broker_order: false
-timeout_seconds: 900
+timeout_seconds: 1800
 retry_policy:
   max_retries: 0
   backoff_seconds: 0

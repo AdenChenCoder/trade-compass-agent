@@ -11,7 +11,13 @@ from fastapi.testclient import TestClient
 from trade_compass_agent.llm.providers import ChatCompletion, ToolCall
 
 
-def test_agent_turn_without_api_key_returns_503(client: TestClient) -> None:
+def test_remote_agent_turn_without_api_key_returns_503(client: TestClient, tmp_path, monkeypatch) -> None:
+    from trade_compass_agent.config import invalidate_config_cache
+
+    config = tmp_path / "remote.yaml"
+    config.write_text("llm:\n  provider: openai\n  model: gpt-4o-mini\n  api_key_env: OPENAI_API_KEY\n")
+    monkeypatch.setenv("TRADE_COMPASS_CONFIG", str(config))
+    invalidate_config_cache()
     response = client.post(
         "/api/agent/turn",
         json={"message": "今天大盘怎么样"},
@@ -141,3 +147,36 @@ def test_load_skill_emits_skill_loaded_sse(
 
     assert turn.status_code == 200
     assert "skill_loaded" in collected
+
+
+def test_connection_change_reaches_next_turn_with_same_data_root(client, tmp_path, monkeypatch):
+    from trade_compass_agent.config import invalidate_config_cache
+    from trade_compass_agent.runtime import loop
+    from trade_compass_agent.web import agent_api
+
+    path = tmp_path / "connection.yaml"
+    path.write_text("llm:\n  provider: lmstudio\n  model: qwen3.5-35b-a3b\n")
+    monkeypatch.setenv("TRADE_COMPASS_CONFIG", str(path))
+    invalidate_config_cache()
+    monkeypatch.setattr(agent_api, "_cached_stack", None)
+    monkeypatch.setattr(agent_api, "_cached_config", None)
+    monkeypatch.setattr(loop, "shared_consolidation_worker", lambda **_kwargs: None)
+
+    class Client:
+        name = "lmstudio"
+
+        def __init__(self, config):
+            self.model = config.llm.model
+
+        def stream_complete(self, messages, **kwargs):
+            return ChatCompletion(content=self.model, model=self.model, provider=self.name)
+
+        complete = stream_complete
+
+    monkeypatch.setattr(loop, "create_chat_client", Client)
+    first = client.post("/api/agent/turn", json={"message": "报告当前模型"})
+    assert first.status_code == 200 and first.json()["summary"] == "qwen3.5-35b-a3b"
+    changed = client.patch("/api/agent/connection", json={"provider": "lmstudio", "model": "qwen3.8-27b"})
+    assert changed.status_code == 200 and changed.json()["model"] == "qwen3.8-27b"
+    second = client.post("/api/agent/turn", json={"message": "报告当前模型"})
+    assert second.status_code == 200 and second.json()["summary"] == "qwen3.8-27b"

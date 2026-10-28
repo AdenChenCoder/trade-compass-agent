@@ -25,7 +25,7 @@ persistence:
 risk_policy:
   may_recommend_trade: false
   produces_broker_order: false
-timeout_seconds: 300
+timeout_seconds: 1800
 retry_policy:
   max_retries: 1
   backoff_seconds: 0

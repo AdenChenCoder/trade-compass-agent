@@ -56,6 +56,10 @@ class ChannelAdapter(ABC):
         """Return a known configuration blocker before attempting delivery."""
         return None
 
+    def delivery_targets(self) -> list[str] | None:
+        """Snapshot recipients when the adapter supports addressed delivery."""
+        return None
+
     @abstractmethod
     async def send(self, message: ChannelMessage) -> bool:
         """Send a message to the platform. Returns True on success."""

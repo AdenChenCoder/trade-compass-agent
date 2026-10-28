@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from trade_compass_agent.memory.insights import TradingInsight
 from trade_compass_agent.memory.patterns import TradingPattern
-from trade_compass_agent.memory.promotion import PromotionCandidate, PromotionResult
+from trade_compass_agent.memory.promotion import PromotionCandidate, PromotionResult, count_promoted_memories
 from trade_compass_agent.memory.time_tree import TimeNode
 
 if TYPE_CHECKING:
@@ -57,6 +57,9 @@ PROCEDURE_EXTRACTION_PROMPT = """\
    - 历史胜率和注意事项
 5. 如果找到失败案例，说明失败原因
 
+重复检索和读取 Skill 不算独立实战，不能从调用频率推出收益、胜率或有效性。
+没有独立实战结果时，只描述待验证的研究/操作流程，不创建或改写已验证交易规则。
+
 写入技能库前必须先查重并优先更新：
 1. 先调用 skill_manage(action="list") 查看现有技能。
 2. 如果主题、触发条件或工具序列与已有 skill 重叠，先 skill_manage(action="view") 查看全文。
@@ -69,6 +72,10 @@ PROCEDURE_EXTRACTION_PROMPT = """\
 def run_procedure_extraction(
     config: "AppConfig",
     strong_patterns: list[TradingPattern],
+    *,
+    weekly: bool = False,
+    run_id: str = "",
+    run_date: date | None = None,
 ) -> str:
     """Run procedural extraction via ScheduledAgentSession.
 
@@ -81,8 +88,11 @@ def run_procedure_extraction(
         for p in strong_patterns
     )
     prompt = PROCEDURE_EXTRACTION_PROMPT.format(strong_patterns=patterns_text)
-    session = ScheduledAgentSession(config, job_id="dreaming-procedural", memory_actor="dreaming")
-    return session.run(prompt, timeout=300)
+    job_id = "dreaming-weekly-procedural" if weekly else "dreaming-procedural"
+    session = ScheduledAgentSession(
+        config, job_id=job_id, memory_actor="dreaming", step_id=run_id or None, run_id=run_id, run_date=run_date,
+    )
+    return session.run(prompt, timeout=int(config.llm.agent_timeout))
 
 
 # ------------------------------------------------------------------
@@ -172,7 +182,8 @@ def build_dreaming_summary(
             parts.append(f"- {p.theme} (strength={p.strength:.2f}): {p.description[:100]}")
 
     if promoted:
-        parts.append(f"### 晋升到长期记忆 ({len(promoted)})")
+        accepted = count_promoted_memories(promoted)
+        parts.append(f"### 知识复核结果（已采纳 {accepted}，未采纳 {len(promoted) - accepted}）")
         for c in promoted[:5]:
             if isinstance(c, PromotionResult):
                 parts.append(f"- [{c.verdict}] {c.refined_text[:100]}")
@@ -195,6 +206,8 @@ def run_dream_diary(
     dreaming_summary: str,
     *,
     weekly: bool = False,
+    run_id: str = "",
+    run_date: date | None = None,
 ) -> str:
     """Run Dream Diary via ScheduledAgentSession.
 
@@ -205,14 +218,16 @@ def run_dream_diary(
     template = WEEKLY_DIARY_PROMPT if weekly else DREAM_DIARY_PROMPT
     prompt = template.format(dreaming_summary=dreaming_summary[:4000])
     job_id = "dreaming-weekly-diary" if weekly else "dreaming-diary"
-    session = ScheduledAgentSession(config, job_id=job_id)
-    return session.run(prompt, timeout=300)
+    session = ScheduledAgentSession(config, job_id=job_id, step_id=run_id or None, run_id=run_id, run_date=run_date)
+    return session.run(prompt, timeout=int(config.llm.agent_timeout))
 
 
-def append_dream_diary(memory_dir: Path, entry: str) -> Path:
+def append_dream_diary(memory_dir: Path, entry: str, *, run_date: date | None = None) -> Path:
     """Append a diary entry to DREAM_DIARY.md."""
+    from trade_compass_agent.llm.providers import check_execution_active
+    check_execution_active()
     diary_path = memory_dir / "DREAM_DIARY.md"
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = (run_date or date.today()).isoformat()
     header = f"\n---\n## {today}\n\n"
     content = header + entry.strip() + "\n"
     with open(diary_path, "a", encoding="utf-8") as f:

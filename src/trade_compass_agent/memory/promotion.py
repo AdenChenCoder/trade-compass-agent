@@ -204,6 +204,12 @@ class PromotionResult:
     conflicts_with: str = ""
 
 
+def count_promoted_memories(results: list[PromotionResult] | list[PromotionCandidate]) -> int:
+    """Count accepted writes, keeping legacy candidate summaries compatible."""
+    return sum(not isinstance(result, PromotionResult) or result.verdict in {"KNOWLEDGE", "USER", "SUPERSEDE"}
+               for result in results)
+
+
 # ------------------------------------------------------------------
 # LLM Prompts
 # ------------------------------------------------------------------

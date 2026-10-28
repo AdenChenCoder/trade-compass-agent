@@ -48,6 +48,10 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec(("agent",), "Run one agent turn with tools.", "research", aliases=(("ask",),)),
     CommandSpec(("market-pulse",), "Show sector strength and limit-up activity.", "research"),
+    CommandSpec(("research", "list"), "List strategy versions and exploratory backtests.", "research", supports_json=True),
+    CommandSpec(("research", "save"), "Save a versioned strategy hypothesis from JSON.", "research", mutates_state=True, supports_json=True),
+    CommandSpec(("research", "run"), "Run and snapshot an exploratory daily backtest from JSON.", "research", mutates_state=True, supports_json=True),
+    CommandSpec(("research", "show"), "Read a saved research run, including its data snapshot.", "research", supports_json=True),
     CommandSpec(
         ("data", "check"),
         "Diagnose configured market-data providers.",

@@ -27,3 +27,5 @@ class TurnResponse:
     sections: list[TurnSection] = field(default_factory=list)
     turn_id: str | None = None
     interrupted: bool = False
+    warnings: list[str] = field(default_factory=list)
+    degraded: bool = False

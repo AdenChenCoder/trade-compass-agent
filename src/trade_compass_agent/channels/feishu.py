@@ -135,8 +135,23 @@ class FeishuBotAdapter(ChannelAdapter):
         self._subscribers_path = subscribers_path or self._default_subscribers_path()
         self._subscriber_chats: set[str] = self._load_subscribers()
 
+    def delivery_targets(self) -> list[str]:
+        return sorted(self._subscriber_chats)
+
+    def delivery_unavailable_reason(self, message: ChannelMessage) -> str | None:
+        targets = message.metadata.get("delivery_targets")
+        if isinstance(targets, list) and not set(targets).issubset(self._subscriber_chats):
+            return "原消息的接收会话已取消订阅，未发送。"
+        if not self.app_id or not self.app_secret:
+            return "飞书未连接，请在渠道设置中完成配置。"
+        if not message.reply_to and not message.metadata.get("chat_id") and not self._subscriber_chats:
+            return "飞书尚无接收会话，请先向机器人发送消息。"
+        return None
+
     async def send(self, message: ChannelMessage) -> bool:
         """Send message via Feishu bot API."""
+        if self.delivery_unavailable_reason(message):
+            return False
         if not self.app_id or not self.app_secret:
             logger.warning("Feishu bot credentials not configured")
             return False
@@ -173,15 +188,15 @@ class FeishuBotAdapter(ChannelAdapter):
                 return True
             elif chat_id:
                 return self._send_to_chat(
-                    client, CreateMessageRequest, CreateMessageRequestBody, chat_id, content
+                    client, CreateMessageRequest, CreateMessageRequestBody, chat_id, content,
+                    message.metadata.get("delivery_id"),
                 )
             elif self._subscriber_chats:
-                ok = False
-                for cid in list(self._subscriber_chats):
-                    if self._send_to_chat(
-                        client, CreateMessageRequest, CreateMessageRequestBody, cid, content
-                    ):
-                        ok = True
+                ok = True
+                for cid in message.metadata.get("delivery_targets", list(self._subscriber_chats)):
+                    delivered = self._send_to_chat(client, CreateMessageRequest, CreateMessageRequestBody,
+                        cid, content, message.metadata.get("delivery_id"))
+                    ok = delivered and ok
                 return ok
             else:
                 logger.warning(
@@ -203,14 +218,18 @@ class FeishuBotAdapter(ChannelAdapter):
         CreateMessageRequestBody: Any,
         chat_id: str,
         content: str,
+        delivery_id: str | None = None,
     ) -> bool:
-        body = (
+        builder = (
             CreateMessageRequestBody.builder()
             .receive_id(chat_id)
             .msg_type("text")
             .content(content)
-            .build()
         )
+        if delivery_id:
+            import hashlib
+            builder.uuid(hashlib.sha256(f"{delivery_id}:{chat_id}".encode()).hexdigest()[:32])
+        body = builder.build()
         request = (
             CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
         )
@@ -227,7 +246,7 @@ class FeishuBotAdapter(ChannelAdapter):
             import lark_oapi as lark
 
             self._client = (
-                lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).build()
+                lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).timeout(8).build()
             )
         return self._client
 

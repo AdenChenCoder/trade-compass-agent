@@ -73,6 +73,32 @@ export function App() {
   const root = `compass.v1.${connection.computer_id ?? 'unpaired'}.`;
   const requestKey = `${root}request.${selected}`;
   const draftKey = `${root}draft.${selected}`;
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const rootElement = document.documentElement;
+    const rootStyle = rootElement.style;
+    const syncViewport = () => {
+      rootStyle.setProperty('--app-viewport-height', `${viewport.height}px`);
+      rootStyle.setProperty('--app-viewport-offset-top', `${viewport.offsetTop}px`);
+      const focused = document.activeElement;
+      const editing = focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement
+        || focused instanceof HTMLElement && focused.isContentEditable;
+      rootElement.toggleAttribute('data-keyboard-open', editing && viewport.height < 560);
+    };
+    syncViewport();
+    viewport.addEventListener('resize', syncViewport);
+    viewport.addEventListener('scroll', syncViewport);
+    return () => {
+      viewport.removeEventListener('resize', syncViewport);
+      viewport.removeEventListener('scroll', syncViewport);
+      rootStyle.removeProperty('--app-viewport-height');
+      rootStyle.removeProperty('--app-viewport-offset-top');
+      rootElement.removeAttribute('data-keyboard-open');
+    };
+  }, []);
+
   const clearSentDraft = useCallback((message: string) => {
     if (cached<string>(draftKey, '').trim() === message) save(draftKey, '');
     setDraft(current => current.trim() === message ? '' : current);

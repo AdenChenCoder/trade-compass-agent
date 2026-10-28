@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import httpx
 import pytest
@@ -51,7 +51,8 @@ def test_create_chat_client_deepseek(
     client = create_chat_client(deepseek_config)
 
     mock_openai_client.assert_called_once_with(
-        api_key="test-key", timeout=90.0, max_retries=2, base_url=DEEPSEEK_BASE_URL
+        api_key="test-key", timeout=deepseek_config.llm.timeout, max_retries=2,
+        base_url=DEEPSEEK_BASE_URL, http_client=ANY,
     )
     assert client.name == "deepseek"
     assert client.model == "deepseek-chat"
@@ -96,7 +97,8 @@ def test_create_vision_client_uses_deepseek_flash(
     client = create_vision_client(config)
 
     mock_openai_client.assert_called_once_with(
-        api_key="test-key", timeout=90.0, max_retries=2, base_url=DEEPSEEK_BASE_URL
+        api_key="test-key", timeout=config.llm.timeout, max_retries=2,
+        base_url=DEEPSEEK_BASE_URL, http_client=ANY,
     )
     assert client is not None
     assert client.name == "deepseek-vision"

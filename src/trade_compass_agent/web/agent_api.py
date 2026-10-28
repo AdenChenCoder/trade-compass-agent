@@ -31,6 +31,41 @@ from trade_compass_agent.runtime.turn_control import TurnBusyError, get_turn_reg
 
 router = APIRouter(prefix="/agent")
 
+
+class ConnectionUpdate(BaseModel):
+    provider: Literal["lmstudio", "ollama", "deepseek", "openai",
+                      "anthropic", "openrouter", "dashscope", "disabled"]
+    model: str = Field(default="", max_length=200)
+
+    @field_validator("model")
+    @classmethod
+    def model_name(cls, value: str) -> str:
+        return value.strip()
+
+
+@router.get("/connection")
+def get_connection():
+    from trade_compass_agent.llm.connection import connection_settings
+    return connection_settings(load_app_config())
+
+
+@router.patch("/connection")
+def set_connection(body: ConnectionUpdate):
+    from trade_compass_agent.config import update_llm_connection
+    from trade_compass_agent.llm.connection import connection_settings
+    from trade_compass_agent.ops.tick_scheduler import reload_active_scheduler
+
+    config = update_llm_connection(body.provider, body.model)
+    # Replace future-task executors; in-flight calls retain their original config.
+    reload_active_scheduler()
+    return connection_settings(config)
+
+
+@router.post("/connection/check")
+def check_agent_connection():
+    from trade_compass_agent.llm.connection import check_connection
+    return check_connection(load_app_config())
+
 _stream_subscribers: dict[str, list[queue.Queue[TurnEvent | None]]] = {}
 _stream_buffers: dict[str, SessionStreamBuffer] = {}
 _stream_lock = threading.Lock()
@@ -230,6 +265,8 @@ def _get_cached_stack() -> tuple[AppConfig, MarketStack]:
             _cached_stack is None
             or _cached_config is None
             or _cached_config.data_dir != config.data_dir
+            or _cached_config.llm != config.llm
+            or _cached_config.context_compression != config.context_compression
         ):
             _cached_config = config
             _cached_stack = MarketStack.from_config(config)

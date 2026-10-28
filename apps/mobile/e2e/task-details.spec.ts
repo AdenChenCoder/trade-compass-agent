@@ -31,6 +31,8 @@ test('task cards open complete, accessible details and return to the same list',
     await originalCard.scrollIntoViewIfNeeded();
     const scrollBefore = await phone.locator('main').evaluate(element => element.scrollTop);
     expect(scrollBefore).toBeGreaterThan(0);
+    const cardBefore = await originalCard.boundingBox();
+    expect(cardBefore).not.toBeNull();
     await originalCard.click();
     const sheet = phone.getByRole('dialog', { name: original.title, exact: true });
     await expect(sheet).toBeVisible();
@@ -60,11 +62,13 @@ test('task cards open complete, accessible details and return to the same list',
     // Read the actual rendered detail at the start, including its status and code block.
     await sheet.getByRole('heading', { name: '整理结果', exact: true }).scrollIntoViewIfNeeded();
     await phone.screenshot({ path: testInfo.outputPath('task-detail.png'), animations: 'disabled' });
-    // Explicit return keeps the original card focused and the original scroll offset.
+    // New cards inserted above may change scrollTop; preserve the visible reading position.
     await sheet.getByRole('button', { name: '返回列表', exact: true }).click();
     await expect(sheet).toHaveCount(0);
     await expect(originalCard).toBeFocused();
-    expect(Math.abs(await phone.locator('main').evaluate(element => element.scrollTop) - scrollBefore)).toBeLessThan(2);
+    const cardAfter = await originalCard.boundingBox();
+    expect(cardAfter).not.toBeNull();
+    expect(Math.abs(cardAfter!.y - cardBefore!.y)).toBeLessThan(2);
     await expect(phone).toHaveURL('https://localhost:19746/mobile/');
     await originalCard.press('Enter');
     await expect(sheet).toBeVisible();

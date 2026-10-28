@@ -87,7 +87,14 @@ def tool_batch_get_bars(
                 errors[sym] = err or "no data"
                 continue
             if summary_only:
+                from trade_compass_agent.data.metadata import bars_metadata
                 latest = bars[-1]
+                provider_name = getattr(stack.provider, "name", "unknown")
+                metadata = bars_metadata(bars, provider_name, timeframe)
+                if provider_name in {"chain", "unknown"}:
+                    # Shared last_resolved_provider can belong to another batch
+                    # worker. Bar sources prove origin, not cache traversal.
+                    metadata["is_cached"] = None
                 prev_close = bars[-2].close if len(bars) >= 2 else latest.open
                 change_pct = ((latest.close - prev_close) / prev_close * 100) if prev_close else 0
                 results[sym] = {
@@ -95,6 +102,11 @@ def tool_batch_get_bars(
                     "change_pct": round(change_pct, 2),
                     "high": max(b.high for b in bars[-5:]),
                     "low": min(b.low for b in bars[-5:]),
+                    "high_low_basis": "recent_5_bars",
+                    "range_bars": min(5, len(bars)),
+                    "last_bar": {"open": latest.open, "high": latest.high, "low": latest.low,
+                                 "close": latest.close, "volume": latest.volume},
+                    "_meta": metadata,
                     "volume": latest.volume,
                     "date": latest.timestamp.strftime("%Y-%m-%d"),
                     "bars_count": len(bars),

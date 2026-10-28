@@ -5,9 +5,23 @@ import re
 import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
+from contextvars import ContextVar, copy_context
 from typing import TypeVar
 
 T = TypeVar("T")
+
+_drain_timeout_workers: ContextVar[bool] = ContextVar("drain_timeout_workers", default=False)
+
+
+@contextmanager
+def drain_timeout_workers():
+    """Allow a bounded grace period for cooperative cancellation cleanup."""
+    token = _drain_timeout_workers.set(True)
+    try:
+        yield
+    finally:
+        _drain_timeout_workers.reset(token)
 
 _EASTMONEY_HOST = re.compile(r"eastmoney\.com", re.I)
 _PATCHED = False
@@ -153,7 +167,9 @@ def patch_requests_default_timeout(default_timeout: float = 8.0) -> None:
     requests.Session.request = _patched_session_request  # type: ignore[assignment]
 
 
-def run_with_timeout(func: Callable[[], T], timeout: float, description: str) -> T:
+def run_with_timeout(func: Callable[[], T], timeout: float, description: str, *,
+                     is_cancelled: Callable[[], bool] | None = None,
+                     on_timeout: Callable[[], None] | None = None) -> T:
     """Bound caller wait time; the callable must bound its own network requests.
 
     Python cannot stop the daemon worker when the caller's deadline expires.
@@ -164,10 +180,11 @@ def run_with_timeout(func: Callable[[], T], timeout: float, description: str) ->
     import queue
 
     outcome: queue.Queue[tuple[bool, T | BaseException]] = queue.Queue(maxsize=1)
+    context = copy_context()
 
     def _guarded():
         try:
-            outcome.put((True, func()))
+            outcome.put((True, context.run(func)))
         except BaseException as exc:
             outcome.put((False, exc))
 
@@ -177,8 +194,18 @@ def run_with_timeout(func: Callable[[], T], timeout: float, description: str) ->
         name=f"timeout:{description}",
     )
     worker.start()
-    worker.join(timeout)
+    deadline = time.monotonic() + timeout
+    while worker.is_alive() and time.monotonic() < deadline:
+        if is_cancelled and is_cancelled():
+            break
+        worker.join(min(.05, max(0, deadline - time.monotonic())))
     if worker.is_alive():
+        if on_timeout:
+            on_timeout()
+        if _drain_timeout_workers.get():
+            # Python cannot terminate a thread. Commit guards must reject late
+            # writes; waiting forever here would prevent a visible failure state.
+            worker.join(.1)
         raise TimeoutError(f"{description} timed out after {timeout:.0f}s")
     succeeded, value = outcome.get_nowait()
     if succeeded:
