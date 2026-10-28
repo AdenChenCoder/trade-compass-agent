@@ -35,12 +35,13 @@ type identity struct {
 }
 
 type status struct {
-	Phase       string              `json:"phase"`
-	Origin      string              `json:"origin,omitempty"`
-	ActionURL   string              `json:"action_url,omitempty"`
-	UpdatedAt   time.Time           `json:"updated_at"`
-	Instance    string              `json:"instance,omitempty"`
-	Diagnostics *diagnosticSnapshot `json:"diagnostics,omitempty"`
+	Phase              string              `json:"phase"`
+	Origin             string              `json:"origin,omitempty"`
+	ActionURL          string              `json:"action_url,omitempty"`
+	UpdatedAt          time.Time           `json:"updated_at"`
+	Instance           string              `json:"instance,omitempty"`
+	Diagnostics        *diagnosticSnapshot `json:"diagnostics,omitempty"`
+	CertificateFailure *certificateFailure `json:"certificate_failure,omitempty"`
 }
 
 type runOptions struct {
@@ -171,10 +172,18 @@ func run(ctx context.Context, directory string, connect bool, options ...runOpti
 	if err != nil {
 		return err
 	}
+	failurePath := filepath.Join(directory, "certificate-retry.json")
+	certificateState, err := readCertificateFailure(failurePath)
+	if err != nil {
+		return err
+	}
 	lastPhase := ""
 	diagnostics := &connectionDiagnostics{}
 	publish := func(phase, origin, action string) error {
 		value := status{Phase: phase, Origin: origin, ActionURL: actionURL(action), UpdatedAt: time.Now().UTC(), Instance: opts.instance}
+		if phase == "certificate_retry_wait" {
+			value.CertificateFailure = &certificateState
+		}
 		if connect {
 			snapshot := diagnostics.snapshot()
 			value.Diagnostics = &snapshot
@@ -200,6 +209,9 @@ func run(ctx context.Context, directory string, connect bool, options ...runOpti
 	}
 	envknob.SetNoLogsNoSupport()
 	envknob.Setenv("TS_DISABLE_PORTMAPPER", "true")
+	// Some networks accept the port 80 Noise handshake but stall registration.
+	// Use Tailscale's HTTPS transport without changing the node or its credentials.
+	envknob.Setenv("TS_FORCE_NOISE_443", "true")
 	if err := publish("starting", id.Origin, ""); err != nil {
 		return err
 	}
@@ -302,14 +314,58 @@ func run(ctx context.Context, directory string, connect bool, options ...runOpti
 			handler := probeHandler(host)
 			// Provision before accepting a browser handshake; first issuance can
 			// exceed the HTTP server's handshake timeout. Keep private keys local.
+			if time.Now().Before(certificateState.RetryAt) && !cachedCertificateReady(directory, host, time.Now()) {
+				if err := publish("certificate_retry_wait", origin, ""); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := publish("preparing_certificate", origin, ""); err != nil {
 				return err
 			}
-			certCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-			certPEM, keyPEM, err := lc.CertPair(certCtx, host)
+			// Preserve a minimum spacing even if the parent restarts mid-request.
+			certificateState.RetryAt = time.Now().Add(2 * time.Minute)
+			certificateState.Code = "certificate_request_interrupted"
+			if err := writeJSON(failurePath, certificateState); err != nil {
+				return err
+			}
+			diagnostics.takeCertificateError()
+			certCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			certPEM, keyPEM, err := prepareCertificate(certCtx, func(ctx context.Context) ([]byte, []byte, error) {
+				cert, key, err := lc.CertPair(ctx, host)
+				if err != nil {
+					if providerErr := diagnostics.peekCertificateError(); providerErr != nil {
+						err = explainCertificateFailure(ctx, directory, providerErr)
+					}
+				}
+				return cert, key, err
+			}, func() error { return publish("preparing_certificate", origin, "") }, 2*time.Second)
 			cancel()
 			if err != nil {
-				return errors.New("public certificate preparation failed; preserve state and check connectivity")
+				if ctx.Err() != nil {
+					return nil
+				}
+				diagnostics.count("certificate_preparation_failed", true)
+				// The parent deadline may win the result-channel race, after the
+				// provider has already logged a structured rate-limit response.
+				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+					if providerErr := diagnostics.peekCertificateError(); providerErr != nil {
+						err = providerErr
+					}
+				}
+				certificateState = nextCertificateFailure(err, certificateState, time.Now())
+				diagnostics.count(certificateState.Code, true)
+				if err := writeJSON(failurePath, certificateState); err != nil {
+					return err
+				}
+				if err := publish("certificate_retry_wait", origin, ""); err != nil {
+					return err
+				}
+				continue
+			}
+			certificateState = certificateFailure{}
+			if err := os.Remove(failurePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
 			}
 			if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
 				return errors.New("public certificate and key do not match")

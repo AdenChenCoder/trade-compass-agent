@@ -99,6 +99,7 @@ class BarsResponse(BaseModel):
     bars: list[BarPayload]
     quality_warnings: list[str] = Field(default_factory=list)
     provider_name: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # --- Portfolio --------------------------------------------------------------
@@ -107,6 +108,11 @@ class BarsResponse(BaseModel):
 class PaperTradePayload(_AttrBase):
     trade_id: str = ""
     decision_id: str | None = None
+    signal_id: str | None = None
+    strategy_id: str | None = None
+    strategy_version: str | None = None
+    research_run_id: str | None = None
+    source_skills: list[str] = Field(default_factory=list)
     symbol: str
     account: str
     side: str
@@ -123,6 +129,7 @@ class PaperTradePayload(_AttrBase):
 
 
 class PaperTradeCreate(BaseModel):
+    signal_id: str | None = None
     symbol: str
     account: str
     side: Literal["buy", "sell"]
@@ -215,6 +222,54 @@ class AuditEventPayload(_AttrBase):
     event_type: str
     summary: str
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class LLMUsageRecordPayload(_AttrBase):
+    id: str
+    usage_date: str
+    started_at: str
+    finished_at: str
+    provider: str
+    model: str
+    operation: str
+    job_id: str
+    run_id: str
+    session_id: str
+    attempt: int
+    sdk_attempts: int
+    status: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    cached_tokens: int | None = None
+    total_tokens: int | None = None
+    billed_amount: float | None = None
+    billed_currency: str = ""
+    cost_source: str
+    provider_request_id: str = ""
+    duration_ms: int
+    error_type: str = ""
+
+
+class LLMUsageAggregatePayload(BaseModel):
+    key: str
+    request_count: int
+    sdk_attempt_count: int
+    completed_count: int
+    failed_count: int
+    measured_count: int
+    prompt_tokens: int
+    completion_tokens: int
+    cached_tokens: int
+    total_tokens: int
+    provider_reported_costs: dict[str, float] = Field(default_factory=dict)
+
+
+class LLMUsageResponse(BaseModel):
+    total: LLMUsageAggregatePayload
+    by_date: list[LLMUsageAggregatePayload]
+    by_model: list[LLMUsageAggregatePayload]
+    by_job: list[LLMUsageAggregatePayload]
+    records: list[LLMUsageRecordPayload]
 
 
 # --- User rules -------------------------------------------------------------

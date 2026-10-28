@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
@@ -10,6 +11,7 @@ from fastapi.responses import JSONResponse
 from trade_compass_agent.config import AppConfig, load_app_config, update_scheduler_config
 from trade_compass_agent.data import ChainProvider, DataQualityLayer
 from trade_compass_agent.data.providers import ProviderError
+from trade_compass_agent.data.metadata import bars_metadata
 from trade_compass_agent.domain import AccountKind, PaperTrade
 from trade_compass_agent.evaluation import RulePerformanceEvaluator
 from trade_compass_agent.memory.rules_store import RulesStore
@@ -31,9 +33,11 @@ from trade_compass_agent.evaluation.workflow_artifacts import load_latest_workfl
 from . import schemas as s
 from . import serializers as ser
 from .agent_api import router as agent_router
+from .research_api import router as research_router
 
 router = APIRouter(prefix="/api")
 router.include_router(agent_router)
+router.include_router(research_router)
 logger = logging.getLogger(__name__)
 
 
@@ -276,6 +280,10 @@ def get_bars(
         bars=[ser.to_bar_payload(bar) for bar in bars],
         quality_warnings=warnings,
         provider_name=getattr(stack.provider, "name", None),
+        metadata=bars_metadata(
+            bars, getattr(stack.provider, "last_resolved_provider", None)
+            or getattr(stack.provider, "name", "unknown"), timeframe,
+        ),
     )
 
 
@@ -468,7 +476,13 @@ def create_portfolio_trade(body: s.PaperTradeCreate):
     rules = infer_market_rules(body.symbol.strip())
 
     realized_before = len(portfolio_store.realized_trades())
+    from trade_compass_agent.evaluation.signal_execution import resolve_signal_reference, reconcile_signal_executions
+    try:
+        signal_ref = resolve_signal_reference(config.data_dir, body.signal_id, body.symbol.strip(), account.value)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
     trade = PaperTrade(
+        **signal_ref,
         symbol=body.symbol.strip(),
         account=account,
         side=body.side,
@@ -486,12 +500,21 @@ def create_portfolio_trade(body: s.PaperTradeCreate):
         price_limit_pct=rules.price_limit_pct,
     )
     try:
-        portfolio_store.record(trade, skip_t1=True)
+        from trade_compass_agent.portfolio.trading_policy import require_single_account
+        portfolio_store.record(
+            trade,
+            skip_t1=True,
+            before_record=lambda _portfolio: require_single_account(config.data_dir, account),
+        )
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     from trade_compass_agent.memory.decision_reconciler import reconcile_decisions
 
     reconcile_decisions(config.data_dir, config.trading_costs)
+    try:
+        reconcile_signal_executions(config.data_dir, portfolio_store)
+    except Exception as exc:
+        logger.warning("Trade %s executed but signal synchronization failed: %s", trade.trade_id, exc)
     _update_cooldown_from_trades(config, portfolio_store, realized_before)
     return ser.to_portfolio_response(portfolio_store, costs=config.trading_costs)
 
@@ -568,12 +591,15 @@ def create_account(body: s.AccountCreate):
     except ValueError:
         return JSONResponse({"error": f"无效账户类型: {body.kind}"}, status_code=400)
     with portfolio_transaction(config.data_dir / "paper_trades.jsonl"):
-        account = store.create(
-            kind=AccountKind(body.kind),
-            name=body.name,
-            description=body.description or "",
-            capital=body.capital,
-        )
+        try:
+            account = store.create(
+                kind=AccountKind(body.kind),
+                name=body.name,
+                description=body.description or "",
+                capital=body.capital,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"id": account.id, "kind": account.kind.value, "name": account.name, "capital": account.capital}
 
 
@@ -595,7 +621,10 @@ def update_account(account_id: str, body: s.AccountUpdate):
     if not updates:
         return JSONResponse({"error": "无更新字段"}, status_code=400)
     with portfolio_transaction(config.data_dir / "paper_trades.jsonl"):
-        account = store.update(account_id, **updates)
+        try:
+            account = store.update(account_id, **updates)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     if account is None:
         raise HTTPException(status_code=404, detail=f"账户不存在: {account_id}")
     return {"id": account.id, "kind": account.kind.value, "name": account.name, "capital": account.capital}
@@ -608,9 +637,12 @@ def delete_account(account_id: str):
     config = load_app_config()
     store = AccountStore(config.data_dir / "accounts.json")
     with portfolio_transaction(config.data_dir / "paper_trades.jsonl"):
+        account = store.get(account_id)
+        if account is None:
+            raise HTTPException(status_code=404, detail=f"账户不存在: {account_id}")
         portfolio = JsonPaperPortfolio(config.data_dir / "paper_trades.jsonl", costs=config.trading_costs)
         positions = portfolio.positions()
-        has_positions = any(p.account.value == account_id for p in positions)
+        has_positions = any(p.account == account.kind for p in positions)
         if has_positions:
             return JSONResponse({"error": "该账户仍有持仓，无法删除"}, status_code=400)
         ok = store.delete(account_id)
@@ -643,6 +675,39 @@ def get_audit_event(event_id: str) -> s.AuditEventPayload:
     if event is None:
         raise HTTPException(status_code=404, detail=f"audit event not found: {event_id}")
     return ser.to_audit_payload(event)
+
+
+@router.get("/llm/usage", response_model=s.LLMUsageResponse)
+def get_llm_usage(
+    limit: int = Query(100, ge=1, le=1000),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    model: str | None = Query(None),
+    job_id: str | None = Query(None),
+) -> s.LLMUsageResponse:
+    if date_from is not None and date_to is not None and date_from > date_to:
+        raise HTTPException(status_code=400, detail="date_from must be on or before date_to")
+    from trade_compass_agent.llm.usage import SqliteLLMUsageStore
+
+    config = load_app_config()
+    store = SqliteLLMUsageStore(config.data_dir / "llm_usage.db")
+    filters = {
+        "date_from": date_from,
+        "date_to": date_to,
+        "model": model,
+        "job_id": job_id,
+    }
+    total = store.aggregate(**filters)[0]
+    return s.LLMUsageResponse(
+        total=s.LLMUsageAggregatePayload.model_validate(total),
+        by_date=[s.LLMUsageAggregatePayload.model_validate(row) for row in store.aggregate("date", **filters)],
+        by_model=[s.LLMUsageAggregatePayload.model_validate(row) for row in store.aggregate("model", **filters)],
+        by_job=[s.LLMUsageAggregatePayload.model_validate(row) for row in store.aggregate("job", **filters)],
+        records=[
+            s.LLMUsageRecordPayload.model_validate(record)
+            for record in store.recent(limit=limit, **filters)
+        ],
+    )
 
 
 @router.get("/rules", response_model=s.RulesResponse)
@@ -1191,10 +1256,26 @@ def get_scheduler_status():
 def get_job_runs(
     limit: int = Query(20, ge=1, le=500),
     job_id: str | None = None,
+    include_internal: bool = False,
 ) -> list[s.JobRunPayload]:
     config = load_app_config()
     store = SqliteRunStore(config.data_dir / "scheduler.db")
-    return [ser.to_job_run_payload_v2(run) for run in store.recent_runs(limit, job_id=job_id)]
+    if include_internal:
+        runs = store.recent_runs(limit, job_id=job_id)
+    else:
+        scheduler = TickScheduler(config, reap_on_init=False)
+        visible_job_ids = {job.id for job in scheduler.list_jobs()}
+        if job_id is not None:
+            runs = (
+                store.recent_runs(limit, job_id=job_id)
+                if job_id in visible_job_ids or job_id.startswith("custom:")
+                else []
+            )
+        else:
+            runs = store.recent_runs_for_jobs(
+                visible_job_ids, limit=limit, include_custom_history=True,
+            )
+    return [ser.to_job_run_payload_v2(run) for run in runs]
 
 
 @router.get("/jobs/runs/{run_id}")
@@ -1280,8 +1361,6 @@ def get_run_detail(run_id: str):
         if artifact_analysis:
             return artifact_analysis
         for sr in reversed(steps):
-            if sr.step_id == "workflow":
-                continue
             analysis = extract_analysis_from_step_data(sr.data_json)
             if analysis:
                 return analysis
@@ -1303,6 +1382,8 @@ def get_run_detail(run_id: str):
             for sr in steps
         ] + _workflow_trace_steps(),
     }
+    from trade_compass_agent.ops.delivery_store import DeliveryStore
+    payload["deliveries"] = DeliveryStore(config.data_dir / "scheduler.db").for_run(run_id)
     analysis = _analysis_from_steps()
     if analysis:
         payload["analysis"] = analysis

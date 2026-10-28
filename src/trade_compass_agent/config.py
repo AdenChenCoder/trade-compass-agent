@@ -139,10 +139,11 @@ class LLMConfig:
     """LLM provider settings for the agent runtime."""
 
     provider: str = "disabled"
-    model: str = "deepseek-chat"
+    model: str = "deepseek-flash"
     api_key_env: str = "DEEPSEEK_API_KEY"
-    timeout: float = 90.0
+    timeout: float = 900.0
     max_retries: int = 2
+    agent_timeout: float = 3600.0
     vision_model: str = ""  # fallback model for vision tasks (e.g. gpt-4o-mini)
     vision_provider: str = ""  # provider for vision_model (defaults to main provider)
     vision_api_key_env: str = ""  # API key env for vision provider (defaults to main)
@@ -404,10 +405,11 @@ def load_app_config(path: Path | None = None) -> AppConfig:
         ),
         llm=LLMConfig(
             provider=str(llm_raw.get("provider", "disabled")),
-            model=str(llm_raw.get("model", "deepseek-chat")),
+            model=str(llm_raw.get("model", "deepseek-flash")),
             api_key_env=str(llm_raw.get("api_key_env", "DEEPSEEK_API_KEY")),
-            timeout=float(llm_raw.get("timeout", 90.0)),
+            timeout=float(llm_raw.get("timeout", 900.0)),
             max_retries=int(llm_raw.get("max_retries", 2)),
+            agent_timeout=float(llm_raw.get("agent_timeout", 3600.0)),
             vision_model=str(llm_raw.get("vision_model", "")),
             vision_provider=str(llm_raw.get("vision_provider", "")),
             vision_api_key_env=str(llm_raw.get("vision_api_key_env", "")),
@@ -587,6 +589,44 @@ def update_scheduler_config(updates: dict[str, object]) -> AppConfig:
         yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
+    invalidate_config_cache()
+    return load_app_config(config_path)
+
+
+def update_llm_connection(provider: str, model: str) -> AppConfig:
+    """Save a connection choice without changing credentials or existing history."""
+    from trade_compass_agent.concurrency import atomic_write, get_path_lock
+    from trade_compass_agent.llm.providers import _PROVIDER_KEY_ENVS
+
+    supported = {"disabled", "ollama", "lmstudio", *_PROVIDER_KEY_ENVS}
+    if provider not in supported:
+        raise ValueError("Unsupported model connection")
+    config_path = resolve_config_path()
+    if config_path.resolve() == PACKAGED_CONFIG_PATH.resolve():
+        config_path, _ = initialize_user_files()
+    with get_path_lock(config_path):
+        original = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+        raw = yaml.safe_load(original) or {}
+        llm = dict(raw.get("llm") or {})
+        connections = dict(raw.get("llm_connections") or {})
+        fields = ("model", "api_key_env")
+        previous = str(llm.get("provider", "disabled"))
+        if previous in supported:
+            connections[previous] = {key: llm.get(key, "") for key in fields}
+        if provider != llm.get("provider"):
+            llm["api_key_env"] = _PROVIDER_KEY_ENVS.get(provider, "")
+            saved = connections.get(provider) or {}
+            llm.update({key: saved[key] for key in fields if key in saved})
+        llm.update(provider=provider, model=model.strip())
+        connections[provider] = {key: llm.get(key, "") for key in fields}
+        raw["llm_connections"] = connections
+        raw["llm"] = llm
+        if original:
+            # Retain the initial configuration for recovery across repeated edits.
+            backup = config_path.with_suffix(".llm-backup.yaml")
+            if not backup.exists():
+                atomic_write(backup, original)
+        atomic_write(config_path, yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
     invalidate_config_cache()
     return load_app_config(config_path)
 

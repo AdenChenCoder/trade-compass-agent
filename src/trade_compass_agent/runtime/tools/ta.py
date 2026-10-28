@@ -18,6 +18,8 @@ def _bars_to_df(stack: MarketStack, symbol: str, timeframe: str, limit: int) -> 
         for b in bars
     ])
     df.set_index("ts", inplace=True)
+    df.attrs = {"as_of": bars[-1].timestamp.isoformat(), "adjusted": bars[-1].adjusted,
+                "source": bars[-1].source}
     return df
 
 
@@ -39,6 +41,7 @@ def tool_compute_rsi(
     rsi = 100 - (100 / (1 + rs))
     recent = rsi.iloc[-5:].dropna()
     return json.dumps({
+        "_meta": df.attrs,
         "symbol": symbol,
         "timeframe": timeframe,
         "period": period,
@@ -88,6 +91,7 @@ def tool_compute_macd(
     elif current["histogram"] < 0 and prev_hist >= 0:
         cross = "death_cross"
     return json.dumps({
+        "_meta": df.attrs,
         "symbol": symbol,
         "timeframe": timeframe,
         "params": {"fast": fast, "slow": slow, "signal": signal_period},
@@ -118,6 +122,7 @@ def tool_compute_bollinger(
     bandwidth = (last_upper - last_lower) / last_middle if last_middle else 0
     pct_b = (last_close - last_lower) / (last_upper - last_lower) if (last_upper - last_lower) else 0.5
     return json.dumps({
+        "_meta": df.attrs,
         "symbol": symbol,
         "timeframe": timeframe,
         "period": period,
@@ -159,6 +164,7 @@ def tool_compute_volume_ratio(
     avg_vol = float(vol_ma.iloc[-1]) if not vol_ma.empty else current_vol
     ratio = current_vol / avg_vol if avg_vol > 0 else 1.0
     return json.dumps({
+        "_meta": df.attrs,
         "symbol": symbol,
         "timeframe": timeframe,
         "period": period,
@@ -212,6 +218,7 @@ def tool_compute_ma(
         else:
             positions[key] = "at"
     return json.dumps({
+        "_meta": df.attrs,
         "symbol": symbol,
         "timeframe": timeframe,
         "last_close": last_close,

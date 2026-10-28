@@ -129,6 +129,7 @@ class JobReflection:
 
                     try:
                         from trade_compass_agent.llm.providers import ChatMessage, create_chat_client
+                        from trade_compass_agent.llm.usage import llm_usage_context
 
                         client = create_chat_client(config)
 
@@ -138,13 +139,14 @@ class JobReflection:
                                 ChatMessage(role="user", content=user_content),
                             ]).content or ""
 
-                        feedback_actuals = enrich_actuals_with_outcome_advisor(
-                            pending,
-                            actuals,
-                            lesson,
-                            _llm_call,
-                            max_candidates=gov.outcome_advisor_max_candidates,
-                        )
+                        with llm_usage_context(job_id=pending.job_id, run_id=pending.run_id):
+                            feedback_actuals = enrich_actuals_with_outcome_advisor(
+                                pending,
+                                actuals,
+                                lesson,
+                                _llm_call,
+                                max_candidates=gov.outcome_advisor_max_candidates,
+                            )
                     except Exception as exc:
                         logger.debug("Outcome advisor unavailable for %s/%s: %s", pending.job_id, pending.run_id, exc)
 
@@ -164,6 +166,8 @@ class JobReflection:
             resolved_list.append(resolved)
 
         # Write resolved and index to chunks.db for search_memory
+        from trade_compass_agent.llm.providers import check_execution_active
+        check_execution_active()
         if resolved_list:
             resolved_path = self._job_dir(job_id) / "resolved.jsonl"
             with open(resolved_path, "a", encoding="utf-8") as f:

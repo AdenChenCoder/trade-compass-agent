@@ -16,7 +16,7 @@ import logging
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -295,6 +295,8 @@ class ObservationStore:
 
     def mark_promoted(self, obs_ids: list[str]) -> None:
         """Mark observations as promoted to Semantic tier."""
+        from trade_compass_agent.llm.providers import check_execution_active
+        check_execution_active()
         if not obs_ids:
             return
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -340,8 +342,22 @@ class ObservationStore:
                 freq[c] = freq.get(c, 0) + 1
         return freq
 
-    def recent_by_days(self, lookback_days: int = 7) -> list[Observation]:
+    def recent_by_days(
+        self, lookback_days: int = 7, *, as_of: date | None = None,
+        timezone_name: str = "Asia/Shanghai",
+    ) -> list[Observation]:
         """Get all observations within lookback window."""
+        if as_of is not None:
+            from trade_compass_agent.memory.calendar import record_day
+
+            # Dated jobs own a fixed calendar window, even when they cross midnight.
+            cutoff_day = as_of - timedelta(days=lookback_days - 1)
+            rows = self._get_conn().execute(
+                f"SELECT {self._SELECT_COLS} FROM observations ORDER BY created_at DESC",
+            ).fetchall()
+            observations = [self._row_to_obs(row) for row in rows]
+            return [obs for obs in observations
+                    if cutoff_day <= record_day(obs.created_at, timezone_name) <= as_of]
         cutoff = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).isoformat()
         conn = self._get_conn()
         rows = conn.execute(
@@ -415,6 +431,8 @@ class ObservationStore:
 
     def bump_daily(self, obs_ids: list[str]) -> None:
         """Bump daily_count for observations referenced during dreaming ingestion."""
+        from trade_compass_agent.llm.providers import check_execution_active
+        check_execution_active()
         if not obs_ids:
             return
         conn = self._get_conn()
@@ -426,6 +444,8 @@ class ObservationStore:
 
     def bump_grounded(self, obs_ids: list[str]) -> None:
         """Bump grounded_count for observations confirmed by insights/patterns."""
+        from trade_compass_agent.llm.providers import check_execution_active
+        check_execution_active()
         if not obs_ids:
             return
         conn = self._get_conn()
@@ -511,11 +531,25 @@ def estimate_importance(tool_name: str, summary: str) -> int:
     return max(1, min(10, score))
 
 
+def _stock_codes(text: str) -> list[str]:
+    import re
+    return re.findall(r"(?<![\d.])\b[036]\d{5}\b(?!\.\d)", text)
+
+
+def validated_concepts(observation) -> list[str]:
+    """Filter proven decimal fragments in legacy metadata, preserving raw rows."""
+    import re
+    text = observation.summary + " " + (getattr(observation, "raw_preview", "") or "")
+    codes = set(_stock_codes(text))
+    return [concept for concept in observation.concepts
+            if not (re.fullmatch(r"[036]\d{5}", concept) and concept not in codes
+                    and re.search(rf"(?:\d+\.{concept}(?!\d)|(?<!\d){concept}\.\d)", text))]
+
+
 def extract_concepts(summary: str) -> list[str]:
     """Extract stock codes and key concepts from summary text."""
-    import re
     concepts = []
-    codes = re.findall(r"\b[036]\d{5}\b", summary)
+    codes = _stock_codes(summary)
     concepts.extend(codes[:5])
     for kw in _HIGH_KEYWORDS + _MEDIUM_KEYWORDS:
         if kw in summary:

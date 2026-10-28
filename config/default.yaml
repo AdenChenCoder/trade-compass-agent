@@ -4,7 +4,6 @@ memory_dir: ./memory_vault
 rules:
   enabled: true
   char_limit: 4000
-# auto uses fresh cache and free upstreams; Tushare is optional and opt-in.
 data_provider: auto
 data:
   tushare_enabled: false
@@ -23,7 +22,7 @@ scheduler:
   enabled: true
   timezone: Asia/Shanghai
   premarket_time: "08:50"
-  morning_plan_time: "09:05"
+  morning_plan_time: "09:15"
   close_time: "15:10"
   eod_review_time: "15:30"
   postmarket_time: "16:30"
@@ -60,7 +59,7 @@ memory:
     outcome_confidence_delta: -0.15
     outcome_min_confidence_delta: -0.05
     outcome_max_confidence_delta: -0.30
-    outcome_advisor_enabled: true
+    outcome_advisor_enabled: false
     outcome_advisor_max_candidates: 5
     disproof_pnl_delta: 5.0
     min_predicted_magnitude: 3.0
@@ -82,44 +81,39 @@ memory:
 agent:
   require_llm: true
   max_tool_rounds: 30
-  learning_enabled: false   # post-turn curator → memory tree / MEMORY.md (needs LLM + privacy)
-  multimodal: true          # attachments on /api/agent/turn (text, url, image)
-  llm_session_titles: false # true: LLM title on first message; false: truncate first line
-# ---- Context Compression -------------------------------------------------------
-# Three-phase progressive context management when approaching the model's token limit.
-# Phase 0: token estimation → Phase 1: cheap tool-result trimming → Phase 2: LLM summary
+  learning_enabled: false
+  multimodal: true
+  llm_session_titles: false
 context_compression:
   enabled: true
-  chars_per_token: 1.5       # compatibility setting; current estimator uses mixed-script defaults
-  trim_threshold_pct: 0.60   # trigger Phase 1 when context reaches 60% of budget
-  summary_threshold_pct: 0.80 # trigger Phase 2 when context reaches 80%
+  chars_per_token: 1.5
+  trim_threshold_pct: 0.60
+  summary_threshold_pct: 0.80
   emergency_threshold_pct: 0.95
-  protect_recent_count: 20   # always keep the last N messages untouched
-  protect_recent_tokens: 16000  # or the last ~16K tokens of messages
-  context_budget: 0          # 0 = auto-detect from model (DeepSeek chat = 128K)
-# ---- End Context Compression ---------------------------------------------------
-# MCP: mcpServers JSON at:
-#   .trade-compass/mcp.json (project) and ~/.trade-compass/mcp.json (user, overrides)
+  protect_recent_count: 20
+  protect_recent_tokens: 65536
+  context_budget: 98304
 llm:
-  provider: deepseek   # disabled | openai | deepseek | anthropic | openrouter | dashscope
-  model: deepseek-chat
-  api_key_env: DEEPSEEK_API_KEY
-  timeout: 60.0        # LLM request timeout in seconds
-  max_retries: 2       # Automatic retries on transient errors
-  vision_model: "gemma4:26b"   # Override model for vision tasks; empty = use default model
-  vision_provider: "ollama"    # Provider for vision model; empty = same as main provider
-  vision_api_key_env: ""       # API key env for vision provider; empty = same as main
+  provider: lmstudio
+  model: qwen3.8-27b
+  api_key_env: ""
+  timeout: 900.0
+  agent_timeout: 3600.0
+  max_retries: 2
+  vision_model: "qwen3.8-27b"
+  vision_provider: "lmstudio"
+  vision_api_key_env: ""
 debate:
-  max_debate_rounds: 2        # bull/bear exchange rounds (1 = single round, 2 = with rebuttals)
-  enable_research_phase: true  # Stage 1: parallel analyst reports (tech/fundamental/sentiment)
-  enable_risk_crossexam: true  # Stage 4: risk advisor challenges PM on BUY signals
-  analyst_max_tool_rounds: 4   # ReAct loop rounds per analyst agent
-  debater_max_tool_rounds: 3   # ReAct loop rounds per bull/bear agent per round
+  max_debate_rounds: 2
+  enable_research_phase: true
+  enable_risk_crossexam: true
+  analyst_max_tool_rounds: 4
+  debater_max_tool_rounds: 3
 channels:
-  gateway_enabled: true     # Master switch for bidirectional messaging gateway
-  feishu_enabled: true      # Feishu bot (requires FEISHU_APP_ID + FEISHU_APP_SECRET)
-  wecom_enabled: false      # WeCom AI bot (requires WECOM_BOT_ID + WECOM_SECRET)
-  weixin_enabled: true      # Personal WeChat via iLink (QR code login)
+  gateway_enabled: false
+  feishu_enabled: false
+  wecom_enabled: false
+  weixin_enabled: false
 watchlists:
   stocks: ["600519", "300750", "000001"]
   etfs: ["510300", "512690", "159915"]

@@ -91,16 +91,17 @@ context_compression:
   summary_threshold_pct: 0.80
   emergency_threshold_pct: 0.95
   protect_recent_count: 20
-  protect_recent_tokens: 16000
-  context_budget: 0
+  protect_recent_tokens: 65536
+  context_budget: 98304
 llm:
-  provider: deepseek
-  model: deepseek-chat
-  api_key_env: DEEPSEEK_API_KEY
-  timeout: 60.0
+  provider: lmstudio
+  model: qwen3.8-27b
+  api_key_env: ""
+  timeout: 900.0
+  agent_timeout: 3600.0
   max_retries: 2
-  vision_model: ""
-  vision_provider: ""
+  vision_model: "qwen3.8-27b"
+  vision_provider: "lmstudio"
   vision_api_key_env: ""
 debate:
   max_debate_rounds: 2

@@ -53,6 +53,8 @@ def collect_doctor_checks() -> list[DoctorCheck]:
     if provider == "disabled":
         status = "FAIL" if config.agent.require_llm else "WARN"
         checks.append(DoctorCheck("llm", status, "provider is disabled"))
+    elif provider not in {"ollama", "lmstudio", "openai", "deepseek", "anthropic", "openrouter", "dashscope"}:
+        checks.append(DoctorCheck("llm", "FAIL", f"Unsupported model connection: {provider}"))
     elif not api_key and provider not in {"ollama", "lmstudio"}:
         status = "FAIL" if config.agent.require_llm else "WARN"
         checks.append(DoctorCheck("llm", status, f"missing {config.llm.api_key_env}"))

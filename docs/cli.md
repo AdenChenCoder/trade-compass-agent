@@ -26,6 +26,22 @@ automation, or `setup --wizard` to opt into the wizard from a source checkout.
 In the wizard, use `↑/↓` to navigate, `Space` to toggle multi-select choices,
 and `Enter` to confirm the current item.
 
+## Development
+
+From a source checkout, start the hot-reloading API and Web UI together:
+
+```bash
+TRADE_COMPASS_DATA_DIR="$PWD/temp/development/data" \
+TRADE_COMPASS_MEMORY_DIR="$PWD/temp/development/memory_vault" \
+uv run trade-compass dev --port 19706 --no-scheduler --open
+```
+
+This starts the API on `127.0.0.1:19706` and Vite on `127.0.0.1:3000`, with
+separate development data and memory and no scheduled jobs. Both stop together
+on `Ctrl+C`. Keep production channels and mobile access disabled in development
+configuration. The installed production service can continue on `19704` with
+its own state; do not run source `service` commands against it.
+
 ## Research and automation
 
 ```bash

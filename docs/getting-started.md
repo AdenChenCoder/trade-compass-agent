@@ -53,7 +53,11 @@ uv run trade-compass setup --wizard
 ```
 
 Use the `uv run trade-compass ...` form for the remaining commands when working
-from this source checkout.
+from this source checkout. Source execution is for development and validation;
+use [isolated development roots and ports](cli.md#development), with production
+channels and mobile access disabled. Permanent investment services use an
+accepted published package and state outside the checkout. See
+[production installation and upgrade](releasing.md#production-installation-and-upgrade).
 
 ## Configure an LLM
 

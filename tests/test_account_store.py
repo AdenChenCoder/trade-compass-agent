@@ -52,6 +52,17 @@ def test_create(store):
     assert len(all_accounts) == 4
 
 
+def test_duplicate_kind_and_invalid_update_do_not_change_store(store):
+    original = store.list()
+    with pytest.raises(ValueError, match="已存在"):
+        store.create(kind=AccountKind.ETF_ROTATION, name="重复账户")
+    with pytest.raises(ValueError, match="valid AccountKind"):
+        store.update("etf_rotation", kind="invalid_kind")
+    with pytest.raises(ValueError, match="不可更改"):
+        store.update("etf_rotation", kind=AccountKind.MIXED)
+    assert store.list() == original
+
+
 def test_update(store):
     updated = store.update("short_stock", name="短线A", capital=200_000)
     assert updated is not None

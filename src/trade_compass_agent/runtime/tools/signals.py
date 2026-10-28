@@ -67,6 +67,10 @@ def tool_emit_signal(stack: MarketStack, **kwargs: object) -> str:
         rr_ratio = round((target_f - entry_f) / (entry_f - stop_f), 2)
 
     signal = TradingSignal(
+        account=kwargs.get("account"),
+        strategy_id=kwargs.get("strategy_id"),
+        strategy_version=kwargs.get("strategy_version"),
+        research_run_id=kwargs.get("research_run_id"),
         symbol=symbol,
         rating=rating,
         confidence=confidence,
@@ -80,6 +84,8 @@ def tool_emit_signal(stack: MarketStack, **kwargs: object) -> str:
         source_skills=source_skills,
     )
 
+    from trade_compass_agent.evaluation.signal_execution import validate_research_reference
+    validate_research_reference(stack.config.data_dir, signal.model_dump())
     _persist_signal(stack.config.data_dir, signal)
     _record_audit(stack.config.data_dir, signal)
     _track_signal(stack.config.data_dir, signal)

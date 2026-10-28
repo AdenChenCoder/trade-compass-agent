@@ -25,6 +25,11 @@ func TestDiagnosticsKeepOnlyBoundedCategories(t *testing.T) {
 				d.logf("handleIngress: got ingress conn w/o serveConfig; rejecting")
 				d.logf("handleIngress: got ingress conn for unconfigured %q; rejecting", "private-host")
 				d.logf("login URL: %s", "https://login.tailscale.com/private-token")
+				d.logf("acme: registered ACME account.")
+				d.logf("acme: starting SetDNS call for %s...", "private-domain")
+				d.logf("acme: did SetDNS for %s", "private-domain")
+				d.logf("acme: requesting cert...")
+				d.logf("acme: got cert")
 				d.Write([]byte("http: TLS handshake error from private-address: private-error\n"))
 				_ = d.snapshot()
 			}
@@ -32,7 +37,8 @@ func TestDiagnosticsKeepOnlyBoundedCategories(t *testing.T) {
 	}
 	wg.Wait()
 	snapshot := d.snapshot()
-	for _, code := range []string{"ingress_permission_denied", "ingress_config_missing", "ingress_target_missing", "tls_handshake_failed"} {
+	for _, code := range []string{"ingress_permission_denied", "ingress_config_missing", "ingress_target_missing", "tls_handshake_failed",
+		"certificate_account_ready", "certificate_dns_started", "certificate_dns_ready", "certificate_order_ready", "certificate_received"} {
 		if snapshot.Counters[code] != 2000 {
 			t.Fatalf("missing concurrent events: %s", code)
 		}
@@ -51,11 +57,11 @@ func TestDiagnosticsKeepOnlyBoundedCategories(t *testing.T) {
 
 func TestDiagnosticsDistinguishControlConfigAndListener(t *testing.T) {
 	d := &connectionDiagnostics{}
-	st := &ipnstate.Status{Self: &ipnstate.PeerStatus{Online: true}, Health: []string{"private-health-warning"}}
+	st := &ipnstate.Status{BackendState: "Running", Self: &ipnstate.PeerStatus{Online: true}, Health: []string{"private-health-warning"}}
 	sc := &ipn.ServeConfig{AllowFunnel: map[ipn.HostPort]bool{"private-host.ts.net:443": true}}
 	d.control(st, sc, true, "private-host.ts.net", true)
 	first := d.snapshot()
-	if !first.Control.Online || !first.Control.FunnelConfigured || !first.Control.ListenerOpen || first.Control.HealthIssues != 1 {
+	if first.Control.BackendState != "Running" || !first.Control.Online || !first.Control.FunnelConfigured || !first.Control.ListenerOpen || first.Control.HealthIssues != 1 {
 		t.Fatal("did not capture the current node's operational state")
 	}
 	d.control(st, sc, true, "private-host.ts.net", true)
@@ -64,7 +70,7 @@ func TestDiagnosticsDistinguishControlConfigAndListener(t *testing.T) {
 	}
 	d.control(nil, nil, false, "private-host.ts.net", true)
 	last := d.snapshot()
-	if last.Control.StatusAvailable || last.Control.ServeConfigRead || last.Control.Online || !last.Control.ListenerOpen {
+	if last.Control.StatusAvailable || last.Control.BackendState != "" || last.Control.ServeConfigRead || last.Control.Online || !last.Control.ListenerOpen {
 		t.Fatal("API failure reused stale control evidence")
 	}
 	data, _ := json.Marshal(first)
@@ -88,6 +94,27 @@ func TestDiagnosticsPreserveCertificateFailures(t *testing.T) {
 	data, _ := json.Marshal(value)
 	if strings.Contains(string(data), "private-") {
 		t.Fatal("certificate diagnostic leaked an error or hostname")
+	}
+}
+
+func TestCertificateErrorsExposeOnlyKnownCategories(t *testing.T) {
+	d := &connectionDiagnostics{}
+	for message, code := range map[string]string{
+		"400 urn:ietf:params:acme:error:dns: private-domain private-token": "certificate_acme_dns",
+		"403 urn:ietf:params:acme:error:unauthorized: private-domain":      "certificate_acme_unauthorized",
+		"SetDNS private-domain => private-token: failure":                  "certificate_dns_request_failed",
+		"acme: order https://private-order status: invalid":                "certificate_validation_failed",
+		"context deadline exceeded private-token":                          "certificate_request_timeout",
+		"unclassified private-token":                                       "certificate_provider_error",
+	} {
+		d.logf("acme: getCertPEM: %v", errors.New(message))
+		if d.snapshot().Counters[code] != 1 {
+			t.Fatalf("missing error category %s", code)
+		}
+	}
+	data, _ := json.Marshal(d.snapshot())
+	if strings.Contains(string(data), "private-") || strings.Contains(string(data), "https:") {
+		t.Fatal("certificate failure exposed provider data")
 	}
 }
 

@@ -97,6 +97,11 @@ export function PortfolioPage() {
     refetchInterval: isMarketHours() ? 30_000 : false,
   });
 
+  const accounts: Account[] = accountsQuery.data ?? [];
+  const availableAccountKinds = ACCOUNT_KIND_OPTIONS.filter(
+    (option) => !accounts.some((account) => account.kind === option.value),
+  );
+
   // Account management state
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
@@ -159,8 +164,9 @@ export function PortfolioPage() {
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAccount.name.trim()) { toast.error("请输入账户名"); return; }
+    if (!createKind) { toast.error("没有可创建的账户类型"); return; }
     createMutation.mutate({
-      kind: newAccount.kind,
+      kind: createKind,
       name: newAccount.name.trim(),
       description: newAccount.description,
       capital: Number(newAccount.capital) || 0,
@@ -188,7 +194,9 @@ export function PortfolioPage() {
     tradeMutation.mutate({ symbol: symbol.trim(), account, side, quantity: qty, price: px });
   };
 
-  const accounts: Account[] = accountsQuery.data ?? [];
+  const createKind = availableAccountKinds.some((option) => option.value === newAccount.kind)
+    ? newAccount.kind
+    : availableAccountKinds[0]?.value;
   const accountLabel = (id: string) => accounts.find((a) => a.id === id || a.kind === id)?.name ?? id;
 
   const data = portfolioQuery.data;
@@ -219,9 +227,15 @@ export function PortfolioPage() {
               )}
             </p>
           </div>
-          <Button size="sm" variant="outline" onClick={() => setShowCreateForm(true)}>
+          <Button size="sm" variant="outline"
+            disabled={accountsQuery.isLoading || !!accountsQuery.error || availableAccountKinds.length === 0}
+            onClick={() => {
+              setNewAccount({ kind: availableAccountKinds[0].value, name: "", description: "", capital: "" });
+              setShowCreateForm(true);
+            }}>
             <PlusCircle className="mr-1 h-4 w-4" />
-            新建账户
+            {availableAccountKinds.length === 0 && !accountsQuery.isLoading && !accountsQuery.error
+              ? "账户类型已用完" : "新建账户"}
           </Button>
         </div>
 
@@ -261,10 +275,10 @@ export function PortfolioPage() {
                   <label className="text-xs font-medium text-muted-foreground">类型</label>
                   <select
                     className={selectClassName}
-                    value={newAccount.kind}
+                    value={createKind ?? ""}
                     onChange={(e) => setNewAccount({ ...newAccount, kind: e.target.value as AccountKind })}
                   >
-                    {ACCOUNT_KIND_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    {availableAccountKinds.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -280,7 +294,7 @@ export function PortfolioPage() {
                   <Input type="number" min={0} step={10000} placeholder="300000" value={newAccount.capital} onChange={(e) => setNewAccount({ ...newAccount, capital: e.target.value })} />
                 </div>
                 <div className="flex items-end">
-                  <Button type="submit" className="w-full" disabled={createMutation.isPending}>
+                  <Button type="submit" className="w-full" disabled={createMutation.isPending || !createKind}>
                     {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "创建"}
                   </Button>
                 </div>

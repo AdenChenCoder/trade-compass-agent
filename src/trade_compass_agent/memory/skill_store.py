@@ -250,6 +250,8 @@ class SkillStore:
         guard = getattr(self, "_commit_guard", None)
         if guard:
             guard()
+        from trade_compass_agent.llm.providers import check_execution_active
+        check_execution_active()
         if ".usage.json" in writes and self._usage_file.is_file():
             writes[".usage.previous.json"] = self._usage_file.read_bytes()
         # WAL is created only after all content has passed validation.

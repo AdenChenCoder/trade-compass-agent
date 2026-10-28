@@ -53,6 +53,10 @@ class TradeDecision:
     reconciliation_status: str | None = None
     reflection_stale: bool = False
     reflection_history: list[str] = field(default_factory=list)
+    signal_id: str | None = None
+    strategy_id: str | None = None
+    strategy_version: str | None = None
+    research_run_id: str | None = None
 
 
 class DecisionStore:

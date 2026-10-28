@@ -6,10 +6,14 @@ enabled_skills:
   - autonomous-paper-trading
   - intraday-tech
   - investment-masters
+  - strategy-research
+  - strategy-validation-review
 
 default_summaries:
   autonomous-paper-trading: "盘中分析行情、热点与持仓，执行已授权的自主模拟交易并核对回执。"
   intraday-tech: "A股日内结构、动量、量价确认和失效条件分析。"
   investment-masters: "五大投资大师理念参考: 巴菲特/芒格/林奇/马克斯/达利欧. 支持 reference 参数加载深度研究."
+  strategy-research: "将投资经验变成有版本的假设、明确规则和可重放的探索性回测。"
+  strategy-validation-review: "核查回测时点、成本、反例和成交归因，区分过程质量与收益证据。"
 
 pinned: []

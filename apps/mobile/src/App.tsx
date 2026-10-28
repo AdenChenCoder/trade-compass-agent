@@ -11,6 +11,7 @@ import { PeerSetup } from './PeerSetup';
 import { peerMode } from './peer';
 import { acknowledgeNotificationNavigation, listenForNotificationNavigation } from './notification-navigation';
 import { fillHistoryGap } from '../../shared/session-history';
+import coinLogo from '../../shared/brand/coin-logo.svg';
 
 interface Session { session_id: string; title?: string; preview?: string; updated_at: string }
 interface SessionList { sessions: Session[]; next_cursor?: string | null }
@@ -68,9 +69,36 @@ export function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshResult, setRefreshResult] = useState('');
   const nearBottom = useRef(true);
+  const scrollArea = useRef<HTMLElement>(null);
   const root = `compass.v1.${connection.computer_id ?? 'unpaired'}.`;
   const requestKey = `${root}request.${selected}`;
   const draftKey = `${root}draft.${selected}`;
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const rootElement = document.documentElement;
+    const rootStyle = rootElement.style;
+    const syncViewport = () => {
+      rootStyle.setProperty('--app-viewport-height', `${viewport.height}px`);
+      rootStyle.setProperty('--app-viewport-offset-top', `${viewport.offsetTop}px`);
+      const focused = document.activeElement;
+      const editing = focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement
+        || focused instanceof HTMLElement && focused.isContentEditable;
+      rootElement.toggleAttribute('data-keyboard-open', editing && viewport.height < 560);
+    };
+    syncViewport();
+    viewport.addEventListener('resize', syncViewport);
+    viewport.addEventListener('scroll', syncViewport);
+    return () => {
+      viewport.removeEventListener('resize', syncViewport);
+      viewport.removeEventListener('scroll', syncViewport);
+      rootStyle.removeProperty('--app-viewport-height');
+      rootStyle.removeProperty('--app-viewport-offset-top');
+      rootElement.removeAttribute('data-keyboard-open');
+    };
+  }, []);
+
   const clearSentDraft = useCallback((message: string) => {
     if (cached<string>(draftKey, '').trim() === message) save(draftKey, '');
     setDraft(current => current.trim() === message ? '' : current);
@@ -97,7 +125,7 @@ export function App() {
   }), []);
   useEffect(() => {
     if (notificationClick && tab === 'notices') {
-      window.scrollTo(0, 0);
+      if (scrollArea.current) scrollArea.current.scrollTop = 0;
       void acknowledgeNotificationNavigation(notificationClick);
     }
   }, [notificationClick, tab]);
@@ -109,12 +137,9 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const track = () => { nearBottom.current = document.documentElement.scrollHeight - window.innerHeight - window.scrollY < 180; };
-    window.addEventListener('scroll', track, { passive: true });
-    return () => window.removeEventListener('scroll', track);
-  }, []);
-  useEffect(() => {
-    if (page && nearBottom.current) requestAnimationFrame(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    if (selected && page && nearBottom.current) requestAnimationFrame(() => {
+      if (scrollArea.current) scrollArea.current.scrollTop = scrollArea.current.scrollHeight;
+    });
   }, [page?.messages.length, selected]);
 
   useEffect(() => {
@@ -345,8 +370,9 @@ export function App() {
   async function loadOlder() {
     if (!selected || page?.page.next_before == null || older) return;
     setOlder(true);
-    const previousHeight = document.documentElement.scrollHeight;
-    const previousTop = window.scrollY;
+    const area = scrollArea.current!;
+    const previousHeight = area.scrollHeight;
+    const previousTop = area.scrollTop;
     try {
       const value = await api<Page>(`sessions/${encodeURIComponent(selected)}/messages?limit=50&before=${page.page.next_before}`);
       setPage(previous => {
@@ -356,7 +382,7 @@ export function App() {
         save(`${root}page.${selected}`, merged);
         return merged;
       });
-      requestAnimationFrame(() => window.scrollTo(0, previousTop + document.documentElement.scrollHeight - previousHeight));
+      requestAnimationFrame(() => { area.scrollTop = previousTop + area.scrollHeight - previousHeight; });
     } catch (err) { setError(errorText(err)); } finally { setOlder(false); }
   }
   async function forget() {
@@ -368,7 +394,7 @@ export function App() {
   }
 
   const connectionView = !connection.connected || tab === 'connection' || (!approved && sessions.length === 0);
-  useEffect(() => { window.scrollTo(0, 0); }, [tab, connectionView]);
+  useEffect(() => { if (scrollArea.current) scrollArea.current.scrollTop = 0; }, [tab, connectionView]);
   const showNavigation = connection.connected && (approved || sessions.length > 0);
   const inConversation = !connectionView && tab === 'sessions' && !!selected;
   const title = connectionView ? '我的连接' : tab === 'notices' ? '任务消息' : inConversation ? page?.title || '新对话' : '会话';
@@ -387,7 +413,7 @@ export function App() {
   }
   return <div className={`app-shell ${showNavigation ? 'has-rail' : 'onboarding'}`}>
     {showNavigation ? <aside className="side-rail">
-      <div className="brand-mark" aria-label="交易罗盘"><Icon name="robot" /></div>
+      <img className="brand-mark" src={coinLogo} alt="交易罗盘" width={34} height={34} />
       <nav aria-label="主导航">{([['sessions', '会话'], ['notices', '任务消息'], ['connection', '连接']] as const).map(([value, label]) => <button key={value}
         className={`rail-item ${value === 'connection' ? 'rail-connection' : ''} ${tab === value ? 'active' : ''}`}
         aria-current={tab === value ? 'page' : undefined} disabled={busy || older} onClick={() => setTab(value)}>
@@ -397,7 +423,7 @@ export function App() {
     </aside> : null}
     <header className="app-header">
       {inConversation ? <button className="icon-button header-back" aria-label="所有会话" disabled={busy || older} onClick={() => selectSession(null)}><Icon name="back" /></button>
-        : !showNavigation ? <div className="brand-mark"><Icon name="robot" /></div> : null}
+        : !showNavigation ? <img className="brand-mark" src={coinLogo} alt="交易罗盘" width={34} height={34} /> : null}
       <div className="header-title"><h1>{title}</h1><p>{connectionView ? '管理设备连接与通知' : tab === 'notices' ? '查看任务结果与提醒' : inConversation ? '交易罗盘' : '个股研究与市场分析'}</p></div>
       {showNavigation && !connectionView && tab === 'sessions' ? <button className="icon-button new-session-button" aria-label="新建会话" aria-busy={creating}
         title={online ? '新建会话' : '恢复连接后可新建会话'} disabled={!online || !approved || authorizationLost || busy || older}
@@ -405,7 +431,10 @@ export function App() {
       {connection.connected ? <span className={`connection-indicator ${online && approved && !authorizationLost ? 'online' : ''}`} role="status" aria-label={connectionLabel} title={connectionLabel} /> : null}
       <AppUpdate />
     </header>
-    <main className={inConversation ? 'chat-main' : ''}>
+    <main ref={scrollArea} className={inConversation ? 'chat-main' : ''} onScroll={event => {
+      const area = event.currentTarget;
+      nearBottom.current = area.scrollHeight - area.clientHeight - area.scrollTop < 180;
+    }}>
       {error || createError || draftError ? <div className="notice error" role="alert">{draftError || error || createError}</div> : null}
       {connectionView ? <section className="connect-view">
         {restoringConnection ? <p className="muted" role="status">正在恢复连接…</p> : connection.connected && approved && !authorizationLost ? <>
@@ -462,7 +491,8 @@ export function App() {
           {page?.page.next_before != null ? <button className="secondary older" disabled={older} onClick={() => void loadOlder()}>{older ? '正在加载…' : '查看更早消息'}</button> : null}
           {page && page.messages.length === 0 ? <div className="empty"><Icon name="chat" /><h3>今天想研究什么？</h3><p>分析个股、了解市场，或梳理投资思路。<br />例如：今天大盘资金情况如何？</p></div> : null}
           {selected === missingSession ? <div className="empty" role="status"><Icon name="chat" /><h3>这段会话已删除</h3><p>可以返回会话列表，或开始新的对话。</p><button className="secondary" disabled={!online || busy} onClick={() => void createSession()}>{draft ? '用草稿新建会话' : '新建会话'}</button></div> : !page ? <div className="empty">正在读取会话…</div> : page.messages.map((message, index) => <article className={`message ${message.role === 'user' ? 'user' : 'assistant'}`} key={page.page.start_index + index}>
-            <span className="message-avatar" aria-hidden="true"><Icon name={message.role === 'user' ? 'person' : 'robot'} /></span>
+            <span className="message-avatar" aria-hidden="true">{message.role === 'user'
+              ? <Icon name="person" /> : <img src={coinLogo} alt="" width={26} height={26} />}</span>
             <div className="message-body"><span className="sr-only">{message.role === 'user' ? '你' : '交易罗盘'}</span><div className="message-bubble"><Markdown text={message.content} />
               {message.sections?.map((section, i) => <div key={i}><h3>{section.title}</h3><Markdown text={section.content} /></div>)}
               {message.tool_calls?.length ? <details className="message-tools"><summary>使用了 {message.tool_calls.length} 个工具</summary><p>{message.tool_calls.map(tool => tool.name).join('、')}</p></details> : null}

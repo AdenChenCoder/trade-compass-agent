@@ -10,6 +10,8 @@ from scripts.check_dist import _validate_names
     "data/paper_trades.jsonl",
     "memory_vault/knowledge.md",
     "temp/nested/artifact",
+    "temp/reviews/verification.md",
+    "temp/plans/draft.json",
     "docs/market-readiness-2026-09-13.md",
     "docs/tushare-paid-verification-2026-09-12.json",
     "docs/personal-data-source-selection-2026-09-12.md.before-paid-verification",

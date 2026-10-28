@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 from fastapi.testclient import TestClient
 
@@ -288,6 +289,29 @@ def test_portfolio_trade_valid_and_invalid(client: TestClient) -> None:
     assert invalid_response.status_code == 200
 
 
+def test_account_identity_and_invalid_updates_preserve_holdings(client: TestClient) -> None:
+    assert client.post("/api/accounts", json={
+        "kind": "etf_rotation", "name": "重复 ETF", "capital": 100_000,
+    }).status_code == 400
+    created = client.post("/api/accounts", json={
+        "kind": "long_term", "name": "长线", "capital": 100_000,
+    })
+    assert created.status_code == 200
+    account_id = created.json()["id"]
+    trade = {"symbol": "510300", "account": "long_term", "side": "buy", "quantity": 100, "price": 10}
+    assert client.post("/api/portfolio/trades", json=trade).status_code == 200
+    assert client.delete(f"/api/accounts/{account_id}").status_code == 400
+
+    assert client.put(f"/api/accounts/{account_id}", json={"kind": "invalid_kind"}).status_code == 400
+    assert client.put(f"/api/accounts/{account_id}", json={"kind": "mixed"}).status_code == 400
+    accounts = _get(client, "/api/accounts")
+    assert next(item for item in accounts if item["id"] == account_id)["used"] == 1000
+
+    assert client.delete("/api/accounts/etf_rotation").status_code == 200
+    absent = dict(trade, account="etf_rotation")
+    assert client.post("/api/portfolio/trades", json=absent).status_code == 400
+
+
 def test_audit_listing_and_lookup(client: TestClient, tmp_path) -> None:
     audit_path = tmp_path / "data" / "audit.jsonl"
     audit = JsonAuditLog(audit_path)
@@ -357,7 +381,11 @@ def test_memory_pin_and_forget_api(client: TestClient) -> None:
     assert forgotten["confidence"] == 1.0  # retirement preserves recorded confidence
 
 
-def test_jobs_listing_and_run(client: TestClient) -> None:
+def test_jobs_listing_and_run(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "trade_compass_agent.runtime.workflows.engine.run_workflow_asset_by_id",
+        lambda *args, **kwargs: {"analysis": "归档验收报告", "workflow_id": "postmarket_archive"},
+    )
     jobs = _get(client, "/api/jobs")
     assert isinstance(jobs, list)
     job_ids = {job["id"] for job in jobs}
@@ -388,8 +416,12 @@ def test_jobs_listing_and_run(client: TestClient) -> None:
     assert run_response.status_code == 200, run_response.text
     run_body = run_response.json()
     assert run_body["job_id"] == "postmarket"
-    # Job may fail in test env (no LLM available for Agent steps); verify it ran
-    assert run_body["id"]
+    assert run_body["id"] and run_body["status"] in {"running", "completed"}
+    deadline = time.monotonic() + 5
+    while run_body["status"] == "running" and time.monotonic() < deadline:
+        time.sleep(0.01)
+        run_body = _get(client, f"/api/jobs/runs/{run_body['id']}")
+    assert run_body["status"] == "completed"
 
     runs = _get(client, "/api/jobs/runs?limit=5")
     assert isinstance(runs, list) and runs
@@ -397,6 +429,52 @@ def test_jobs_listing_and_run(client: TestClient) -> None:
 
     missing = client.post("/api/jobs/unknown-job/run")
     assert missing.status_code == 404
+
+
+def test_job_runs_hide_internal_without_hiding_autonomous_or_custom(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    from trade_compass_agent.ops.prompt_jobs import PromptJobStore
+    from trade_compass_agent.ops.run_store import SqliteRunStore
+
+    db_path = tmp_path / "data" / "scheduler.db"
+    store = SqliteRunStore(db_path)
+    custom = PromptJobStore(db_path).create(
+        name="自建检查",
+        prompt="检查持仓",
+        schedule="trading_day 10:00",
+    )
+
+    def completed_run(job_id: str):
+        run = store.create_run(job_id)
+        store.start_run(run)
+        store.complete_run(run, message=job_id)
+        return run
+
+    completed_run("premarket")
+    autonomous = completed_run("autonomous_trading")
+    custom_run = completed_run(f"custom:{custom.id}")
+    internal = completed_run("background-review")
+
+    visible = _get(client, "/api/jobs/runs?limit=2")
+    assert [run["id"] for run in visible] == [custom_run.id, autonomous.id]
+    assert all(run["job_id"] != "background-review" for run in visible)
+
+    assert _get(client, "/api/jobs/runs?job_id=background-review") == []
+    internal_runs = _get(
+        client,
+        "/api/jobs/runs?job_id=background-review&include_internal=true",
+    )
+    assert [run["id"] for run in internal_runs] == [internal.id]
+
+    detail = _get(client, f"/api/jobs/runs/{internal.id}")
+    assert detail["job_id"] == "background-review"
+
+    assert client.delete(f"/api/jobs/custom/{custom.id}").status_code == 200
+    after_delete = _get(client, "/api/jobs/runs?limit=2")
+    assert [run["id"] for run in after_delete] == [custom_run.id, autonomous.id]
+    assert [run["id"] for run in _get(client, f"/api/jobs/runs?job_id=custom:{custom.id}")] == [custom_run.id]
 
 
 def test_custom_jobs_crud_and_route_order(client: TestClient) -> None:
@@ -428,9 +506,14 @@ def test_custom_jobs_crud_and_route_order(client: TestClient) -> None:
     assert deleted.status_code == 200
 
 
-def test_notifications(client: TestClient) -> None:
+def test_notifications(client: TestClient, monkeypatch) -> None:
     import time
-    client.post("/api/jobs/close/run")
+    monkeypatch.setattr(
+        "trade_compass_agent.runtime.workflows.engine.run_workflow_asset_by_id",
+        lambda *args, **kwargs: {"analysis": "通知流程验收报告", "workflow_id": "close_check"},
+    )
+    response = client.post("/api/jobs/close/run")
+    assert response.status_code == 200
     body: list = []
     for _ in range(10):
         body = _get(client, "/api/notifications?limit=5")
@@ -440,6 +523,7 @@ def test_notifications(client: TestClient) -> None:
     assert isinstance(body, list)
     assert body, "expected at least one notification after running a job"
     assert {"channel", "title", "message", "severity"} <= body[0].keys()
+    assert "通知流程验收报告" in body[0]["message"]
 
 
 def test_config_watchlists(client: TestClient) -> None:

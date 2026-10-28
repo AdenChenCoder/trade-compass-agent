@@ -280,8 +280,41 @@ class MemoryStore:
         return hashlib.sha256(json.dumps(values).encode()).hexdigest()
 
     @_live
+    def background_review_snapshot(self):
+        return {
+            "fingerprint": self.review_fingerprint(),
+            "entry_ids": [r["entry_id"] for target in ("memory", "user") for r in self._meta[target]],
+            "entries": {r["entry_id"]: {key: r.get(key) for key in ("version", "status", "needs_review")}
+                        for target in ("memory", "user") for r in self._meta[target]},
+        }
+
+    @_live
     def review_due(self):
         return self.capacity()["maintenance_needed"] and self._meta.get("background_reviewed_fingerprint") != self.review_fingerprint()
+
+    @_live
+    def mark_background_reviewed(self, snapshot, *, commits=()):
+        """Acknowledge only the input snapshot plus this review's write receipts."""
+        if not isinstance(snapshot, dict) or "entries" not in snapshot:
+            # Legacy requests have IDs only; leave them eligible for fresh review.
+            return False
+        expected = deepcopy(snapshot["entries"])
+
+        def apply_receipts(receipts):
+            for receipt in receipts:
+                entry_id = receipt.get("entry_id")
+                if (receipt.get("ok") and receipt.get("changed") and entry_id in expected
+                        and all(key in receipt for key in ("version", "status", "needs_review"))
+                        and receipt["version"] >= expected[entry_id]["version"]):
+                    expected[entry_id] = {key: receipt[key] for key in ("version", "status", "needs_review")}
+                apply_receipts(receipt.get("commits", []))
+
+        apply_receipts(commits)
+        if self.background_review_snapshot()["entries"] != expected:
+            return False
+        self._meta["background_reviewed_fingerprint"] = self.review_fingerprint()
+        self._save_meta()
+        return True
 
     @_live
     def snapshot(self, target="memory", *, include_history=True):
@@ -372,6 +405,7 @@ class MemoryStore:
         return {"ok": True, "changed": changed, "accepted": row["status"] == "active",
                 "disposition": {"active": "adopted", "candidate": "pending", "archived": "retired"}[row["status"]],
                 "entry_id": row["entry_id"], "version": row["version"], "status": row["status"],
+                "needs_review": row.get("needs_review", False),
                 "confidence": row["confidence"], "source": row["source"], "reason": row["reason"],
                 **self.capacity(target), **extra}
 
@@ -831,6 +865,8 @@ class MemoryStore:
         guard = getattr(self, "_commit_guard", None)
         if guard:
             guard()
+        from trade_compass_agent.llm.providers import check_execution_active
+        check_execution_active()
         for target in ("memory", "user"):
             self._meta[target] = [asdict(_entry_meta_from_dict(r)) for r in self._meta[target]]
         for target in ("memory", "user"):

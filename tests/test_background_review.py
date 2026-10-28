@@ -1,13 +1,15 @@
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from trade_compass_agent.config import AppConfig
+from trade_compass_agent.config import AgentConfig, AppConfig
 from trade_compass_agent.ops.run_store import SqliteRunStore
 from trade_compass_agent.runtime.background_review import (
-    is_committed_mutation, spawn_background_review, _run_review_agent_loop,
+    is_committed_mutation, spawn_background_review, _run_review_agent_loop, _review_context,
+    _previous_review_context,
 )
 
 
@@ -16,6 +18,187 @@ def test_only_successful_mutations_count():
     assert not is_committed_mutation("skill_manage", {"action": "patch"}, {"ok": False})
     assert not is_committed_mutation("write_knowledge", {"action": "add"}, {"ok": True, "changed": False})
     assert is_committed_mutation("skill_manage", {"action": "patch"}, {"ok": True, "changed": True})
+
+
+def test_review_context_uses_receipt_index_not_full_tool_output():
+    messages = [
+        {"role": "user", "content": "复盘今天的判断"},
+        {"role": "assistant", "tool_calls": [{"id": "call-1", "function": {
+            "name": "paper_trade", "arguments": '{"symbol":"561560","private_payload":"secret"}'}}]},
+        {"role": "tool", "tool_call_id": "call-1", "content": json.dumps({
+            "ok": False, "error": "stale_quote", "payload": "huge-private-receipt" * 100})},
+        {"role": "assistant", "content": "今日不成交。"},
+    ]
+    context = _review_context(messages, "origin", "turn")
+    assert "复盘今天的判断" in context and "今日不成交" in context
+    assert "paper_trade" in context and "stale_quote" in context and "call-1" in context
+    assert "huge-private-receipt" not in context and "secret" not in context
+
+
+def test_retry_context_keeps_commit_identity_without_recopying_result():
+    context = _previous_review_context({"commits": [{"receipt_id": "session:call:0",
+        "tool": "skill_manage", "action": "patch", "result": {"version": "saved-v1", "content": "private-full-result"}}],
+        "errors": ["not finished"]})
+    encoded = json.dumps(context)
+    assert "saved-v1" in encoded and "session:call:0" in encoded
+    assert "private-full-result" not in encoded
+
+
+def test_privacy_opt_out_does_not_start_or_resume_background_review(tmp_path, monkeypatch):
+    from trade_compass_agent.llm.providers import ChatMessage
+    from trade_compass_agent.memory.memory_store import MemoryStore
+    from trade_compass_agent.runtime.loop import AgentLoop
+
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "vault",
+                       allow_external_llm_memory=False)
+    memory = MemoryStore(config.memory_dir)
+    memory.add("一条等待复评的观察", source="agent")
+    assert memory.review_due()
+    calls = []
+    monkeypatch.setattr("trade_compass_agent.runtime.loop.spawn_background_review",
+                        lambda *a, **k: calls.append("spawn"))
+    monkeypatch.setattr("trade_compass_agent.runtime.loop.resume_background_reviews",
+                        lambda *a, **k: calls.append("resume"))
+    AgentLoop.from_config(config)._maybe_background_review([ChatMessage(role="user", content="检查")])
+    assert calls == []
+
+
+def test_privacy_opt_out_skips_llm_memory_compaction(tmp_path, monkeypatch):
+    from trade_compass_agent.memory.tree.storage import MemoryTreeStore
+    from trade_compass_agent.runtime.learning import compact_memory_summary
+
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "vault",
+                       agent=AgentConfig(learning_enabled=True), allow_external_llm_memory=False)
+    MemoryTreeStore(config.memory_dir).write("insights", "待整理的交易观察")
+    monkeypatch.setattr("trade_compass_agent.runtime.learning.create_llm_provider",
+                        lambda **kwargs: pytest.fail("privacy opt-out called external LLM"))
+    assert compact_memory_summary(config) is None
+
+
+def test_maintenance_fingerprint_deduplicates_sources_and_serializes_review(tmp_path, monkeypatch):
+    from trade_compass_agent.runtime.background_review import resume_background_reviews
+
+    started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def review(_config, _prompt, **kwargs):
+        calls.append(kwargs["request_id"])
+        if len(calls) == 1:
+            started.set()
+            assert release.wait(5)
+        return {"summary": "Nothing to save.", "commits": [], "errors": []}
+
+    monkeypatch.setattr("trade_compass_agent.runtime.background_review._run_review_agent_loop", review)
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "vault",
+                       allow_external_llm_memory=True)
+    args = ([{"role": "user", "content": "same memory"}], True, False, None, None, None)
+    first = spawn_background_review(*args, config=config, source_session_id="one",
+                                    source_turn_id="a", maintenance_fingerprint="fingerprint")
+    assert started.wait(5)
+    assert spawn_background_review(*args, config=config, source_session_id="two",
+                                   source_turn_id="b", maintenance_fingerprint="fingerprint") is None
+    assert spawn_background_review([{"role": "user", "content": "other"}], False, True, None, None, None,
+                                   config=config, source_session_id="two", source_turn_id="b") is None
+    assert spawn_background_review([{"role": "user", "content": "yet another"}], False, True, None, None, None,
+                                   config=config, source_session_id="three", source_turn_id="c") is None
+    requests = list((config.memory_dir / "background_reviews").glob("*.json"))
+    assert len(requests) == 3
+    assert len(calls) == 1
+    release.set()
+    first.join(timeout=5)
+    assert not first.is_alive()
+    resume_background_reviews(config)
+    for _ in range(50):
+        if len(calls) == 3 and all(json.loads(path.read_text())["status"] == "completed" for path in requests):
+            break
+        threading.Event().wait(.01)
+    assert len(calls) == 3
+    assert all(json.loads(path.read_text())["status"] == "completed" for path in requests)
+
+
+def test_completed_maintenance_does_not_requeue_its_own_memory_changes(tmp_path, monkeypatch):
+    from trade_compass_agent.memory.memory_store import MemoryStore
+
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "vault",
+                       allow_external_llm_memory=True)
+    memory = MemoryStore(config.memory_dir)
+    candidate = memory.add("一条尚待核实的长期观察", source="agent")
+    original_fingerprint = memory.review_fingerprint()
+    assert memory.review_due()
+
+    def review(_config, _prompt, **_kwargs):
+        result = MemoryStore(config.memory_dir).record_candidate_review(
+            entry_id=candidate["entry_id"], expected_version=candidate["version"],
+            decision="defer", reason="尚无独立证据", evidence=[],
+        )
+        assert result["ok"] and result["changed"]
+        return {"summary": "已复评", "commits": [{"tool": "write_knowledge", "result": result}], "errors": []}
+
+    monkeypatch.setattr("trade_compass_agent.runtime.background_review._run_review_agent_loop", review)
+    thread = spawn_background_review(
+        [{"role": "user", "content": "来源任务"}], True, False, None, None, None,
+        config=config, source_session_id="source", source_turn_id="turn",
+        maintenance_fingerprint=original_fingerprint,
+    )
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert memory.review_fingerprint() != original_fingerprint
+    assert not memory.review_due()
+    assert not MemoryStore(config.memory_dir).review_due()
+
+    from trade_compass_agent.llm.providers import ChatMessage
+    from trade_compass_agent.runtime.loop import AgentLoop
+    AgentLoop.from_config(config)._maybe_background_review(
+        [ChatMessage(role="user", content="下一轮正常任务")],
+        source_session_id="next", source_turn_id="turn",
+    )
+    assert len(list((config.memory_dir / "background_reviews").glob("*.json"))) == 1
+
+    memory.add("另一条新出现的待核实观察", source="agent")
+    assert memory.review_due()
+
+
+def test_maintenance_does_not_mark_concurrently_added_candidate_as_reviewed(tmp_path, monkeypatch):
+    from trade_compass_agent.memory.memory_store import MemoryStore
+
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "vault")
+    memory = MemoryStore(config.memory_dir)
+    candidate = memory.add("复盘开始前的候选", source="agent")
+    start = memory.review_fingerprint()
+
+    def review(_config, _prompt, **_kwargs):
+        result = MemoryStore(config.memory_dir).record_candidate_review(
+            entry_id=candidate["entry_id"], expected_version=candidate["version"],
+            decision="defer", reason="仍待核查", evidence=[],
+        )
+        assert result["ok"]
+        MemoryStore(config.memory_dir).add("复盘执行期间新产生的候选", source="agent")
+        return {"summary": "已复评旧候选", "commits": [], "errors": []}
+
+    monkeypatch.setattr("trade_compass_agent.runtime.background_review._run_review_agent_loop", review)
+    thread = spawn_background_review(
+        [{"role": "user", "content": "来源任务"}], True, False, None, None, None,
+        config=config, source_session_id="source", source_turn_id="turn",
+        maintenance_fingerprint=start,
+    )
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert memory.review_due()
+    assert memory.maintenance_marker("background_reviewed_fingerprint") is None
+
+
+def test_review_claim_is_atomic_across_run_store_instances(tmp_path):
+    path = tmp_path / "scheduler.db"
+    first_store = SqliteRunStore(path)
+    second_store = SqliteRunStore(path)
+    first = first_store.create_run("background-review", trigger="agent")
+    second = second_store.create_run("background-review", trigger="agent")
+    assert first_store.claim_background_review(first)
+    assert not second_store.claim_background_review(second)
+    assert second_store.get_run(second.id).status == "queued"
+    first_store.complete_run(first)
+    assert second_store.claim_background_review(second)
 
 
 def test_source_evidence_unique_session_and_idempotent_review(tmp_path, monkeypatch):
@@ -50,12 +233,15 @@ def test_failed_review_retains_inputs_and_does_not_reset_nudges(tmp_path, monkey
     config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "vault")
     callbacks = []
     t = spawn_background_review([{"role": "user", "content": "保留此证据"}], True, False, None, None, None,
-        config=config, source_session_id="origin", source_turn_id="failed", on_complete=lambda *a: callbacks.append(a))
+        config=config, source_session_id="origin", source_turn_id="failed", maintenance_fingerprint="pending",
+        on_complete=lambda *a: callbacks.append(a))
     t.join(timeout=10)
     assert not callbacks
     request = json.loads(next((config.memory_dir / "background_reviews").glob("*.json")).read_text())
     assert request["messages"][0]["content"] == "保留此证据" and request["status"] == "retry_pending"
     assert SqliteRunStore(config.data_dir / "scheduler.db").recent_runs()[0].status == "timed_out"
+    from trade_compass_agent.memory.memory_store import MemoryStore
+    assert MemoryStore(config.memory_dir).maintenance_marker("background_reviewed_fingerprint") is None
 
 
 def test_receipts_report_partial_failure_and_ignore_read_only_calls(tmp_path, monkeypatch):

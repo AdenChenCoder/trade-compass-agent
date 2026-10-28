@@ -9,6 +9,23 @@ test('phone keeps creating real computer sessions while preserving existing conv
   const desktopSessions = async () => (await (await page.request.get('/api/agent/sessions?limit=100')).json()).sessions;
   try {
     const phone = await context.newPage();
+    await phone.addInitScript(() => {
+      let height: number | null = null;
+      let offsetTop = 0;
+      const viewport = new EventTarget();
+      Object.defineProperties(viewport, {
+        height: { get: () => height ?? innerHeight },
+        offsetTop: { get: () => offsetTop },
+      });
+      Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
+      window.addEventListener('resize', () => viewport.dispatchEvent(new Event('resize')));
+      (window as Window & { simulateKeyboardViewport?: (nextHeight: number, nextOffsetTop: number) => void }).simulateKeyboardViewport =
+        (nextHeight, nextOffsetTop) => {
+          height = nextOffsetTop === 0 && nextHeight === innerHeight ? null : nextHeight;
+          offsetTop = nextOffsetTop;
+          viewport.dispatchEvent(new Event('resize'));
+        };
+    });
     await phone.goto('https://localhost:19746/mobile/');
     const invite = await (await page.request.post('/api/mobile/pairing/invitations')).json();
     const claim = await phone.evaluate(async invitation => (await fetch('/mobile/v1/browser/claim', {
@@ -52,6 +69,33 @@ test('phone keeps creating real computer sessions while preserving existing conv
     await page.goto('/agent');
     await phone.getByRole('button', { name: /消费行业观察/ }).click();
     await phone.getByLabel('消息', { exact: true }).fill('原会话的草稿不能丢');
+    await phone.evaluate(() => {
+      (window as Window & { simulateKeyboardViewport: (height: number, offsetTop: number) => void })
+        .simulateKeyboardViewport(420, 106);
+    });
+    await expect.poll(async () => phone.evaluate(() => {
+      const shell = document.querySelector('.app-shell')!.getBoundingClientRect();
+      const rail = document.querySelector('.side-rail')!.getBoundingClientRect();
+      return {
+        shell: { top: shell.top, bottom: shell.bottom, height: shell.height },
+        rail: { top: rail.top, bottom: rail.bottom, height: rail.height },
+      };
+    })).toEqual({
+      shell: { top: 106, bottom: 526, height: 420 },
+      rail: { top: 106, bottom: 526, height: 420 },
+    });
+    const keyboardViewportBottom = 526;
+    const composerBottom = await phone.locator('.composer').evaluate(element => element.getBoundingClientRect().bottom);
+    expect(composerBottom).toBeGreaterThan(keyboardViewportBottom - 2);
+    expect(composerBottom).toBeLessThanOrEqual(keyboardViewportBottom + 2);
+    const railTop = await phone.locator('.side-rail').evaluate(element => element.getBoundingClientRect().top);
+    await phone.locator('main').evaluate(element => { element.scrollTop = element.scrollHeight; });
+    expect(await phone.locator('.side-rail').evaluate(element => element.getBoundingClientRect().top)).toBe(railTop);
+    await phone.screenshot({ path: testInfo.outputPath('keyboard-open.png'), animations: 'disabled' });
+    await phone.evaluate(() => {
+      (window as Window & { simulateKeyboardViewport: (height: number, offsetTop: number) => void })
+        .simulateKeyboardViewport(844, 0);
+    });
     const before = await desktopSessions();
     const create = async () => {
       const response = phone.waitForResponse(value => value.url().endsWith('/mobile/v1/sessions') && value.request().method() === 'POST');

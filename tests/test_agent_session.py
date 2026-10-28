@@ -19,6 +19,17 @@ from trade_compass_agent.runtime.session import (
 from trade_compass_agent.runtime.tools.registry import ToolRegistry
 
 
+def test_scheduled_prompt_requires_comparable_rank_evidence() -> None:
+    from trade_compass_agent.ops.agent_session import wrap_scheduler_prompt
+
+    prompt = wrap_scheduler_prompt("复盘板块领涨前提是否改变")
+    assert "未入榜不等于退出领涨、退潮或资金流出" in prompt
+    assert "日期、来源及分类口径可比" in prompt
+    assert "假设" in prompt
+    assert "当前持仓、成交或行情判断，须先以本轮工具核对" in prompt
+    assert "历史对话只能作线索" in prompt
+
+
 def test_session_store_creates_directory(tmp_path: Path) -> None:
     sessions_dir = tmp_path / "data" / "agent_sessions"
     assert not sessions_dir.exists()
@@ -144,6 +155,8 @@ def test_scheduled_agent_session_forces_summary_on_tool_round_limit(
             self.calls += 1
             if self.calls == 1:
                 return ChatCompletion(content="", model="mock", provider="mock")
+            if "独立报告事实复核者" in messages[0].content:
+                return ChatCompletion(content='{"valid":true,"issues":[]}', model="mock", provider="mock")
             content = "盘后复盘结论：基于已有工具结果，今日应关注止盈纪律和风险敞口。"
             if on_delta:
                 on_delta(content)
@@ -171,7 +184,7 @@ def test_scheduled_agent_session_forces_summary_on_tool_round_limit(
     text = session.run("请复盘今天表现", timeout=5)
 
     assert "盘后复盘结论" in text
-    assert chat_client.calls == 2
+    assert chat_client.calls == 3
 
 
 def test_scheduled_agent_session_uses_extended_llm_timeout(
@@ -211,8 +224,30 @@ def test_scheduled_agent_session_uses_extended_llm_timeout(
 
     assert text == "定时任务分析完成。"
     assert captured_configs
-    assert all(item.llm.timeout == 180.0 for item in captured_configs)
+    assert all(item.llm.timeout == 900.0 for item in captured_configs)
     assert config.llm.timeout == 60.0
+
+
+def test_background_review_timeout_waits_for_worker_to_exit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    import time
+    from trade_compass_agent.ops.agent_session import ScheduledAgentSession
+
+    finished = threading.Event()
+
+    def run_turn(*_args, **_kwargs):
+        time.sleep(.04)
+        finished.set()
+        return type("Response", (), {"summary": "Late answer", "interrupted": False})()
+
+    fake = type("Agent", (), {"_tools": type("Tools", (), {"schemas": []})(),
+                              "_memory_store": None, "_skill_store": None,
+                              "run_turn": staticmethod(run_turn)})()
+    monkeypatch.setattr("trade_compass_agent.runtime.loop.AgentLoop.from_config", lambda *a, **k: fake)
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "vault")
+    with pytest.raises(TimeoutError, match="deadline"):
+        ScheduledAgentSession(config, job_id="background-review").run("test", timeout=.01)
+    assert finished.is_set()
 
 
 def test_scheduler_response_does_not_promote_a_longer_intermediate_draft(tmp_path: Path) -> None:

@@ -50,6 +50,16 @@ def build_metrics() -> dict[str, Any]:
 
 
 def _check_llm_key() -> str:
+    from trade_compass_agent.config import load_app_config
+
+    try:
+        provider = load_app_config().llm.provider
+    except Exception:
+        return "error"
+    if provider in {"lmstudio", "ollama"}:
+        return "ok"
+    if provider == "disabled":
+        return "disabled"
     has_key = any(
         os.getenv(k)
         for k in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DASHSCOPE_API_KEY")

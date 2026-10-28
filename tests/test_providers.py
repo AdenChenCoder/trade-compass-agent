@@ -13,7 +13,7 @@ from trade_compass_agent.data.providers import (
     to_sina_code,
     to_baostock_code,
 )
-from trade_compass_agent.data.network import run_with_timeout
+from trade_compass_agent.data.network import drain_timeout_workers, run_with_timeout
 
 
 class _FailingProvider:
@@ -53,6 +53,22 @@ def test_run_with_timeout_uses_daemon_worker():
     )
 
     assert worker_is_daemon is True
+
+
+def test_scheduled_timeout_drains_nested_workers_before_returning():
+    finished = threading.Event()
+
+    def inner():
+        time.sleep(.04)
+        finished.set()
+
+    def outer():
+        with pytest.raises(TimeoutError):
+            run_with_timeout(inner, .01, "inner")
+
+    with drain_timeout_workers(), pytest.raises(TimeoutError):
+        run_with_timeout(outer, .02, "outer")
+    assert finished.is_set()
 
 
 def test_to_baostock_code():
@@ -167,5 +183,5 @@ def test_bulk_daily_provider_writes_cache_on_network_fetch(tmp_path):
     provider._network = ChainProvider([provider._cache, _FixedProvider()])
     bars = provider.get_bars("600519", timeframe="1d", limit=3)
     assert len(bars) == 3
-    cached = LocalBarCacheProvider(tmp_path).get_bars("600519", timeframe="1d", limit=3)
+    cached = LocalBarCacheProvider(tmp_path, closed_daily_only=True).get_bars("600519", timeframe="1d", limit=3)
     assert cached[-1].close == bars[-1].close

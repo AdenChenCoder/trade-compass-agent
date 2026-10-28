@@ -17,6 +17,7 @@ from typing import Any
 
 from trade_compass_agent.config import AppConfig
 from trade_compass_agent.llm.providers import ChatMessage, create_vision_client
+from trade_compass_agent.llm.usage import LLMCallAudit, ProviderTokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -104,11 +105,10 @@ def tool_image_analyze(config: AppConfig, **kwargs: Any) -> str:
 
         # Ollama's /v1 endpoint has bugs with vision; use native API if available
         if hasattr(client, "name") and "ollama" in getattr(client, "name", ""):
-            description = _ollama_vision(client.model, image_data, prompt)
-        elif hasattr(client, "_client"):
-            response = client._client.chat.completions.create(
-                model=client.model,
-                messages=[
+            description = _ollama_vision(config, client.model, image_data, prompt)
+        elif hasattr(client, "complete_raw"):
+            completion = client.complete_raw(
+                [
                     {
                         "role": "user",
                         "content": [
@@ -119,7 +119,7 @@ def tool_image_analyze(config: AppConfig, **kwargs: Any) -> str:
                 ],
                 max_tokens=1000,
             )
-            description = (response.choices[0].message.content or "").strip()
+            description = (completion.content or "").strip()
         else:
             completion = client.complete([ChatMessage(role="user", content=prompt)])
             description = (completion.content or "").strip()
@@ -135,20 +135,58 @@ def tool_image_analyze(config: AppConfig, **kwargs: Any) -> str:
         return json.dumps({"error": f"图片分析失败: {exc}"}, ensure_ascii=False)
 
 
-def _ollama_vision(model: str, image_b64: str, prompt: str) -> str:
+def _ollama_vision(config: AppConfig, model: str, image_b64: str, prompt: str) -> str:
     """Call Ollama's native /api/chat endpoint for vision (more reliable than /v1)."""
     import httpx
-    response = httpx.post(
-        "http://localhost:11434/api/chat",
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt, "images": [image_b64]}],
-            "stream": False,
-        },
-        timeout=120.0,
+
+    audit = LLMCallAudit(
+        db_path=config.data_dir / "llm_usage.db",
+        provider="ollama-vision",
+        model=model,
+        operation="vision",
+        timezone_name=config.scheduler.timezone,
     )
-    response.raise_for_status()
-    return response.json().get("message", {}).get("content", "")
+    try:
+        with audit:
+            audit.mark_invocation()
+            response = httpx.post(
+                "http://localhost:11434/api/chat",
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt, "images": [image_b64]}],
+                    "stream": False,
+                },
+                timeout=120.0,
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except Exception as exc:
+        audit.finish(status="failed", error=exc)
+        raise
+    prompt_tokens = _optional_count(payload.get("prompt_eval_count"))
+    completion_tokens = _optional_count(payload.get("eval_count"))
+    total_tokens = (
+        prompt_tokens + completion_tokens
+        if prompt_tokens is not None and completion_tokens is not None
+        else None
+    )
+    audit.finish(
+        status="completed",
+        usage=ProviderTokenUsage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        ),
+        model=str(payload.get("model") or model),
+    )
+    return payload.get("message", {}).get("content", "")
+
+
+def _optional_count(value: Any) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _ocr_extract(path: Path) -> str:

@@ -741,6 +741,14 @@ def run_serve(
     config = load_app_config()
     ensure_runtime_dirs(settings_from_config(config))
 
+    from trade_compass_agent.mobile.assets import prepare_source_mobile
+
+    try:
+        prepare_source_mobile()
+    except RuntimeError as exc:
+        # Optional mobile prerequisites must not take down the local workbench.
+        print(f"Mobile connection unavailable: {exc}", file=sys.stderr)
+
     if dev:
         os.environ["TRADE_COMPASS_DEV_CORS"] = "true"
     else:
@@ -773,9 +781,10 @@ def run_serve(
 
     if dev:
         print(f"API dev server: {url}")
-        print("Start the Vite dev server in another terminal:")
-        print("  pnpm --dir apps/web dev")
-        print("  (proxies /api/* to this server; UI at http://127.0.0.1:3000/agent)")
+        if os.getenv("TRADE_COMPASS_DEV_SUPERVISED", "").lower() not in {"1", "true", "yes"}:
+            print("Start the Vite dev server in another terminal:")
+            print("  pnpm --dir apps/web dev")
+            print("  (proxies /api/* to this server; UI at http://127.0.0.1:3000/agent)")
     else:
         print(f"Trade Compass: {url}/agent")
 
@@ -1106,6 +1115,15 @@ def main() -> None:
 
     sub.add_parser("market-pulse", help=command_help("market-pulse"))
 
+    p_research = sub.add_parser("research", help="Inspect strategy hypotheses and backtests")
+    p_research_sub = p_research.add_subparsers(dest="research_command", required=True)
+    for action in ("list", "save", "run", "show"):
+        research_action = p_research_sub.add_parser(action, help=command_help("research", action))
+        if action in {"save", "run"}:
+            research_action.add_argument("file", help="JSON definition or run request")
+        elif action == "show":
+            research_action.add_argument("run_id")
+
     p_agent = sub.add_parser("agent", help=command_help("agent"))
     p_agent.add_argument("message")
 
@@ -1244,6 +1262,15 @@ def main() -> None:
         help="Do not start the scheduler (default: on when config.scheduler.enabled)",
     )
 
+    p_dev = sub.add_parser("dev", help=command_help("dev"))
+    p_dev.add_argument("--port", type=int, default=None, help="API port (default: 19704)")
+    p_dev.add_argument("--open", action="store_true", help="Open the Web UI after startup")
+    p_dev.add_argument(
+        "--no-scheduler",
+        action="store_true",
+        help="Do not start the scheduler",
+    )
+
     p_compress = sub.add_parser(
         "compress", help="Manually compress a session's context (Phase 1+2)"
     )
@@ -1296,7 +1323,23 @@ def main() -> None:
     load_project_dotenv()
     setup_logging()
 
-    if args.command == "market-pulse":
+    if args.command == "research":
+        from trade_compass_agent.evaluation.research import ResearchRequest, ResearchStore, StrategyDefinition, run_strategy_research
+        store = ResearchStore(load_app_config().data_dir)
+        try:
+            if args.research_command == "list":
+                research_result = {"strategies": store.list_strategies(), "runs": store.list_runs()}
+            elif args.research_command == "show":
+                research_result = store.get_run(args.run_id)
+            elif args.research_command == "save":
+                research_result = store.save_strategy(StrategyDefinition.model_validate_json(Path(args.file).read_text(encoding="utf-8")))
+            else:
+                research_result = run_strategy_research(MarketStack.from_config(), ResearchRequest.model_validate_json(Path(args.file).read_text(encoding="utf-8")))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            raise SystemExit(2) from exc
+        print(json.dumps(research_result, ensure_ascii=False, indent=2, allow_nan=False))
+    elif args.command == "market-pulse":
         run_market_pulse()
     elif args.command == "agent":
         run_agent(args.message)
@@ -1396,6 +1439,14 @@ def main() -> None:
             args.host,
             _resolve_port(args.port),
             dev=args.dev,
+            open_browser=args.open,
+            no_scheduler=args.no_scheduler,
+        )
+    elif args.command == "dev":
+        from trade_compass_agent.development import run_development
+
+        run_development(
+            api_port=_resolve_port(args.port),
             open_browser=args.open,
             no_scheduler=args.no_scheduler,
         )

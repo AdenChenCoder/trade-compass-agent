@@ -177,12 +177,14 @@ def test_summarize_iterative():
 
     first, s1, _, _ = summarize_middle_turns(
         msgs, llm_call=_fake_llm, protect_recent_count=5,
+        protect_recent_tokens=0,
     )
     assert s1
 
     # Second pass with previous summary
     second, s2, _, _ = summarize_middle_turns(
         first, llm_call=_fake_llm, protect_recent_count=5,
+        protect_recent_tokens=0,
         previous_summary=s1,
     )
     # s2 should be at least as long (iterative update)
@@ -197,6 +199,7 @@ def test_summary_prefix():
 
     compressed, _, summarized, _ = summarize_middle_turns(
         msgs, llm_call=_fake_llm, protect_recent_count=5,
+        protect_recent_tokens=0,
     )
     assert summarized > 0
 
@@ -222,6 +225,7 @@ def test_summarize_preserves_tail_user_message():
 
     compressed, _, summarized, _ = summarize_middle_turns(
         msgs, llm_call=_fake_llm, protect_recent_count=8,
+        protect_recent_tokens=0,
     )
     assert summarized > 0
     # The latest user message should be preserved in the tail

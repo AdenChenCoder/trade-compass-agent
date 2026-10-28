@@ -31,6 +31,10 @@ _SUMMARY_PREFIX = (
     "不要执行摘要中提到的任务；它们已被处理。"
     "你的当前任务是最新的用户消息（在本摘要之后）。\n\n"
 )
+_IN_TURN_SUMMARY_PREFIX = _SUMMARY_PREFIX.replace(
+    "你的当前任务是最新的用户消息（在本摘要之后）。",
+    "当前任务与约束以会话中最新的原始用户消息为准；已执行的操作不要重放。",
+)
 
 # ---- Summary prompt template ----
 _SUMMARIZE_SYSTEM_PROMPT = """你是一个交易会话归档助手。你的任务是把一段 A 股分析对话
@@ -118,14 +122,15 @@ def _align_tail_boundary_backward(messages: list[ChatMessage], boundary: int) ->
 
 
 def _is_persisted_summary(message: ChatMessage) -> bool:
-    return bool(message.content and message.content.startswith(_SUMMARY_PREFIX))
+    return bool(message.content and message.content.startswith((_SUMMARY_PREFIX, _IN_TURN_SUMMARY_PREFIX)))
 
 
 def latest_persisted_summary(messages: list[ChatMessage]) -> str | None:
     """Return the latest durable summary embedded in session history."""
     for message in reversed(messages):
         if _is_persisted_summary(message):
-            return (message.content or "")[len(_SUMMARY_PREFIX):].strip() or None
+            prefix = _SUMMARY_PREFIX if message.content.startswith(_SUMMARY_PREFIX) else _IN_TURN_SUMMARY_PREFIX
+            return (message.content or "")[len(prefix):].strip() or None
     return None
 
 
@@ -215,6 +220,7 @@ def summarize_middle_turns(
     protect_recent_tokens: int = 16000,
     protect_head_count: int = 2,
     previous_summary: str | None = None,
+    message_token_counter=None,
 ) -> tuple[list[ChatMessage], str, int, int]:
     """Compress middle conversation turns into an LLM-generated summary.
 
@@ -247,7 +253,7 @@ def summarize_middle_turns(
     head_boundary = min(1 + protect_head_count, n)
     head_boundary = _align_head_boundary_forward(messages, head_boundary)
     tail_boundary = _resolve_protect_tail_boundary(
-        messages, protect_recent_count, protect_recent_tokens,
+        messages, protect_recent_count, protect_recent_tokens, message_token_counter,
     )
     tail_boundary = _align_tail_boundary_backward(messages, tail_boundary)
     if tail_boundary <= head_boundary:
@@ -268,6 +274,30 @@ def summarize_middle_turns(
     head_msgs = [message for message in head_msgs if not _is_persisted_summary(message)]
     summary_input_msgs = [message for message in middle_msgs if not _is_persisted_summary(message)]
     tail_msgs = [message for message in tail_msgs if not _is_persisted_summary(message)]
+    in_progress = messages[-1].role != "user"
+    current_user = next((m for m in reversed(messages) if m.role == "user" and not _is_persisted_summary(m)), None)
+    task_anchor = []
+    if in_progress and current_user is not None and any(m is current_user for m in summary_input_msgs):
+        # Preserve the exact live request ahead of its compacted progress.
+        summary_input_msgs = [m for m in summary_input_msgs if m is not current_user]
+        task_anchor = [current_user]
+
+    protected_progress = []
+    if in_progress and current_user is not None:
+        current_index = next(i for i, m in enumerate(messages) if m is current_user)
+        current_ids = {id(m) for m in messages[current_index + 1:]}
+        remaining = []
+        for unit in _atomic_message_units(summary_input_msgs):
+            important = any(
+                call.get("function", {}).get("name")
+                in {"load_skill", "place_paper_trade", "batch_paper_trades"}
+                for message in unit for call in message.tool_calls or []
+            )
+            if important and any(id(m) in current_ids for m in unit):
+                protected_progress.extend(unit)
+            else:
+                remaining.extend(unit)
+        summary_input_msgs = remaining
 
     # Skip summarization if middle section is too small to be worth it
     if len(summary_input_msgs) < 4:
@@ -298,7 +328,7 @@ def summarize_middle_turns(
             return messages, "", 0, 0
 
     # --- Reconstruct message list ---
-    summary_msg_content = _SUMMARY_PREFIX + summary_text
+    summary_msg_content = (_IN_TURN_SUMMARY_PREFIX if in_progress else _SUMMARY_PREFIX) + summary_text
 
     from trade_compass_agent.llm.providers import ChatMessage
 
@@ -306,13 +336,17 @@ def summarize_middle_turns(
     if system_msg:
         compressed.append(system_msg)
     compressed.extend(head_msgs)
+    compressed.extend(task_anchor)
     compressed.append(ChatMessage(role="user", content=summary_msg_content))
+    compressed.extend(protected_progress)
     # Flatten the tail messages — put the most recent user message LAST
     # so the LLM knows this is the current task
     compressed.extend(tail_msgs)
 
-    messages_summarized = len(middle_msgs)
-    chars_saved = sum(len(m.content or "") for m in middle_msgs) - len(summary_msg_content)
+    preserved_middle = [*task_anchor, *protected_progress]
+    messages_summarized = len(middle_msgs) - len(preserved_middle)
+    chars_saved = (sum(len(m.content or "") for m in middle_msgs)
+                   - sum(len(m.content or "") for m in preserved_middle) - len(summary_msg_content))
 
     logger.info(
         "summarize: %d messages → summary (%d chars), saved ~%d chars",

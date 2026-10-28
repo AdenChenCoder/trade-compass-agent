@@ -4,6 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 import hashlib
 import json
+import time
 import logging
 from datetime import datetime
 from decimal import Decimal
@@ -15,10 +16,11 @@ import tempfile
 from trade_compass_agent.config import TradingCostConfig
 from trade_compass_agent.data.network import run_with_timeout
 from trade_compass_agent.domain import AccountKind, PaperTrade, PortfolioPosition
+from trade_compass_agent.portfolio.costs import estimate_trade_fee
 
 
 logger = logging.getLogger(__name__)
-_MARKET_REFRESH_TIMEOUT_SECONDS = 15.0
+_MARKET_REFRESH_TIMEOUT_SECONDS = 12.0
 _SINA_BATCH_TIMEOUT_SECONDS = 6.0
 
 
@@ -213,12 +215,7 @@ class PaperPortfolio:
         return sell_trade.quantity <= self._position_qty(sell_trade.symbol, sell_trade.account) - bought_today
 
     def estimate_fee(self, trade: PaperTrade) -> float:
-        gross = trade.quantity * trade.price
-        commission = max(gross * self.costs.commission_rate, self.costs.min_commission)
-        transfer = gross * self.costs.transfer_fee_rate
-        stamp = gross * self.costs.stamp_duty_rate if trade.side == "sell" else 0.0
-        slippage = gross * (self.costs.slippage_bps / 10_000)
-        return round(commission + transfer + stamp + slippage, 4)
+        return estimate_trade_fee(trade.quantity, trade.price, trade.side, self.costs)
 
     def _lots_and_realized(self) -> tuple[dict[tuple[str, AccountKind], list[_Lot]], list[RealizedTrade], dict[AccountKind, float]]:
         lots: dict[tuple[str, AccountKind], list[_Lot]] = defaultdict(list)
@@ -285,11 +282,14 @@ class PaperPortfolio:
         Tries a fast batch quote via Sina first (sub-second for any number of symbols).
         Falls back to provider.get_bars() concurrently if Sina fails.
         """
-        held_symbols = {trade.symbol for trade in self.trades}
+        lots, _realized, _fees = self._lots_and_realized()
+        held_symbols = {symbol for (symbol, _account), rows in lots.items()
+                        if sum(lot.quantity for lot in rows) > 0}
         if not held_symbols:
             self._market_prices = {}
             return {}
 
+        deadline = time.monotonic() + _MARKET_REFRESH_TIMEOUT_SECONDS
         try:
             sina_result = run_with_timeout(
                 lambda: self._try_sina_batch_quote(held_symbols),
@@ -320,7 +320,7 @@ class PaperPortfolio:
         refreshed = {}
         pool = ThreadPoolExecutor(max_workers=min(8, len(held_symbols)))
         futures = {pool.submit(_fetch, sym): sym for sym in held_symbols}
-        done, pending = wait(futures, timeout=_MARKET_REFRESH_TIMEOUT_SECONDS)
+        done, pending = wait(futures, timeout=max(0, deadline - time.monotonic()))
         for fut in done:
             sym, price = fut.result()
             if price is not None:
@@ -391,7 +391,9 @@ class PaperPortfolio:
         """Fetch stock names from Sina for all held symbols (no-op if already cached)."""
         if getattr(self, "_symbol_names", None):
             return
-        held = {t.symbol for t in self.trades}
+        lots, _realized, _fees = self._lots_and_realized()
+        held = {symbol for (symbol, _account), rows in lots.items()
+                if sum(lot.quantity for lot in rows) > 0}
         if not held:
             return
         result = self._try_sina_batch_quote(held)
@@ -559,6 +561,11 @@ class JsonPaperPortfolio(PaperPortfolio):
                     reason=str(raw.get("reason", "")),
                     trade_id=trade_id,
                     decision_id=(str(raw["decision_id"]) if raw.get("decision_id") else None),
+                    signal_id=raw.get("signal_id"),
+                    strategy_id=raw.get("strategy_id"),
+                    strategy_version=raw.get("strategy_version"),
+                    research_run_id=raw.get("research_run_id"),
+                    source_skills=tuple(raw.get("source_skills") or []),
                     price_source=str(raw.get("price_source") or "legacy_import"),
                     price_as_of=(
                         datetime.fromisoformat(raw["price_as_of"])
@@ -593,6 +600,11 @@ def _trade_payload(trade: PaperTrade) -> dict:
     return {
         "trade_id": trade.trade_id,
         "decision_id": trade.decision_id,
+        "signal_id": trade.signal_id,
+        "strategy_id": trade.strategy_id,
+        "strategy_version": trade.strategy_version,
+        "research_run_id": trade.research_run_id,
+        "source_skills": list(trade.source_skills),
         "symbol": trade.symbol,
         "account": trade.account.value if hasattr(trade.account, "value") else trade.account,
         "side": trade.side,

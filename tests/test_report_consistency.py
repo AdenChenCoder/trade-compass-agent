@@ -88,6 +88,9 @@ def test_execution_history_distinguishes_one_fill_from_two_fifo_settlements(valu
     assert payload["recent_trades"][0]["trade_id"] == "trade-2"
     assert [r["quantity"] for r in payload["recent_closed_trades"]] == [1000, 500]
     assert {r["exit_trade_id"] for r in payload["recent_closed_trades"]} == {"trade-2"}
+    for row in payload["recent_closed_trades"]:
+        assert row["pnl_basis"] == "fifo_after_entry_and_exit_fees" and row["fees"] > 0
+        assert row["pnl"] == pytest.approx((row["exit"] - row["entry"]) * row["quantity"] - row["fees"], abs=.011)
     decisions = json.loads(ToolRegistry(valued_stack).execute("search_decisions", {"symbol": "515220"}))
     assert len(decisions) == 2
     for decision in decisions:
@@ -122,6 +125,9 @@ def test_next_agent_reads_execution_quantity_and_persists_receipt_table(valued_s
                 return ChatCompletion(content="持仓分析：继续核查来源与信号。\n" * 150 if scheduled else "", model="test", provider="test", tool_calls=[
                     ToolCall(id="portfolio", name="analyze_portfolio", arguments="{}")])
             result = json.loads(messages[-1].content)
+            if "report_lines" in result:
+                assert any('"quantity": 1500' in receipt for _, receipt in result["tool_results"])
+                return ChatCompletion(content='{"valid":true,"issues":[]}', model="test", provider="test")
             assert result["recent_trades"][0]["quantity"] == 1500
             return ChatCompletion(content="持仓分析：已核对历史流水，实际卖出 1500 股。当前持仓继续观察。", model="test", provider="test")
     model = Client()

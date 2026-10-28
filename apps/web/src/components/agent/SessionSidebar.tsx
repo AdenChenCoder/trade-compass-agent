@@ -222,7 +222,7 @@ export function SessionSidebar({
                       <li key={session.session_id}>
                         <div
                           className={cn(
-                            "group relative flex items-start gap-2 rounded-lg px-2 py-2 transition-colors",
+                            "relative flex items-start gap-2 rounded-lg px-2 py-2 transition-colors [&:focus-within_.session-action]:opacity-100 [&:hover_.session-action]:opacity-100",
                             active ? "bg-muted" : "hover:bg-muted/60",
                           )}
                         >
@@ -269,7 +269,7 @@ export function SessionSidebar({
                               type="button"
                               variant="ghost"
                               size="icon"
-                              className="h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
+                              className="session-action h-7 w-7 shrink-0 opacity-0 transition-opacity"
                               disabled={streaming}
                               onClick={() => startEditing(session)}
                               aria-label="重命名对话"
@@ -281,7 +281,7 @@ export function SessionSidebar({
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
+                            className="session-action h-7 w-7 shrink-0 opacity-0 transition-opacity"
                             disabled={streaming}
                             onClick={() => onDeleteSession(session.session_id)}
                             aria-label="删除对话"

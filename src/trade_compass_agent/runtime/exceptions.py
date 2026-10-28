@@ -21,6 +21,14 @@ class AgentTurnError(Exception):
         self.status_code = status_code
 
 
+class LLMIncompleteResponseError(AgentTurnError):
+    """A completed generation contained no final answer or executable tool call."""
+
+
+class LLMContextBudgetError(AgentTurnError):
+    """The request cannot fit the loaded model without losing supplied evidence."""
+
+
 class TurnInterruptedError(Exception):
     """Raised when a turn is cancelled via the turn control registry."""
 

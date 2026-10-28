@@ -49,7 +49,7 @@ steps:
   - id: global_market
     type: tool
     uses: tool:builtin.check_global_markets
-    timeout_seconds: 600
+    timeout_seconds: 1800
     with:
       job_id: premarket
       as_of: "{inputs.as_of}"
@@ -57,7 +57,7 @@ steps:
   - id: agent_briefing
     type: tool
     uses: tool:builtin.agent_premarket_briefing
-    timeout_seconds: 600
+    timeout_seconds: 1800
     depends_on:
       - portfolio_scan
       - portfolio_reconcile
@@ -85,7 +85,7 @@ persistence:
 risk_policy:
   may_recommend_trade: false
   produces_broker_order: false
-timeout_seconds: 1200
+timeout_seconds: 3600
 retry_policy:
   max_retries: 0
   backoff_seconds: 0

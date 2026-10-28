@@ -5,6 +5,7 @@ Replaces JsonJobRunStore with SQLite for indexed queries and atomic operations.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 import json
 import logging
 import sqlite3
@@ -156,6 +157,23 @@ class SqliteRunStore:
             run.status, run.started_at = "running", started_at
         return bool(changed)
 
+    def claim_background_review(self, run: RunRecord) -> bool:
+        """Atomically claim a queued or retryable review, globally single-flight."""
+        started_at = datetime.now()
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            changed = conn.execute(
+                "UPDATE job_runs SET status = 'running', started_at = ?, finished_at = NULL "
+                "WHERE id = ? AND job_id = 'background-review' "
+                "AND status IN ('queued', 'degraded', 'failed', 'timed_out') "
+                "AND NOT EXISTS (SELECT 1 FROM job_runs WHERE job_id = 'background-review' "
+                "AND status = 'running')",
+                (_dt(started_at), run.id),
+            ).rowcount
+        if changed:
+            run.status, run.started_at = "running", started_at
+        return bool(changed)
+
     def complete_run(self, run: RunRecord, *, message: str = "", artifact: str | None = None) -> None:
         run.status = "completed"
         run.finished_at = datetime.now()
@@ -230,6 +248,29 @@ class SqliteRunStore:
                     "SELECT * FROM job_runs ORDER BY created_at DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
+        return [_row_to_run(r) for r in rows]
+
+    def recent_runs_for_jobs(
+        self,
+        job_ids: Collection[str],
+        *,
+        limit: int = 20,
+        include_custom_history: bool = False,
+    ) -> list[RunRecord]:
+        """Return recent runs for the supplied scheduled-job IDs."""
+        ids = sorted(set(job_ids))
+        if not ids and not include_custom_history:
+            return []
+        placeholders = ", ".join("?" for _ in ids)
+        condition = f"job_id IN ({placeholders})" if ids else "0"
+        if include_custom_history:
+            condition += " OR job_id LIKE 'custom:%'"
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM job_runs WHERE ({condition}) "
+                "ORDER BY created_at DESC LIMIT ?",
+                (*ids, limit),
+            ).fetchall()
         return [_row_to_run(r) for r in rows]
 
     def get_run(self, run_id: str) -> RunRecord | None:

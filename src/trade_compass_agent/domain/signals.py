@@ -14,6 +14,7 @@ from typing import Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
+from trade_compass_agent.domain.models import AccountKind
 
 
 class SignalRating(str, Enum):
@@ -33,6 +34,10 @@ class TradingSignal(BaseModel):
     and mirrored to the audit log for traceability.
     """
 
+    account: AccountKind | None = None
+    strategy_id: str | None = None
+    strategy_version: str | None = None
+    research_run_id: str | None = None
     signal_id: str = Field(
         default_factory=lambda: str(uuid4()),
         description="Unique identifier for this signal.",

@@ -12,13 +12,35 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import timedelta
+import time
+from datetime import datetime, timedelta
+from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from trade_compass_agent.ops.agent_session import run_agent_step
 from trade_compass_agent.ops.job_definition import StepContext, StepOutput
 from trade_compass_agent.runtime.tools.artifact_tracking import update_artifact_tracking
 
 logger = logging.getLogger(__name__)
+
+
+def _memory_llm_call(config, system_prompt: str, user_content: str) -> str:
+    """Keep reasoning enabled for memory judgments and evidence validation."""
+    from trade_compass_agent.llm.providers import ChatMessage, create_chat_client, llm_request_deadline
+
+    with llm_request_deadline(time.monotonic() + config.llm.agent_timeout):
+        return create_chat_client(config).complete([
+            ChatMessage(role="system", content=system_prompt),
+            ChatMessage(role="user", content=user_content),
+        ]).content or ""
+
+
+def _summary_llm_call(config, system_prompt: str, user_content: str) -> str:
+    """Compress existing facts without making knowledge or trading judgments."""
+    from trade_compass_agent.llm.providers import llm_maintenance_mode
+
+    with llm_maintenance_mode():
+        return _memory_llm_call(config, system_prompt, user_content)
 
 
 async def agent_autonomous_trading(ctx: StepContext) -> StepOutput:
@@ -31,6 +53,9 @@ async def agent_autonomous_trading(ctx: StepContext) -> StepOutput:
     if reason:
         return StepOutput(message=reason, data={"skipped": True, "reason": reason})
     step_id = f"execution-{ctx.run_id or uuid4().hex}"
+    from trade_compass_agent.ops.run_content import read_morning_plan
+
+    morning_plan = read_morning_plan(ctx.config.data_dir, ctx.date.isoformat())
     prompt = (
         f"当前上海时间 {_market_now().isoformat(timespec='seconds')}。执行本轮盘中自主模拟交易。\n"
         "先 load_skill(name=autonomous-paper-trading)，按该流程查看当前账户、"
@@ -38,6 +63,11 @@ async def agent_autonomous_trading(ctx: StepContext) -> StepOutput:
         "这是已授权的执行任务：形成当前可执行的买卖决策后直接 place_paper_trade，"
         "不要只发信号或等待用户确认；无需为产生交易而强行下单。"
         "收尾报告必须区分已成交（含 trade_id）、拒单及处理结果、未交易原因。"
+        "\n以下为按任务日期读取的晨间计划原始记录，保留缺口和降级状态。"
+        "它是前序研究依据，不是下单指令或当前行情；须按现行规则用本轮回执核验。"
+        "缺失、失败或不可读时明确说明，历史搜索结果不得冒充今日计划。"
+        "可基于新证据改变建议；涉及晨间候选或持仓建议时，说明沿用或改变的依据。\n"
+        + json.dumps(morning_plan, ensure_ascii=False)
     )
     output = await run_agent_step(ctx, prompt, JOB_ID, step_id=step_id)
     output.message = output.data["analysis"]
@@ -82,6 +112,13 @@ async def reconcile_portfolio_memory(ctx: StepContext) -> StepOutput:
         costs=ctx.config.trading_costs,
     )
     oms_positions = {p.symbol: p.quantity for p in portfolio.positions()}
+    portfolio.resolve_names()
+    from trade_compass_agent.memory.instrument_store import InstrumentStore
+    instruments = InstrumentStore(ctx.config.memory_dir)
+    for symbol, name in getattr(portfolio, "_symbol_names", {}).items():
+        if symbol in oms_positions:
+            instruments.reconcile_name(symbol, name,
+                recovery_dir=ctx.config.data_dir / "recovery" / "instrument-identities")
 
     instruments_dir = ctx.config.memory_dir / "instruments"
     memory_held: dict[str, str] = {}
@@ -116,6 +153,20 @@ async def reconcile_portfolio_memory(ctx: StepContext) -> StepOutput:
     )
 
 
+_OVERNIGHT_NEWS_TOOL_WHITELIST = {
+    "batch_search_news",
+    "eastmoney_news",
+    "fetch_url",
+    "get_events",
+    "load_skill",
+    "search_announcements",
+    "search_memory",
+    "search_stock_news",
+    "web_search",
+    "write_memory",
+}
+
+
 async def scan_overnight_news(ctx: StepContext) -> StepOutput:
     """Agent operation: scan overnight news/announcements for held stocks."""
     from trade_compass_agent.portfolio import JsonPaperPortfolio
@@ -133,21 +184,52 @@ async def scan_overnight_news(ctx: StepContext) -> StepOutput:
         "重点关注：业绩预告、重大合同、股东增减持、监管处罚、行业政策变化。\n"
         "请简要总结每只股票的关键信息。如无重大消息，标注'无重大消息'。"
     )
-    return await run_agent_step(ctx, prompt, "premarket", step_id="overnight_news")
+    return await run_agent_step(
+        ctx, prompt, "premarket", step_id="overnight_news",
+        tool_whitelist=_OVERNIGHT_NEWS_TOOL_WHITELIST,
+    )
+
+
+_GLOBAL_MARKET_TOOL_WHITELIST = {
+    "analyze_portfolio",
+    "eastmoney_news",
+    "fetch_url",
+    "get_market_pulse",
+    "load_skill",
+    "search_market_flash",
+    "search_memory",
+    "sina_realtime_quote",
+    "web_search",
+    "write_memory",
+}
 
 
 async def check_global_markets(ctx: StepContext) -> StepOutput:
     """Agent operation: analyze global market impact on A-shares."""
+    from trade_compass_agent.runtime.tools.search import tool_sina_realtime_quote
+
+    snapshot = await asyncio.to_thread(tool_sina_realtime_quote, symbols="gb_dji,gb_ixic,gb_inx")
     prompt = (
         f"今天是 {ctx.date.isoformat()}，请分析全球市场对今日 A 股的影响：\n"
-        "1. 美股三大指数昨日收盘情况\n"
+        "1. 美股三大指数最近一个已完成交易日的收盘情况（注明美东交易日期）\n"
         "2. 港股恒生指数表现\n"
         "3. 人民币汇率变动\n"
         "4. 大宗商品（原油、黄金）走势\n"
         "5. 综合判断对 A 股今日开盘的影响（利好/利空/中性）\n"
-        "请简洁输出，每项 1-2 句话。"
+        "请简洁输出，每项 1-2 句话。\n\n"
+        f"## 美股三大指数行情快照\n{snapshot}\n"
+        "这是可能延迟的最新报价，不是已核实的收盘记录。按 market_date、market_time 和 as_of "
+        "核对美东交易日期、夏令时、休市和提前收市；历史日期任务不能使用当前报价替代历史收盘。"
+        "若需要收盘价，请用新闻或交易所资料交叉核实；不能核实则明确写收盘数据缺口，"
+        "可另列带时间的最新报价。prev_close 是快照对应的前一交易日收盘，不能当作本日收盘。"
+        "逐项保留 errors 中的数据缺口，不用零值或其他市场替代。"
     )
-    return await run_agent_step(ctx, prompt, "premarket", step_id="global_market")
+    output = await run_agent_step(
+        ctx, prompt, "premarket", step_id="global_market",
+        tool_whitelist=_GLOBAL_MARKET_TOOL_WHITELIST,
+    )
+    output.data["us_index_snapshot"] = json.loads(snapshot)
+    return output
 
 
 async def agent_premarket_briefing(ctx: StepContext) -> StepOutput:
@@ -158,7 +240,9 @@ async def agent_premarket_briefing(ctx: StepContext) -> StepOutput:
     global_mkt = ctx.upstream.get("global_market", StepOutput.empty())
 
     prompt = (
-        f"今天是 {ctx.date.isoformat()}，请基于以下信息给出今日盘前操作建议：\n\n"
+        f"报告交易日为 {ctx.date.isoformat()}，本次执行时间为 {datetime.now(ZoneInfo(ctx.config.scheduler.timezone)).isoformat()}。"
+        "请基于以下信息给出盘前操作建议。若实际执行或取数已超过目标日盘前，标题须标明补验，"
+        "不能把盘中或收盘数据当作目标日开盘前已知信息；旧新闻须保留事件日期，不能冒充当日板块行情。\n\n"
         f"{_reflection_section(ctx)}"
         f"## 持仓预警\n{json.dumps(portfolio.data.get('alerts', []), ensure_ascii=False)}\n"
         f"## 持仓详情\n{json.dumps(portfolio.data.get('positions', []), ensure_ascii=False)}\n\n"
@@ -167,7 +251,8 @@ async def agent_premarket_briefing(ctx: StepContext) -> StepOutput:
         f"## 全球市场\n{global_mkt.data.get('analysis', '未获取')}\n\n"
         "请输出：1) 今日关注事项 2) 持仓操作建议（加/减/持有/观望） 3) 风险提示"
     )
-    return await run_agent_step(ctx, prompt, "premarket", step_id="agent_briefing")
+    return await run_agent_step(ctx, prompt, "premarket", step_id=f"agent_briefing-{ctx.run_id or uuid4().hex}",
+                                tool_whitelist=_REVIEW_TOOL_WHITELIST)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -427,7 +512,19 @@ def _truncate_text(text: str | None, limit: int) -> str:
 
 async def check_positions(ctx: StepContext) -> StepOutput:
     """Check current positions and P&L. Pure computation."""
-    _, positions = _load_portfolio_mtm(ctx.config)
+    from trade_compass_agent.portfolio.planning import planning_close_references, premarket_reference_date
+
+    reference_date = premarket_reference_date(ctx.date) if ctx.job_id == "morning_plan" else None
+    references = {}
+    if reference_date:
+        from trade_compass_agent.portfolio import JsonPaperPortfolio
+        from trade_compass_agent.runtime.market_stack import MarketStack
+        portfolio = JsonPaperPortfolio(ctx.config.data_dir / "paper_trades.jsonl", costs=ctx.config.trading_costs)
+        positions = portfolio.positions()
+        references = planning_close_references(MarketStack.from_config(ctx.config).provider,
+                                               [p.symbol for p in positions], reference_date)
+    else:
+        _, positions = _load_portfolio_mtm(ctx.config)
     detail = []
     for p in positions:
         detail.append({
@@ -436,9 +533,10 @@ async def check_positions(ctx: StepContext) -> StepOutput:
             "price_source": p.price_source,
             "price_is_fresh": p.price_is_fresh,
             "pnl_pct": round(_position_pnl_pct(p), 2),
+            **({"planning_reference": references[p.symbol]} if p.symbol in references else {}),
         })
 
-    stale_symbols = [p.symbol for p in positions if not p.price_is_fresh]
+    stale_symbols = [p.symbol for p in positions if not p.price_is_fresh and p.symbol not in references]
     return StepOutput(
         message=f"{len(positions)}个持仓" if positions else "空仓",
         data={
@@ -451,6 +549,21 @@ async def check_positions(ctx: StepContext) -> StepOutput:
     )
 
 
+_SECTOR_FLOW_TOOL_WHITELIST = {
+    "get_fund_flow",
+    "get_market_pulse",
+    "load_skill",
+    "recall_timeline",
+    "search_concept_boards",
+    "search_industry_boards",
+    "search_market_activity",
+    "search_market_flash",
+    "search_memory",
+    "sina_realtime_quote",
+    "write_memory",
+}
+
+
 async def scan_sector_capital_flow(ctx: StepContext) -> StepOutput:
     """Agent operation: analyze sector capital flows."""
     prompt = (
@@ -460,7 +573,10 @@ async def scan_sector_capital_flow(ctx: StepContext) -> StepOutput:
         "3. 主力资金流向趋势（与昨日对比）\n"
         "4. 判断今日的热点方向和值得关注的板块"
     )
-    return await run_agent_step(ctx, prompt, "morning_plan", step_id="sector_flow")
+    return await run_agent_step(
+        ctx, prompt, "morning_plan", step_id="sector_flow",
+        tool_whitelist=_SECTOR_FLOW_TOOL_WHITELIST,
+    )
 
 
 async def agent_morning_plan(ctx: StepContext) -> StepOutput:
@@ -493,6 +609,9 @@ async def agent_morning_plan(ctx: StepContext) -> StepOutput:
         "- 这是最终计划合成步骤；decision_context 是初始上下文，不是唯一依据。\n"
         "- 如判断需要最新数据，可调用可用数据工具补齐，例如持仓最新价、K线/均线/RSI、组合盈亏、候选入场价与风险约束。\n"
         "- 若持仓 price_is_fresh=false，可调用 analyze_portfolio 或 sina_realtime_quote/get_bars 核实后再判断盈亏；无法核实时写入「数据缺口」。\n"
+        "- 盘前允许使用 planning_reference 中已核验的上一交易日收盘价作计划参考，必须标注日期与来源；"
+        "它不改变 price_is_fresh=false，不能把 last_price 或盈亏字段当作实时估值。"
+        "若需评估参考盈亏，明确注明参考价日期；交易执行前仍须重新核验实时价格。\n"
         "- 禁止把 price_source=last_trade 或 avg_cost_fallback 的 last_price 解读为最新价；这种情况下不得写「成本价持平」。\n"
         "- 禁止调用下单/交易执行工具；本步骤只产出计划、信号和记忆记录。\n"
         "- 可以调用 emit_signal 记录最终结构化信号，可以调用 write_memory 记录交易计划摘要。\n"
@@ -629,6 +748,7 @@ def _compact_positions(raw: object, limit: int = 25) -> list[dict]:
                 "price_source": item.get("price_source"),
                 "price_is_fresh": item.get("price_is_fresh"),
                 "pnl_pct": item.get("pnl_pct"),
+                **({"planning_reference": item["planning_reference"]} if item.get("planning_reference") else {}),
             }
         )
     return positions
@@ -694,6 +814,8 @@ async def refresh_market_prices(ctx: StepContext) -> StepOutput:
         pnl_pct = (p.last_price / p.avg_cost - 1) * 100 if p.avg_cost > 0 else 0
         detail.append({
             "symbol": p.symbol, "quantity": p.quantity,
+            "avg_cost": p.avg_cost, "last_price": p.last_price,
+            "price_source": p.price_source, "price_is_fresh": p.price_is_fresh,
             "market_value": round(p.market_value, 2),
             "unrealized_pnl": round(p.unrealized_pnl, 2),
             "pnl_pct": round(pnl_pct, 2),
@@ -733,6 +855,15 @@ async def check_exit_signals(ctx: StepContext) -> StepOutput:
     )
 
 
+_REVIEW_TOOL_WHITELIST = {
+    "analyze_portfolio", "get_market_constraints", "get_risk_status", "check_exit_signals", "search_decisions",
+    "get_bars", "get_events", "sina_realtime_quote", "compute_ma", "compute_rsi", "compute_macd",
+    "compute_bollinger", "compute_volume_ratio", "get_market_pulse", "get_fundamentals",
+    "get_chip_distribution", "get_fund_flow", "search_stock_news", "search_announcements",
+    "fetch_url", "load_skill", "search_memory", "session_search", "recall_instrument", "recall_timeline",
+}
+
+
 async def agent_close_analysis(ctx: StepContext) -> StepOutput:
     """Agent operation: analyze today's price action for held positions."""
     mtm = ctx.upstream.get("mark_to_market", StepOutput.empty())
@@ -743,9 +874,11 @@ async def agent_close_analysis(ctx: StepContext) -> StepOutput:
         f"{_reflection_section(ctx)}"
         f"## 持仓估值\n{json.dumps(mtm.data.get('positions', []), ensure_ascii=False, indent=2)}\n\n"
         f"## 出场信号\n{json.dumps(exits.data.get('alerts', []), ensure_ascii=False)}\n\n"
+        "先用本轮工具核对持仓与走势，成本以持仓 avg_cost 为准，不能用全市场筹码平均成本替代。"
         "请分析：1) 每个持仓今日走势要点 2) 持仓逻辑是否有变化 3) 明日关注点"
     )
-    return await run_agent_step(ctx, prompt, "close", step_id="agent_close_analysis")
+    return await run_agent_step(ctx, prompt, "close", step_id=f"agent_close_analysis-{ctx.run_id or uuid4().hex}",
+                                tool_whitelist=_REVIEW_TOOL_WHITELIST)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -779,24 +912,25 @@ async def update_signal_tracker(ctx: StepContext) -> StepOutput:
     """Update signal tracker with current position data."""
     from trade_compass_agent.evaluation.signal_tracker import SignalTracker
 
-    _, positions = _load_portfolio_mtm(ctx.config)
+    portfolio, positions = _load_portfolio_mtm(ctx.config)
     tracker = SignalTracker(ctx.config.data_dir)
-    active = tracker.get_active()
-
-    held_symbols = {p.symbol for p in positions}
-    position_map = {p.symbol: p for p in positions}
+    from trade_compass_agent.evaluation.signal_execution import reconcile_signal_executions
+    reconcile_signal_executions(ctx.config.data_dir, portfolio)
+    position_map = {(p.symbol, p.account.value): p for p in positions}
     updated = 0
-
-    for signal in active:
-        if signal.symbol in held_symbols:
-            p = position_map[signal.symbol]
-            if p.avg_cost > 0:
-                current_pnl = _position_pnl_pct(p)
+    from trade_compass_agent.concurrency import file_transaction
+    with file_transaction(tracker.path.with_suffix(".lock")), tracker._lock:
+        records = tracker._load_all()
+        active = [signal for signal in records if signal.status == "active"]
+        for signal in active:
+            p = position_map.get((signal.symbol, signal.account))
+            if p and signal.actual_entry and signal.actual_entry > 0 and p.price_is_fresh:
+                current_pnl = (p.last_price / signal.actual_entry - 1) * 100
                 signal.max_favorable = max(signal.max_favorable, current_pnl)
                 signal.max_adverse = min(signal.max_adverse, current_pnl)
                 updated += 1
-
-    tracker._save_all(active + [s for s in tracker._load_all() if s.status != "active"])
+        if updated:
+            tracker._save_all(records)
 
     return StepOutput(
         message=f"信号追踪: {len(active)}条活跃, {updated}条已更新",
@@ -935,12 +1069,15 @@ async def agent_eod_reflection(ctx: StepContext) -> StepOutput:
     prompt = (
         f"今日盘后反思 {ctx.date.isoformat()}。对比信号预测与实际表现：\n\n"
         f"{_reflection_section(ctx)}"
+        f"{_review_execution_section(ctx, days=1)}"
         f"## 今日 P&L\n{json.dumps(pnl.data, ensure_ascii=False, indent=2)}\n\n"
         f"## 信号追踪\n活跃信号 {signals.data.get('active_count', 0)} 条，已更新 {signals.data.get('updated', 0)} 条\n\n"
         f"## 研究资产追踪\n{json.dumps(artifacts.data, ensure_ascii=False, indent=2)}\n\n"
+        "先用 analyze_portfolio 或 search_decisions 核对带时间的实际成交流水；历史买入日期不能改写为今日。"
         "请分析：1) 哪些决策做对了？为什么？ 2) 哪些决策有问题？如何改进？ 3) 需要调整的交易规则？"
     )
-    return await run_agent_step(ctx, prompt, "eod_review", step_id="agent_eod_reflection")
+    return await run_agent_step(ctx, prompt, "eod_review", step_id=f"agent_eod_reflection-{ctx.run_id or uuid4().hex}",
+                                tool_whitelist=_REVIEW_TOOL_WHITELIST)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1001,7 +1138,6 @@ async def curate_knowledge(ctx: StepContext) -> StepOutput:
     if not curator_cfg.enabled:
         return StepOutput(message="Curator 已禁用", data={})
 
-    from trade_compass_agent.llm.providers import ChatMessage, create_chat_client
     from trade_compass_agent.memory.contradiction import apply_conflict_reports, scan_active_conflicts
     from trade_compass_agent.memory.memory_store import MemoryStore
     from trade_compass_agent.memory.semantic_merge import maintain_memory
@@ -1019,39 +1155,55 @@ async def curate_knowledge(ctx: StepContext) -> StepOutput:
     )
 
     def _llm_call(system_prompt: str, user_content: str) -> str:
-        client = create_chat_client(ctx.config)
-        msgs = [ChatMessage(role="system", content=system_prompt), ChatMessage(role="user", content=user_content)]
-        return client.complete(msgs).content or ""
+        return _memory_llm_call(ctx.config, system_prompt, user_content)
 
     archived_confidence = mem_store.archive_stale("memory")
     archived_inactive = mem_store.archive_inactive("memory", curator_cfg.stale_days)
 
     conflicts_applied: list[dict[str, str]] = []
+    conflict_scan_pending = False
+    conflict_scan_status = "skipped"
     if curator_cfg.scan_conflicts and mem_store.list_active("memory", min_confidence=gov.min_inject_confidence):
         skills = skill_store.list_skills(include_stale=False)
         skills_summary = "\n".join(f"- {s.name}: {s.description or ''}" for s in skills[:20]) if skills else ""
         active = mem_store.list_active("memory", min_confidence=gov.min_inject_confidence)
         from trade_compass_agent.memory.rules_store import RulesStore
-        reports = scan_active_conflicts(active, GROUNDING_RULES, skills_summary, _llm_call,
-                                       user_rules=RulesStore(ctx.config.memory_dir).read_for_prompt())
-        conflicts_applied = apply_conflict_reports(reports, mem_store)
+        try:
+            reports = scan_active_conflicts(active, GROUNDING_RULES, skills_summary, _llm_call,
+                                           user_rules=RulesStore(ctx.config.memory_dir).read_for_prompt())
+        except Exception as exc:
+            conflict_scan_pending = True
+            conflict_scan_status = "pending"
+            logger.warning("Knowledge conflict review pending: %s", exc)
+        else:
+            conflict_scan_status = "completed"
+            conflicts_applied = apply_conflict_reports(reports, mem_store)
 
     merged_clusters = 0
+    maintenance_pending = False
     try:
         from trade_compass_agent.memory.observation_store import ObservationStore
         maintenance = maintain_memory(mem_store, _llm_call,
                                       observations=ObservationStore(ctx.config.data_dir / "observations.db"))
         merged_clusters = maintenance.get("merged_clusters", 0)
         if not maintenance.get("ok"):
+            maintenance_pending = True
             logger.warning("Memory maintenance pending: %s", maintenance)
     except Exception as exc:
+        maintenance_pending = True
         logger.warning("Semantic merge in curator failed: %s", exc)
 
+    warnings = []
+    if conflict_scan_pending:
+        warnings.append("知识冲突审查未完成，需后续重试。")
+    if maintenance_pending:
+        warnings.append("部分记忆候选尚未完成复评，保留待后续重试。")
     return StepOutput(
         message=(
             f"Curator: {len(conflicts_applied)} conflict fix(es), "
             f"{len(archived_confidence)} low-confidence, "
             f"{len(archived_inactive)} inactive, {merged_clusters} merged"
+            + ("；知识冲突审查未完成" if conflict_scan_pending else "")
         ),
         data={
             "conflicts_applied": len(conflicts_applied),
@@ -1059,6 +1211,10 @@ async def curate_knowledge(ctx: StepContext) -> StepOutput:
             "archived_inactive": len(archived_inactive),
             "merged_clusters": merged_clusters,
             "actions": conflicts_applied,
+            "conflict_scan_status": conflict_scan_status,
+            "maintenance_status": "pending" if maintenance_pending else "completed",
+            "degraded": maintenance_pending or conflict_scan_pending,
+            "warnings": warnings,
         },
     )
 
@@ -1087,6 +1243,89 @@ async def update_research_artifacts(ctx: StepContext) -> StepOutput:
     return await update_artifact_tracking(ctx)
 
 
+def _review_execution_context(ctx: StepContext, *, days: int) -> dict:
+    """Read the same job ledger as the workbench, using the review's local days."""
+    import sqlite3
+
+    path = ctx.config.data_dir / "scheduler.db"
+    if not path.exists():
+        return {"available": False, "reason": "尚无任务运行记录库"}
+    start = ctx.date - timedelta(days=days - 1)
+    zone = ZoneInfo(ctx.config.scheduler.timezone)
+    try:
+        with sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True, timeout=5) as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(
+                "SELECT id,job_id,trigger,status,error,started_at,finished_at,created_at FROM job_runs "
+                "WHERE coalesce(started_at,created_at)>=? AND coalesce(started_at,created_at)<? "
+                "ORDER BY coalesce(started_at,created_at)",
+                ((start - timedelta(days=1)).isoformat(), (ctx.date + timedelta(days=2)).isoformat()),
+            ).fetchall()
+    except sqlite3.Error:
+        logger.warning("Review could not read task outcomes", exc_info=True)
+        return {"available": False, "reason": "任务状态未取得，不能据此判断运行正常"}
+    counts: dict[str, dict[str, int]] = {}
+    by_trigger: dict[str, dict[str, int]] = {}
+    status_counts: dict[str, int] = {}
+    receipts_by_job: dict[str, int] = {}
+    traced_runs = 0
+    observed_receipts = 0
+    recent = []
+    for row in rows:
+        if row["id"] == ctx.run_id:
+            continue
+        stamp = datetime.fromisoformat(row["started_at"] or row["created_at"])
+        local_day = (stamp.astimezone(zone) if stamp.tzinfo else stamp).date()
+        if not start <= local_day <= ctx.date:
+            continue
+        statuses = counts.setdefault(row["job_id"], {})
+        statuses[row["status"]] = statuses.get(row["status"], 0) + 1
+        status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
+        triggered = by_trigger.setdefault(row["trigger"], {})
+        triggered[row["status"]] = triggered.get(row["status"], 0) + 1
+        # Only run-owned sessions are attributable. Shared legacy sessions stay
+        # unknown rather than borrowing another run's tool activity.
+        session_files = list((ctx.config.data_dir / "agent_sessions").glob(f"*-{row['id']}-*.jsonl"))
+        receipt_count = None
+        if session_files:
+            try:
+                receipt_count = sum(json.loads(line).get("role") == "tool"
+                                    for file in session_files for line in file.read_text().splitlines() if line.strip())
+            except (OSError, ValueError, AttributeError):
+                receipt_count = None
+        if receipt_count is not None:
+            traced_runs += 1
+            observed_receipts += receipt_count
+            receipts_by_job[row["job_id"]] = receipts_by_job.get(row["job_id"], 0) + receipt_count
+        recent.append({"run_id": row["id"], "job_id": row["job_id"], "status": row["status"],
+                       "trigger": row["trigger"], "error": row["error"],
+                       "observed_tool_receipts": receipt_count,
+                       "started_at": row["started_at"], "finished_at": row["finished_at"]})
+    return {"available": True, "from_date": start.isoformat(), "through_date": ctx.date.isoformat(),
+            "timezone": ctx.config.scheduler.timezone, "total_runs": len(recent), "status_counts": status_counts,
+            "by_job": counts, "by_trigger": by_trigger,
+            "observed_tool_receipts": observed_receipts, "tool_receipts_by_job": receipts_by_job,
+            "runs_with_receipt_trace": traced_runs, "runs_without_receipt_trace": len(recent) - traced_runs,
+            "recent_runs": recent[-12:], "recent_runs_limit": 12, "recent_runs_truncated": len(recent) > 12}
+
+
+def _review_execution_section(ctx: StepContext, *, days: int) -> str:
+    return ("## 任务执行记录\n" + json.dumps(_review_execution_context(ctx, days=days), ensure_ascii=False) + "\n"
+            "任务总数及状态计数以 total_runs、status_counts、by_job 为准；recent_runs 仅是截取的最近明细，不是全部运行。"
+            "按 by_trigger 区分定时调度 scheduler 与 cli/api 等手动重跑，不得把所有运行称为定时任务。"
+            "具体失败原因以 error 为准，未取得的原因不能自行推定为超时。"
+            "observed_tool_receipts 是按本次运行ID关联的已保存工具回执记录数，不是成交数或完整检查数。"
+            "存在回执说明至少已有部分工具活动，不能称这些运行从未进入执行逻辑；回执未知或为零也不能反推完全未执行。"
+            "上下文预算的输入、输出预留和窗口按 token 计数，判断超限时须将输入与输出预留相加，不能写成字符数。"
+            "超时和上下文错误不证明并发冲突、调度重入或互斥缺失；没有诊断证据的根因只能列为待验证假设。"
+            "须结合任务状态与本轮核对的成交流水区分正常观望、检查未完成及成交后报告失败。"
+            "零成交不能证明风控有效或执行纪律；任务失败也不能证明没有成交。"
+            "缺少完整决策轨迹时明确不能评价执行质量；单次反思仅作待验证假设，不直接定为根因或通用规则。"
+            "预设止损价只是计划阈值，不等于已提交、已接受的止损委托；没有实际委托及执行机制证据，"
+            "不得称其为任务失败时仍有效的自动保护。"
+            "连涨、连跌及连续天数须逐日核对带日期的行情，不能由区间首尾价格推断。\n\n")
+
+
 async def agent_daily_journal(ctx: StepContext) -> StepOutput:
     """Agent operation: write a reflective daily trading journal."""
     audit = ctx.upstream.get("audit_summary", StepOutput.empty())
@@ -1100,6 +1339,7 @@ async def agent_daily_journal(ctx: StepContext) -> StepOutput:
         f"- Agent 对话次数: {audit.data.get('agent_turns', 0)}\n"
         f"- 记忆压缩: {memory.message}\n"
         f"- 反思决议: {reflection.message}\n\n"
+        f"{_review_execution_section(ctx, days=1)}"
         f"{_reflection_section(ctx)}"
         + (
             f"## 今日新决议\n{json.dumps(today_lessons, ensure_ascii=False)}\n\n"
@@ -1108,7 +1348,8 @@ async def agent_daily_journal(ctx: StepContext) -> StepOutput:
         )
         + "请写一份简洁的交易日记（200-400字），重点反思今日的决策质量和学到的教训。"
     )
-    return await run_agent_step(ctx, prompt, "postmarket", step_id="agent_daily_journal")
+    return await run_agent_step(ctx, prompt, "postmarket", step_id=f"agent_daily_journal-{ctx.run_id or uuid4().hex}",
+                                tool_whitelist=_REVIEW_TOOL_WHITELIST)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1169,9 +1410,11 @@ async def agent_strategy_review(ctx: StepContext) -> StepOutput:
         f"{_reflection_section(ctx)}"
         f"## 本周摘要\n{json.dumps(summary.data, ensure_ascii=False, indent=2)}\n\n"
         f"## 研究资产追踪\n{json.dumps(artifacts.data, ensure_ascii=False, indent=2)}\n\n"
+        f"{_review_execution_section(ctx, days=7)}"
         "请深度分析：1) 本周胜率/盈亏比趋势 2) 行业暴露分析 3) 当前策略的主要风险 4) 下周策略调整建议"
     )
-    return await run_agent_step(ctx, prompt, "weekly", step_id="agent_strategy_review")
+    return await run_agent_step(ctx, prompt, "weekly", step_id=f"agent_strategy_review-{ctx.run_id or uuid4().hex}",
+                                tool_whitelist=_REVIEW_TOOL_WHITELIST)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1189,14 +1432,13 @@ async def run_dreaming(ctx: StepContext) -> StepOutput:
     )
     from trade_compass_agent.memory.insights import generate_insights, persist_insights
     from trade_compass_agent.memory.memory_store import MemoryStore
-    from trade_compass_agent.memory.observation_store import ObservationStore
+    from trade_compass_agent.memory.observation_store import ObservationStore, validated_concepts
     from trade_compass_agent.memory.patterns import discover_patterns, persist_patterns
-    from trade_compass_agent.memory.promotion import apply_promotions, rank_promotion_candidates
+    from trade_compass_agent.memory.promotion import apply_promotions, count_promoted_memories, rank_promotion_candidates
     from trade_compass_agent.memory.session_summary_store import SessionSummaryStore
     from trade_compass_agent.memory.time_tree import TimeTree
     from trade_compass_agent.memory.write_gate import SemanticWriteGate
     from trade_compass_agent.memory.skill_store import SkillStore
-    from trade_compass_agent.llm.providers import ChatMessage, create_chat_client
 
     obs_store = ObservationStore(ctx.config.data_dir / "observations.db")
     dec_store = DecisionStore(ctx.config.data_dir)
@@ -1211,41 +1453,54 @@ async def run_dreaming(ctx: StepContext) -> StepOutput:
     time_tree = TimeTree(ctx.config.data_dir / "time_tree.db")
     today = ctx.date.isoformat()
 
+    local_zone = ZoneInfo(ctx.config.scheduler.timezone)
+
+    def belongs_to_today(timestamp: str) -> bool:
+        if not timestamp:
+            return False
+        stamp = datetime.fromisoformat(timestamp)
+        # Preserve legacy naive calendar dates; aware records use the job's day.
+        if stamp.tzinfo is not None:
+            stamp = stamp.astimezone(local_zone)
+        return stamp.date().isoformat() == today
+
     def _llm_call(system_prompt: str, user_content: str) -> str:
-        client = create_chat_client(ctx.config)
-        msgs = [ChatMessage(role="system", content=system_prompt), ChatMessage(role="user", content=user_content)]
-        return client.complete(msgs).content or ""
+        return _memory_llm_call(ctx.config, system_prompt, user_content)
 
     # Phase 6: seal today's time node
     obs_recent = obs_store.recent(limit=100, session_id=None)
-    today_obs = [o for o in obs_recent if o.created_at[:10] == today]
+    today_obs = [o for o in obs_recent if belongs_to_today(o.created_at)]
     sessions = session_store.recent(limit=20)
-    today_sessions = [s for s in sessions if (s.started_at or "")[:10] == today]
+    today_sessions = [s for s in sessions if belongs_to_today(s.started_at or "")]
 
     day_node = time_tree.seal_day(
         date=today,
         obs_summaries=[o.summary for o in today_obs],
         session_summaries=[s.summary for s in today_sessions],
-        concepts=[c for o in today_obs for c in o.concepts],
-        symbols=[c for o in today_obs for c in o.concepts if len(c) == 6 and c[0] in "036"],
+        concepts=[c for o in today_obs for c in validated_concepts(o)],
+        symbols=[c for o in today_obs for c in validated_concepts(o) if len(c) == 6 and c[0] in "036"],
         obs_ids=[o.id for o in today_obs],
         session_ids=[s.session_id for s in today_sessions],
-        llm_call=_llm_call,
+        llm_call=lambda system, content: _summary_llm_call(ctx.config, system, content),
     )
-    time_tree.maybe_cascade(today, llm_call=_llm_call)
+    time_tree.maybe_cascade(
+        today, llm_call=lambda system, content: _summary_llm_call(ctx.config, system, content),
+    )
 
     # Phase 2: pattern discovery
-    patterns = discover_patterns(obs_store, dec_store, _llm_call, lookback_days=3, memory_dir=ctx.config.memory_dir)
+    patterns = discover_patterns(obs_store, dec_store, _llm_call, lookback_days=3,
+                                memory_dir=ctx.config.memory_dir, timezone_name=ctx.config.scheduler.timezone, as_of=ctx.date)
     if patterns:
-        persist_patterns(ctx.config.memory_dir, patterns)
+        persist_patterns(ctx.config.memory_dir, patterns, as_of=ctx.date)
         daily_ids = {oid for p in patterns for oid in p.evidence}
         if daily_ids:
             obs_store.bump_daily(list(daily_ids))
 
     # Phase 3: insights
-    insights = generate_insights(obs_store, dec_store, patterns, memory_dir=ctx.config.memory_dir)
+    insights = generate_insights(obs_store, dec_store, patterns, memory_dir=ctx.config.memory_dir,
+                                 as_of=ctx.date, timezone_name=ctx.config.scheduler.timezone)
     if insights:
-        persist_insights(ctx.config.memory_dir, insights)
+        persist_insights(ctx.config.memory_dir, insights, as_of=ctx.date)
         grounded_ids = {eid for i in insights for eid in i.evidence}
         if grounded_ids:
             obs_store.bump_grounded(list(grounded_ids))
@@ -1277,37 +1532,41 @@ async def run_dreaming(ctx: StepContext) -> StepOutput:
             promoted_by_job_id=ctx.job_id,
         )
         if promoted:
-            logger.info("[SELF-HEAL] Bootstrap promoted %d entries", len(promoted))
+            logger.info("[SELF-HEAL] Bootstrap promoted %d entries", count_promoted_memories(promoted))
 
     # Phase 4: procedural extraction (Agent session)
+    errors: list[str] = []
     procedures_text = ""
     strong_patterns = [p for p in patterns if p.strength >= 0.7]
     if strong_patterns:
         try:
-            procedures_text = run_procedure_extraction(ctx.config, strong_patterns)
+            procedures_text = run_procedure_extraction(ctx.config, strong_patterns, run_id=ctx.run_id, run_date=ctx.date)
         except Exception as exc:
             logger.warning("Procedural extraction failed: %s", exc)
+            errors.append(f"操作流程提炼未完成：{exc}")
 
     # Phase 5: dream diary (Agent session)
     dreaming_summary = build_dreaming_summary(day_node, patterns, promoted, insights, procedures_text, memory_dir=ctx.config.memory_dir)
     try:
-        diary_entry = run_dream_diary(ctx.config, dreaming_summary)
-        append_dream_diary(ctx.config.memory_dir, diary_entry)
+        diary_entry = run_dream_diary(ctx.config, dreaming_summary, run_id=ctx.run_id, run_date=ctx.date)
+        append_dream_diary(ctx.config.memory_dir, diary_entry, run_date=ctx.date)
     except Exception as exc:
         logger.warning("Dream diary generation failed: %s", exc)
         diary_entry = ""
+        errors.append(f"学习日记未完成：{exc}")
 
     # Phase 7: semantic merge handled by curate_knowledge step (postmarket job)
 
     return StepOutput(
-        message=f"Dreaming: {len(patterns)} patterns, {len(promoted)} promoted, "
-                f"{len(insights)} insights",
+        message=f"Dreaming: {len(patterns)} patterns, {count_promoted_memories(promoted)} promoted, "
+                f"{len(insights)} insights" + ("；" + "；".join(errors) if errors else ""),
         data={
             "patterns": len(patterns),
-            "promoted": len(promoted),
+            "promoted": count_promoted_memories(promoted),
             "insights": len(insights),
             "procedures": bool(procedures_text),
             "diary": bool(diary_entry),
+            **({"degraded": True, "error": "；".join(errors)} if errors else {}),
         },
     )
 
@@ -1325,11 +1584,10 @@ async def run_weekly_dreaming(ctx: StepContext) -> StepOutput:
     from trade_compass_agent.memory.memory_store import MemoryStore
     from trade_compass_agent.memory.observation_store import ObservationStore
     from trade_compass_agent.memory.patterns import discover_patterns, persist_patterns
-    from trade_compass_agent.memory.promotion import apply_promotions, rank_promotion_candidates
-    from trade_compass_agent.memory.time_tree import TimeTree, current_week_id
+    from trade_compass_agent.memory.promotion import apply_promotions, count_promoted_memories, rank_promotion_candidates
+    from trade_compass_agent.memory.time_tree import TimeTree
     from trade_compass_agent.memory.write_gate import SemanticWriteGate
     from trade_compass_agent.memory.skill_store import SkillStore
-    from trade_compass_agent.llm.providers import ChatMessage, create_chat_client
 
     obs_store = ObservationStore(ctx.config.data_dir / "observations.db")
     dec_store = DecisionStore(ctx.config.data_dir)
@@ -1344,32 +1602,35 @@ async def run_weekly_dreaming(ctx: StepContext) -> StepOutput:
     today = ctx.date.isoformat()
 
     def _llm_call(system_prompt: str, user_content: str) -> str:
-        client = create_chat_client(ctx.config)
-        msgs = [ChatMessage(role="system", content=system_prompt), ChatMessage(role="user", content=user_content)]
-        return client.complete(msgs).content or ""
+        return _memory_llm_call(ctx.config, system_prompt, user_content)
 
     # Seal week if not already done
-    week_id = current_week_id()
+    week_id = ctx.date.strftime("%G-W%V")
     existing = time_tree.get_node(week_id)
     if not existing or not existing.sealed_at:
         day_nodes = time_tree.nodes_by_level("day", sealed_only=True)
         cutoff = (ctx.date - timedelta(days=7)).isoformat()
-        this_week_days = [n for n in day_nodes if n.id >= cutoff]
+        this_week_days = [n for n in day_nodes if cutoff < n.id <= today]
         if this_week_days:
-            time_tree.seal_week(week_id, this_week_days, _llm_call)
+            time_tree.seal_week(
+                week_id, this_week_days,
+                lambda system, content: _summary_llm_call(ctx.config, system, content),
+            )
 
     # 7-day lookback patterns
-    patterns = discover_patterns(obs_store, dec_store, _llm_call, lookback_days=7, memory_dir=ctx.config.memory_dir)
+    patterns = discover_patterns(obs_store, dec_store, _llm_call, lookback_days=7,
+                                memory_dir=ctx.config.memory_dir, timezone_name=ctx.config.scheduler.timezone, as_of=ctx.date)
     if patterns:
-        persist_patterns(ctx.config.memory_dir, patterns)
+        persist_patterns(ctx.config.memory_dir, patterns, as_of=ctx.date)
         daily_ids = {oid for p in patterns for oid in p.evidence}
         if daily_ids:
             obs_store.bump_daily(list(daily_ids))
 
     # Insights
-    insights = generate_insights(obs_store, dec_store, patterns, memory_dir=ctx.config.memory_dir)
+    insights = generate_insights(obs_store, dec_store, patterns, memory_dir=ctx.config.memory_dir,
+                                 as_of=ctx.date, timezone_name=ctx.config.scheduler.timezone)
     if insights:
-        persist_insights(ctx.config.memory_dir, insights)
+        persist_insights(ctx.config.memory_dir, insights, as_of=ctx.date)
         grounded_ids = {eid for i in insights for eid in i.evidence}
         if grounded_ids:
             obs_store.bump_grounded(list(grounded_ids))
@@ -1400,32 +1661,40 @@ async def run_weekly_dreaming(ctx: StepContext) -> StepOutput:
             promoted_by_job_id=ctx.job_id,
         )
         if promoted:
-            logger.info("[SELF-HEAL] Bootstrap promoted %d entries", len(promoted))
+            logger.info("[SELF-HEAL] Bootstrap promoted %d entries", count_promoted_memories(promoted))
 
     # Procedural extraction
+    errors: list[str] = []
     procedures_text = ""
     strong_patterns = [p for p in patterns if p.strength >= 0.7]
     if strong_patterns:
         try:
-            procedures_text = run_procedure_extraction(ctx.config, strong_patterns)
+            procedures_text = run_procedure_extraction(ctx.config, strong_patterns, weekly=True, run_id=ctx.run_id, run_date=ctx.date)
         except Exception as exc:
             logger.warning("Weekly procedural extraction failed: %s", exc)
+            errors.append(f"操作流程提炼未完成：{exc}")
 
     # Weekly dream diary
     week_node = time_tree.get_node(week_id)
     dreaming_summary = build_dreaming_summary(week_node, patterns, promoted, insights, procedures_text, memory_dir=ctx.config.memory_dir)
+    diary_entry = ""
     try:
-        diary_entry = run_dream_diary(ctx.config, dreaming_summary, weekly=True)
-        append_dream_diary(ctx.config.memory_dir, diary_entry)
+        diary_entry = run_dream_diary(ctx.config, dreaming_summary, weekly=True, run_id=ctx.run_id, run_date=ctx.date)
+        append_dream_diary(ctx.config.memory_dir, diary_entry, run_date=ctx.date)
     except Exception as exc:
         logger.warning("Weekly dream diary failed: %s", exc)
+        errors.append(f"学习日记未完成：{exc}")
 
     return StepOutput(
-        message=f"Weekly Dreaming: {len(patterns)} patterns, {len(promoted)} promoted, {len(insights)} insights",
+        message=f"Weekly Dreaming: {len(patterns)} patterns, {count_promoted_memories(promoted)} promoted, {len(insights)} insights"
+                + ("；" + "；".join(errors) if errors else ""),
         data={
             "patterns": len(patterns),
-            "promoted": len(promoted),
+            "promoted": count_promoted_memories(promoted),
             "insights": len(insights),
+            "procedures": bool(procedures_text),
+            "diary": bool(diary_entry),
+            **({"degraded": True, "error": "；".join(errors)} if errors else {}),
         },
     )
 

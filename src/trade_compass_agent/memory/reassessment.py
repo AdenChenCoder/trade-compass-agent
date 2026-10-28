@@ -22,14 +22,16 @@ basis=principle 仅用于由 grounding 或 rules 直接支持的制度、数据�
 仅采纳声明性记忆。执行步骤、工具路由、评分表和复盘流程属于 Skill；即使合理也先 defer 并说明去向，不能借复评写入核心记忆。
 refs 只能引用输入 references 的键；候选自己的文本和停服恢复请求不是事实依据。
 引用键必须逐字复制，观察 ID 的下划线及哈希后缀不能省略或缩写。
-每条返回 entry_id、version、decision(admit/defer/retire)、basis(principle/empirical)、
+每条返回 entry_id、decision(admit/defer/retire)、basis(principle/empirical)、
 content(admit 的完整文本)、reason(具体中文理由)、refs(引用键数组)。返回 {"reviews":[...]}。
+不要输出 version；它是存储层持有并原子校验的输入快照版本，不属于内容判断。
 """
 
 _RECALLED_CONTENT_TOOLS = {"load_skill", "skill_manage", "search_memory", "write_memory", "write_knowledge", "session_search"}
 
 VERIFY_PROMPT = """你是独立记忆复核者，审查 proposals，不相信提案自己的判断理由。
-只返回 JSON {"reviews":[{"entry_id":"...","version":1,"valid":true,"reason":"具体中文理由"}]}。
+只返回 JSON {"reviews":[{"entry_id":"...","valid":true,"reason":"具体中文理由"}]}。
+不要输出 version；输入快照版本由存储层原子校验。
 逐条检验原文、拟采纳全文、具体引用是否逻辑相容；尝试构造反例，再决定 valid。
 禁止把单个故障案例推广为普遍判据，把相关性当充分条件，或把经验阈值包装成制度原则。
 principle 必须由给定制度或用户规则直接支持，不能借一条通用真实性要求给额外推断背书。
@@ -57,9 +59,17 @@ def _context(store, observations, candidate_ids=None):
         linked = {oid for m in candidates for oid in m.source_obs_ids}
         pool = {o.id: o for o in observations.recent(limit=1000)}
         pool.update({o.id: o for o in observations.get_by_ids(sorted(linked))})
+        # Recalled duplicates must not consume all six relevance slots and
+        # displace a different source. Keep one stable, actual observation ID;
+        # market cases retain their independent session/time identity.
+        ranked_pool = {}
+        for o in sorted(pool.values(), key=lambda o: (o.created_at, o.id)):
+            key = ("recall", o.tool_name, o.summary, o.raw_preview) if o.tool_name in _RECALLED_CONTENT_TOOLS else ("case", o.id)
+            ranked_pool.setdefault(key, o)
         selected = set(linked)
         for m in candidates:
-            ranked = sorted(pool.values(), key=lambda o: jaccard_similarity(m.text, o.summary), reverse=True)
+            ranked = sorted(ranked_pool.values(),
+                            key=lambda o: (jaccard_similarity(m.text, o.summary), o.created_at, o.id), reverse=True)
             selected.update(o.id for o in ranked[:6] if jaccard_similarity(m.text, o.summary) >= .08)
         for oid in sorted(selected & pool.keys()):
             o = pool[oid]
@@ -67,44 +77,155 @@ def _context(store, observations, candidate_ids=None):
                 "session_id": o.session_id, "tool": o.tool_name, "created_at": o.created_at}
     core = [{"entry_id": m.entry_id, "version": m.version, "text": m.text, "pinned": m.source == "user_pin"}
             for m in rows if m.status == "active"]
-    signature = {"rows": [(m.entry_id, m.version, m.status) for m in rows if m.status != "archived"],
+    signature = {"policy": [REVIEW_PROMPT, VERIFY_PROMPT],
+                 "rows": [(m.entry_id, m.version, m.status) for m in rows if m.status != "archived"],
                  "references": references}
     fingerprint = hashlib.sha256(json.dumps(signature, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return candidates, core, references, fingerprint
 
 
+def _review_batch_fingerprint(batch, core, references):
+    """Hash factual inputs; repeated recalls are not independent market cases."""
+    normalized = {}
+    for key, value in references.items():
+        if key.startswith("observation:") and value.get("tool") in _RECALLED_CONTENT_TOOLS:
+            value = {field: value.get(field, "") for field in ("tool", "text", "raw_preview")}
+            key = "recalled:" + hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        normalized[key] = value
+    payload = {"policy": [REVIEW_PROMPT, VERIFY_PROMPT],
+               "candidates": [{"entry_id": m.entry_id, "version": m.version, "text": m.text,
+                              "source_obs_ids": sorted(m.source_obs_ids)} for m in batch],
+               "active_memory": core, "references": normalized}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _review_shape_error(verdicts, batch, references):
+    if not isinstance(verdicts, list) or len(verdicts) != len(batch):
+        return "Review must return one decision per candidate"
+    expected = {m.entry_id: m.version for m in batch}
+    seen = set()
+    for v in verdicts:
+        if not isinstance(v, dict) or not isinstance(v.get("entry_id"), str):
+            return "Review entry_id must exactly match a candidate"
+        identity = v["entry_id"]
+        if identity not in expected or identity in seen:
+            return f"Unknown or duplicate review entry_id: {identity}"
+        seen.add(identity)
+        if "version" in v and (type(v["version"]) is not int or v["version"] != expected[identity]):
+            return f"Review version mismatch for {identity}; expected {expected[identity]}"
+        if v.get("decision") not in {"admit", "defer", "retire"}:
+            return f"Invalid review decision for {identity}; use admit, defer or retire"
+        if not isinstance(v.get("reason"), str) or not v["reason"].strip():
+            return f"Review needs a concrete reason for {identity}"
+        refs = v.get("refs", [])
+        if not isinstance(refs, list) or any(not isinstance(r, str) or r not in references for r in refs):
+            return f"Review cited unavailable evidence for {identity}; copy exact reference keys"
+    return ""
+
+
 def review_candidates(store, llm_call, *, observations=None, force=False):
     from trade_compass_agent.memory.semantic_merge import _parse_json
 
-    candidates, _, _, fingerprint = _context(store, observations)
+    candidates, initial_core, initial_references, fingerprint = _context(store, observations)
     report = {"ok": True, "changed": False, "commits": [], "reviews": []}
     if not candidates or (not force and store.maintenance_marker("candidate_reviewed_fingerprint") == fingerprint):
         return report
     if llm_call is None:
         return {**report, "ok": False, "error": "Candidate review unavailable; candidates preserved"}
     latest_observation = [o.id for o in observations.recent(limit=1)] if observations else []
-    for offset in range(0, len(candidates), 8):
-        ids = {m.entry_id for m in candidates[offset:offset + 8]}
+    def completed_span(start):
+        # Admissions can remove earlier candidates and shift later, genuinely
+        # completed groups away from fixed offsets. Reuse their actual inputs.
+        with store._transaction():
+            completed = store.maintenance_marker("candidate_reviewed_batches") or {}
+            for size in range(min(8, len(candidates) - start), 0, -1):
+                ids = {m.entry_id for m in candidates[start:start + size]}
+                key = hashlib.sha256("\n".join(sorted(ids)).encode()).hexdigest()
+                if key not in completed:
+                    continue
+                batch, core, references, _ = _context(store, observations, candidate_ids=ids)
+                if len(batch) == size and completed[key] == _review_batch_fingerprint(batch, core, references):
+                    return size
+        return 0
+
+    def unfinished_batches():
+        # Resolve lazily after each commit so an adoption still invalidates
+        # judgments made against an earlier core. Never split a valid group.
+        start = 0
+        while start < len(candidates):
+            size = completed_span(start) if not force else 0
+            if size:
+                start += size
+                continue
+            end = min(start + 4, len(candidates))
+            if not force:
+                for boundary in range(start + 1, end):
+                    if completed_span(boundary):
+                        end = boundary
+                        break
+            yield {m.entry_id for m in candidates[start:end]}
+            start = end
+
+    for ids in unfinished_batches():
         with store._transaction():
             version = store.revision
             batch, core, references, _ = _context(store, observations, candidate_ids=ids)
+            batch_key = hashlib.sha256("\n".join(sorted(ids)).encode()).hexdigest()
+            completed_batches = store.maintenance_marker("candidate_reviewed_batches") or {}
+            if not force and completed_batches.get(batch_key) == _review_batch_fingerprint(batch, core, references):
+                continue
         if not batch:
             continue
         payload = {"candidates": [{"entry_id": m.entry_id, "version": m.version, "text": m.text,
                     "source_obs_ids": m.source_obs_ids, **({"last_review_reason": m.reason} if m.reviewed_at else {})}
                     for m in batch], "active_memory": core, "references": references}
+        batch_candidates = payload["candidates"]
+        snapshot_versions = {m.entry_id: m.version for m in batch}
         try:
+            retained = {}
+            requested = batch
             for attempt in range(2):
-                verdicts = _parse_json(llm_call(REVIEW_PROMPT, json.dumps(payload, ensure_ascii=False))).get("reviews")
-                unknown = [ref for v in verdicts if isinstance(v, dict) and isinstance(v.get("refs"), list)
-                           for ref in v["refs"] if not isinstance(ref, str) or ref not in references] if isinstance(verdicts, list) else []
-                if not unknown or attempt:
+                raw = llm_call(REVIEW_PROMPT, json.dumps(payload, ensure_ascii=False))
+                try:
+                    verdicts = _parse_json(raw).get("reviews")
+                    shape_error = _review_shape_error(verdicts, requested, references)
+                except (ValueError, IndexError) as exc:
+                    verdicts = None
+                    shape_error = f"Review must return valid JSON: {exc}"
+                if not shape_error:
+                    verdicts = [*retained.values(), *verdicts]
                     break
-                # Correct citation syntax only; never invent or infer the referenced record.
-                payload["citation_error"] = {"unavailable_refs": unknown,
-                    "instruction": "上一轮引用键不存在。重新判断并原样复制 references 中完整的键；找不到的依据不能引用。"}
-            if not isinstance(verdicts, list) or len(verdicts) != len(batch):
-                raise ValueError("Review must return one decision per candidate")
+                if attempt:
+                    raise ValueError(shape_error)
+                # Keep only exact, unique, individually valid judgments. Repair
+                # the unresolved candidates without asking the model to copy
+                # valid identities again or guessing which typo it intended.
+                if isinstance(verdicts, list):
+                    for m in batch:
+                        matches = [v for v in verdicts if isinstance(v, dict) and v.get("entry_id") == m.entry_id]
+                        if len(matches) == 1 and not _review_shape_error(matches, [m], references):
+                            retained[m.entry_id] = matches[0]
+                requested = [m for m in batch if m.entry_id not in retained]
+                if not requested:
+                    retained = {}
+                    requested = batch
+                requested_ids = {m.entry_id for m in requested}
+                payload["candidates"] = [m for m in batch_candidates if m["entry_id"] in requested_ids]
+                repair_error = ("Unknown or duplicate review entry_id; copy the exact expected_entry_ids"
+                                if shape_error.startswith("Unknown or duplicate review entry_id:") else shape_error)
+                payload["validation_error"] = {"error": repair_error,
+                    "expected_entry_ids": [m.entry_id for m in requested],
+                    "instruction": "只重新判断当前 candidates 中的条目，原样复制 entry_id 及 references 的完整键，不要输出 version；不要补写其他候选或推测缺失依据。"}
+                if isinstance(verdicts, list):
+                    # Repeating a malformed ID can prime the model to copy the
+                    # same typo. Only echo judgments tied to an exact pending ID.
+                    payload["previous_reviews"] = [v for v in verdicts
+                                                   if isinstance(v, dict) and v.get("entry_id") in requested_ids]
+                    unknown = [ref for v in verdicts if isinstance(v, dict) and isinstance(v.get("refs"), list)
+                               for ref in v["refs"] if not isinstance(ref, str) or ref not in references]
+                    if unknown:
+                        payload["citation_error"] = {"unavailable_refs": unknown}
+            payload["candidates"] = batch_candidates
             decisions = {}
             for verdict in verdicts:
                 if not isinstance(verdict, dict) or verdict.get("entry_id") in decisions:
@@ -112,7 +233,7 @@ def review_candidates(store, llm_call, *, observations=None, force=False):
                 decisions[verdict.get("entry_id")] = verdict
             for m in batch:
                 v = decisions.get(m.entry_id, {})
-                if v.get("version") != m.version or v.get("decision") not in {"admit", "defer", "retire"}:
+                if ("version" in v and (type(v["version"]) is not int or v["version"] != m.version)) or v.get("decision") not in {"admit", "defer", "retire"}:
                     raise ValueError("Review identity, version or decision is invalid")
                 if not isinstance(v.get("reason"), str) or not v["reason"].strip():
                     raise ValueError("Review needs a concrete reason")
@@ -144,9 +265,11 @@ def review_candidates(store, llm_call, *, observations=None, force=False):
                     if not isinstance(check, dict) or check.get("entry_id") in seen:
                         raise ValueError("Invalid independent review identity")
                     key = check.get("entry_id")
-                    v = next((v for v in proposals if v["entry_id"] == key and v["version"] == check.get("version")), None)
-                    if not v or not isinstance(check.get("valid"), bool) or not str(check.get("reason", "") or "").strip():
-                        raise ValueError("Independent review needs an exact version, verdict and reason")
+                    v = next((v for v in proposals if v["entry_id"] == key), None)
+                    if (not v or ("version" in check and (type(check["version"]) is not int
+                            or check["version"] != snapshot_versions[key]))
+                            or not isinstance(check.get("valid"), bool) or not str(check.get("reason", "") or "").strip()):
+                        raise ValueError("Independent review needs an exact identity, matching snapshot, verdict and reason")
                     seen.add(key)
                     if not check["valid"]:
                         v.update(decision="defer", reason="独立复核未通过，保留候选：" + check["reason"])
@@ -169,11 +292,21 @@ def review_candidates(store, llm_call, *, observations=None, force=False):
                     if result.get("changed"):
                         report["changed"] = True
                         report["commits"].append(result)
+                if all(v["decision"] == "defer" for v in decisions.values()):
+                    current_batch = [m for m in store.get_entries_with_meta() if m.entry_id in ids]
+                    completed_batches = dict(store.maintenance_marker("candidate_reviewed_batches") or {})
+                    # Use evidence actually given to this review, not evidence
+                    # that may have arrived while the model was working.
+                    completed_batches[batch_key] = _review_batch_fingerprint(current_batch, core, references)
+                    store.maintenance_marker("candidate_reviewed_batches", completed_batches)
         except Exception as exc:
             return {**report, "ok": False, "error": str(exc)}
     with store._transaction():
-        remaining, _, _, completed_fingerprint = _context(store, observations)
+        remaining, current_core, current_references, completed_fingerprint = _context(store, observations)
         latest_now = [o.id for o in observations.recent(limit=1)] if observations else []
-        if {m.entry_id for m in remaining} <= {m.entry_id for m in candidates} and latest_now == latest_observation:
+        same_policy_inputs = current_core == initial_core and all(
+            current_references.get(key) == initial_references.get(key) for key in ("grounding", "rules"))
+        if (same_policy_inputs and latest_now == latest_observation
+                and {m.entry_id for m in remaining} <= {m.entry_id for m in candidates}):
             store.maintenance_marker("candidate_reviewed_fingerprint", completed_fingerprint)
     return report

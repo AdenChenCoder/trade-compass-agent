@@ -39,18 +39,19 @@ class RefinementReport:
     confidence_bias: float = 0.0  # positive = overconfident, negative = underconfident
     best_rating: str = ""
     worst_rating: str = ""
+    outcome_basis: str = "price_followthrough"
 
 
-def analyze_outcomes(data_dir: Path, min_signals: int = 10) -> RefinementReport:
+def analyze_outcomes(data_dir: Path, min_signals: int = 10, *, outcome_basis: str = "price_followthrough") -> RefinementReport:
     """Analyze closed signals and extract refinement insights.
 
     Only runs when sufficient data exists (>= min_signals closed signals).
     """
     tracker = SignalTracker(data_dir)
-    closed = tracker.get_closed(limit=200)
+    closed = tracker.get_closed(limit=200, outcome_basis=outcome_basis)
 
     if len(closed) < min_signals:
-        return RefinementReport(total_analyzed=len(closed))
+        return RefinementReport(total_analyzed=len(closed), outcome_basis=outcome_basis)
 
     insights: list[RefinementInsight] = []
 
@@ -96,6 +97,7 @@ def analyze_outcomes(data_dir: Path, min_signals: int = 10) -> RefinementReport:
 
     return RefinementReport(
         total_analyzed=len(closed),
+        outcome_basis=outcome_basis,
         insights=insights,
         confidence_bias=bias,
         best_rating=best[0] if best[0] else "",
@@ -145,9 +147,9 @@ def _analyze_stop_loss(signals: list[TrackedSignal]) -> RefinementInsight | None
     if breached_stop > len(losses) * 0.5:
         return RefinementInsight(
             category="timing",
-            description=f"止损未严格执行: {breached_stop}/{len(losses)}笔亏损交易出场价低于止损价",
+            description=f"{breached_stop}/{len(losses)}笔亏损记录的出场价低于计划止损，需核对跳空、流动性及执行偏差",
             evidence_count=breached_stop,
             confidence=0.8,
-            suggested_rule="严格在止损价执行卖出，不应犹豫或期望反弹",
+            suggested_rule="复核实际可成交条件和退出计划，区分市场跳空与执行延迟，不假定计划价格一定能成交",
         )
     return None

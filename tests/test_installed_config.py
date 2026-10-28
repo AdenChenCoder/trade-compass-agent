@@ -8,6 +8,8 @@ import pytest
 import yaml
 
 from trade_compass_agent.config import (
+    PROJECT_ROOT,
+    SOURCE_CONFIG_PATH,
     Settings,
     ensure_runtime_dirs,
     initialize_user_files,
@@ -17,6 +19,26 @@ from trade_compass_agent.config import (
     update_mobile_enabled,
     update_scheduler_config,
 )
+
+
+def test_source_and_packaged_defaults_use_qwen38_multimodal_model() -> None:
+    source = yaml.safe_load(SOURCE_CONFIG_PATH.read_text(encoding="utf-8"))
+    packaged = yaml.safe_load(
+        (PROJECT_ROOT / "config" / "packaged.yaml").read_text(encoding="utf-8")
+    )
+
+    for raw in (source, packaged):
+        assert raw["llm"] == {
+            "provider": "lmstudio",
+            "model": "qwen3.8-27b",
+            "api_key_env": "",
+            "timeout": 900.0,
+            "agent_timeout": 3600.0,
+            "max_retries": 2,
+            "vision_model": "qwen3.8-27b",
+            "vision_provider": "lmstudio",
+            "vision_api_key_env": "",
+        }
 
 
 def _write_packaged_config(path: Path) -> None:

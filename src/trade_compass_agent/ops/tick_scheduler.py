@@ -216,6 +216,8 @@ class TickScheduler:
     def _tick(self) -> None:
         now = datetime.now()
         self._reap_stale_runs()
+        if self.delivery._deliveries.has_due():
+            self._dispatch("delivery-retry", self.delivery.retry_due)
         try:
             sweep_scheduler_sessions(self.config.data_dir)
         except Exception:

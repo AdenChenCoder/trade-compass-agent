@@ -213,6 +213,7 @@ def _get_channel_agent() -> AgentLoop:
 
     global _channel_agent
     with _channel_agent_lock:
-        if _channel_agent is None:
-            _channel_agent = AgentLoop.from_config(load_app_config())
+        config = load_app_config()
+        if _channel_agent is None or _channel_agent.config != config:
+            _channel_agent = AgentLoop.from_config(config)
         return _channel_agent

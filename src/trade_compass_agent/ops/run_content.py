@@ -7,6 +7,38 @@ from pathlib import Path
 from typing import Any
 
 
+def read_morning_plan(data_dir: Path, as_of: str) -> dict[str, Any]:
+    """Read the latest exact-day plan with its original status and full caveats."""
+    from datetime import date
+
+    day = date.fromisoformat(as_of).isoformat()
+    artifact = data_dir / "workflows" / "morning_plan" / f"{day}.jsonl"
+    context = {"as_of": day, "source": str(artifact), "status": "missing", "analysis": None}
+    try:
+        lines = artifact.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return context
+    except (OSError, UnicodeError):
+        return {**context, "status": "unavailable", "reason": "晨间计划文件无法读取"}
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            # An interrupted append must not silently revive an older plan.
+            return {**context, "status": "unavailable", "reason": "最新计划记录不完整"}
+        if not isinstance(row, dict) or row.get("workflow_id") != "morning_plan" or row.get("as_of") != day:
+            continue
+        analysis = None if row.get("primary_output_failed") else _extract_analysis(row)
+        data = row.get("data") if isinstance(row.get("data"), dict) else {}
+        warnings = list(dict.fromkeys([*row.get("warnings", []), *data.get("warnings", [])]))
+        return {**context, "run_id": row.get("run_id"), "created_at": row.get("created_at"),
+                "status": "failed" if not analysis else "degraded" if row.get("degraded") or data.get("degraded") else "completed",
+                "analysis": analysis, "warnings": warnings, "error": row.get("error") or data.get("error")}
+    return context
+
+
 def extract_analysis_from_workflow_output(output: Any) -> str | None:
     """Return the primary human analysis text from a workflow output payload."""
     return _extract_analysis(output)
@@ -56,6 +88,8 @@ def workflow_run_message(workflow_id: str, output: dict[str, Any], analysis: str
     primary_step_id = output.get("primary_step_id")
     error = output.get("error")
     if isinstance(error, str) and error.strip():
+        if output.get("degraded_steps"):
+            return f"{workflow_id}: failed/degraded - {error.strip()[:160]}"
         step = f"{primary_step_id} " if isinstance(primary_step_id, str) and primary_step_id else ""
         return f"{workflow_id}: {step}failed/degraded - {error.strip()[:160]}"
     if output.get("degraded"):
@@ -97,11 +131,11 @@ def _extract_analysis(value: Any) -> str | None:
 
 
 def _text_field(value: dict[str, Any]) -> str | None:
-    if value.get("error"):
+    if value.get("error") and not (value.get("degraded_steps") and value.get("primary_output_failed") is False):
         return None
     for key in ("analysis", "text", "content"):
         text = value.get(key)
-        if isinstance(text, str) and len(text.strip()) > 50:
+        if isinstance(text, str) and text.strip() and (key == "analysis" or len(text.strip()) > 50):
             return text.strip()
     return None
 

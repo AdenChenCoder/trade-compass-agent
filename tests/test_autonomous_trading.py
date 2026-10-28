@@ -31,7 +31,8 @@ def stack(tmp_path, monkeypatch):
                        data_provider="sample", agent=AgentConfig(llm_session_titles=False))
     monkeypatch.setattr(portfolio_tools, "_market_now", lambda: NOW)
     monkeypatch.setattr("trade_compass_agent.ops.trading_calendar.is_trading_day", lambda day: True)
-    monkeypatch.setattr(portfolio_tools, "_update_signal_tracker", lambda *args, **kwargs: None)
+    monkeypatch.setattr("trade_compass_agent.evaluation.signal_execution.reconcile_signal_executions",
+                        lambda *args, **kwargs: None)
     AccountStore(config.data_dir / "accounts.json").update("short_stock", capital=1500)
     return SimpleNamespace(config=config, provider=SimpleNamespace(get_bars=lambda *args, **kwargs: [quote()]))
 
@@ -135,11 +136,29 @@ def test_exact_gross_balance_is_not_enough_for_fees(stack):
     assert ledger(stack).trades == []
 
 
+@pytest.mark.parametrize("buy_quantity", [100, 200])
+def test_sell_receipt_uses_fifo_net_profit_including_allocated_entry_fee(stack, monkeypatch, buy_quantity):
+    AccountStore(stack.config.data_dir / "accounts.json").update("short_stock", capital=5000)
+    AutonomousTradingStore(stack.config.data_dir).set_enabled(True)
+    bought = execute(stack, quantity=buy_quantity)
+    assert bought["status"] == "executed" and "realized_pnl" not in bought
+    next_day = NOW + timedelta(days=1)
+    monkeypatch.setattr(portfolio_tools, "_market_now", lambda: next_day)
+    stack.provider.get_bars = lambda *a, **k: [quote(9, next_day)]
+    sold = execute(stack, side="sell", quantity=100)
+    assert sold["status"] == "executed"
+    settlements = [r for r in ledger(stack).realized_trades() if r.exit_trade_id == sold["trade_id"]]
+    assert sold["realized_pnl"] == round(sum(row.pnl for row in settlements), 2)
+    assert sold["realized_pnl"] < (9 - 10) * 100 - sold["fee"]
+    assert sold["realized_pnl_basis"] == "fifo_after_entry_and_exit_fees"
+    assert len(ledger(stack).trades) == 2
+
+
 def test_signal_index_failure_does_not_report_a_committed_fill_as_failed(stack, monkeypatch):
     def fail(*args):
         raise OSError("signal index unavailable")
 
-    monkeypatch.setattr(portfolio_tools, "_update_signal_tracker", fail)
+    monkeypatch.setattr("trade_compass_agent.evaluation.signal_execution.reconcile_signal_executions", fail)
     AutonomousTradingStore(stack.config.data_dir).set_enabled(True)
     assert execute(stack)["status"] == "executed"
     assert len(ledger(stack).trades) == 1
@@ -216,9 +235,12 @@ def test_market_closed_and_t1_cannot_be_overridden_by_agent(stack, monkeypatch):
 
 
 def test_ambiguous_account_does_not_combine_allocations(stack):
-    AccountStore(stack.config.data_dir / "accounts.json").create("short_stock", "另一个短线", capital=100000)
+    accounts = AccountStore(stack.config.data_dir / "accounts.json")
+    legacy = accounts._load()
+    legacy.append({**legacy[0], "id": "legacy-duplicate", "name": "另一个短线", "capital": 100000})
+    accounts._save(legacy)
     AutonomousTradingStore(stack.config.data_dir).set_enabled(True)
-    assert "无法确定可用资金" in execute(stack)["error"]
+    assert "无法确定持仓归属" in execute(stack)["error"]
     assert ledger(stack).trades == []
 
 
@@ -428,7 +450,7 @@ def test_custom_autonomous_trade_receipts_survive_observation_period(tmp_path, m
     now = datetime(2026, 9, 14, 10, 5)
     monkeypatch.setattr(portfolio_tools, '_market_now', lambda: now)
     monkeypatch.setattr('trade_compass_agent.ops.trading_calendar.is_trading_day', lambda *a: True)
-    monkeypatch.setattr(portfolio_tools, '_update_signal_tracker', lambda *a: None)
+    monkeypatch.setattr('trade_compass_agent.evaluation.signal_execution.reconcile_signal_executions', lambda *a: None)
     AutonomousTradingStore(config.data_dir).set_enabled(True)
     bar = Bar(symbol='000001', timestamp=now, open=10, high=10, low=10, close=10, volume=1000)
     stack = SimpleNamespace(config=config, provider=SimpleNamespace(get_bars=lambda *a, **k: [bar]))

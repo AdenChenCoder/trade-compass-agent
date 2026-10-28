@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from trade_compass_agent.portfolio.accounts import AccountStore
 from trade_compass_agent.runtime.tools.portfolio import (
     tool_analyze_portfolio,
     tool_batch_paper_trades,
@@ -85,6 +86,46 @@ class TestAnalyzePortfolio:
         symbols = {p["symbol"] for p in result["positions"]}
         assert "600519" in symbols
         assert "000001" in symbols
+
+    def test_concentration_uses_account_capital_not_invested_mix(self, seeded_portfolio):
+        result = json.loads(tool_analyze_portfolio(seeded_portfolio))
+        concentration = {item["symbol"]: item for item in result["concentration_top5"]}
+        positions = {item["symbol"]: item for item in result["positions"]}
+        market_value = positions["600519"]["market_value"]
+
+        assert result["concentration_basis"] == "account_capital"
+        assert result["total_account_capital"] == 1_000_000
+        assert concentration["600519"]["account_capital_pct"] == round(
+            market_value / 300_000 * 100, 2
+        )
+        assert concentration["600519"]["weight_pct"] == concentration["600519"][
+            "account_capital_pct"
+        ]
+        assert concentration["600519"]["total_capital_pct"] == round(
+            market_value / 1_000_000 * 100, 2
+        )
+        assert concentration["600519"]["invested_mix_pct"] == round(
+            market_value / result["total_market_value"] * 100, 2
+        )
+
+    def test_invalid_account_capital_does_not_fall_back_to_invested_mix(
+        self, seeded_portfolio
+    ):
+        AccountStore(seeded_portfolio.config.data_dir / "accounts.json").update(
+            "short_stock", capital=0
+        )
+
+        result = json.loads(tool_analyze_portfolio(seeded_portfolio))
+        concentration = {item["symbol"]: item for item in result["concentration_top5"]}
+        positions = {item["symbol"]: item for item in result["positions"]}
+
+        assert concentration["600519"]["account_capital_pct"] is None
+        assert concentration["600519"]["weight_pct"] is None
+        assert concentration["600519"]["invested_mix_pct"] == round(
+            positions["600519"]["market_value"] / result["total_market_value"] * 100,
+            2,
+        )
+        assert "集中度不可计算" in concentration["600519"]["concentration_error"]
 
     def test_position_warns_when_market_price_falls_back_to_trade_price(self, seeded_portfolio, monkeypatch):
         monkeypatch.setattr(

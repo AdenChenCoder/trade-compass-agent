@@ -148,6 +148,8 @@ def test_web_search_all_fail_is_error(monkeypatch):
     monkeypatch.setitem(sys.modules, "ddgs.engines", SimpleNamespace(ENGINES={"text": dict.fromkeys(["brave", "duckduckgo", "yahoo", "google"])}))
     monkeypatch.setenv("WEB_SEARCH_PROVIDER", "auto")
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setattr("requests.get", lambda *a, **kw: SimpleNamespace(
+        content=b"<rss><channel/></rss>", raise_for_status=lambda: None))
     result = json.loads(tool_web_search(query="market"))
     assert result["error"]
     assert result["results"] == []
@@ -227,8 +229,8 @@ def test_failed_stream_closed_and_cancel_during_backoff_prevents_replay(monkeypa
     import httpx
     from trade_compass_agent.llm.providers import OpenAIChatClient
     from trade_compass_agent.runtime.exceptions import TurnInterruptedError
-    client = OpenAIChatClient.__new__(OpenAIChatClient)
-    client.name, client.model, client.max_retries = "openai", "test", 2
+    monkeypatch.setattr("openai.OpenAI", lambda **kwargs: MagicMock())
+    client = OpenAIChatClient(model="test", api_key="test", max_retries=2)
     client._client = MagicMock()
     stream = MagicMock()
     stream.__iter__.side_effect = httpx.ReadTimeout("timeout")

@@ -85,7 +85,7 @@ def test_atomic_run_admission_covers_independent_executors(tmp_path, monkeypatch
     started, release = threading.Event(), threading.Event()
     def make_executor(store):
         executor = JobExecutor(config, store)
-        async def execute(job, run, ctx, trigger):
+        async def execute(job, run, ctx, trigger, deadline):
             started.set()
             assert release.wait(5)
             store.complete_run(run, message='completed once')

@@ -16,6 +16,12 @@ _MISSING = object()
 _ORIGINAL_LLM_API_KEYS: dict[str, str | object] = {}
 
 
+@pytest.fixture(autouse=True)
+def _isolate_native_tokenizer(monkeypatch):
+    """Unit tests must not depend on the developer's running local model."""
+    monkeypatch.setattr("trade_compass_agent.llm.providers._measure_lmstudio_context", lambda *a, **k: None)
+
+
 def pytest_sessionstart(session: pytest.Session) -> None:
     """Keep the test process offline unless a test injects an explicit fake key."""
     del session

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, time
+from datetime import date, datetime, time
 import math
 from pathlib import Path
 from typing import Any
@@ -12,8 +12,8 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from trade_compass_agent.domain import AccountKind, PaperTrade
-from trade_compass_agent.evaluation.signal_tracker import SignalTracker
 from trade_compass_agent.portfolio import JsonPaperPortfolio
+from trade_compass_agent.portfolio.accounts import AccountStore
 from trade_compass_agent.portfolio.lot_sizing import (
     pnl_exit_review_candidate,
     suggest_rebalance_for_pnl,
@@ -24,6 +24,7 @@ from trade_compass_agent.portfolio.trading_policy import (
     TradeRejected,
     account_balances,
     buying_power,
+    require_single_account,
 )
 from trade_compass_agent.runtime.market_stack import MarketStack
 
@@ -69,17 +70,22 @@ def _fetch_exit_review_market_context(symbols: list[str]) -> dict[str, Any]:
         return {}
 
 
-def tool_analyze_portfolio(stack: MarketStack) -> str:
+def tool_analyze_portfolio(stack: MarketStack, *, planning_reference_date: date | None = None) -> str:
     """Return comprehensive portfolio analysis: positions, P&L, and stats."""
     portfolio = _get_portfolio(stack)
     try:
-        positions = portfolio.positions_with_market_prices(provider=stack.provider)
+        positions = (portfolio.positions() if planning_reference_date else
+                     portfolio.positions_with_market_prices(provider=stack.provider))
         if positions and not isinstance(positions[0].market_value, (int, float)):
             raise TypeError("non-numeric position data")
     except Exception:
         positions = portfolio.positions()
     summaries = portfolio.account_summaries(positions)
     realized = portfolio.realized_trades()
+    references = {}
+    if planning_reference_date:
+        from trade_compass_agent.portfolio.planning import planning_close_references
+        references = planning_close_references(stack.provider, [p.symbol for p in positions], planning_reference_date)
 
     position_data = []
     review_symbols: list[str] = []
@@ -89,10 +95,11 @@ def tool_analyze_portfolio(stack: MarketStack) -> str:
         is_min_lot = p.quantity <= rules.min_lot
         rebalance = suggest_rebalance_for_pnl(p.quantity, rules.min_lot, pnl_pct)
         exit_review = pnl_exit_review_candidate(pnl_pct)
-        if exit_review:
+        if exit_review and not planning_reference_date:
             review_symbols.append(p.symbol)
         entry = {
             "symbol": p.symbol,
+            "name": p.name,
             "account": p.account.value,
             "quantity": p.quantity,
             "min_lot": rules.min_lot,
@@ -107,11 +114,14 @@ def tool_analyze_portfolio(stack: MarketStack) -> str:
         }
         if not p.price_is_fresh:
             entry["price_warning"] = "未获取到实时/最新行情，last_price 来自最近成交或成本回退；不要据此判断成本价持平"
+        if p.symbol in references:
+            entry["planning_reference"] = references[p.symbol]
+            entry["price_warning"] = "盘前参考价见 planning_reference（含日期）；last_price 和盈亏字段不代表实时估值，交易前须重新核验报价"
         if is_min_lot:
             entry["lot_note"] = f"持仓{p.quantity}股=最小手数，无法部分减仓，只能全部卖出或继续持有"
-        if rebalance:
+        if rebalance and not planning_reference_date:
             entry["rebalance_hint"] = rebalance
-        if exit_review:
+        if exit_review and not planning_reference_date:
             entry["exit_review"] = exit_review
             entry["exit_review_suggested"] = True
         position_data.append(entry)
@@ -157,6 +167,8 @@ def tool_analyze_portfolio(stack: MarketStack) -> str:
             "entry_trade_id": r.entry_trade_id,
             "exit_trade_id": r.exit_trade_id,
             "pnl": r.pnl,
+            "fees": r.fees,
+            "pnl_basis": "fifo_after_entry_and_exit_fees",
             "entry": r.entry_price,
             "exit": r.exit_price,
             "closed_at": r.closed_at.isoformat(),
@@ -165,13 +177,66 @@ def tool_analyze_portfolio(stack: MarketStack) -> str:
     ]
 
     total_value = sum(p.market_value for p in positions)
+    accounts = AccountStore(stack.config.data_dir / "accounts.json").list()
+    total_capital = sum(
+        account.capital
+        for account in accounts
+        if math.isfinite(account.capital) and account.capital > 0
+    )
+    accounts_by_kind = {
+        kind: [account for account in accounts if account.kind == kind]
+        for kind in AccountKind
+    }
     concentration = []
-    if total_value > 0:
-        for p in sorted(positions, key=lambda x: x.market_value, reverse=True)[:5]:
-            concentration.append({
-                "symbol": p.symbol,
-                "weight_pct": round(p.market_value / total_value * 100, 1),
-            })
+    for p in positions:
+        matching_accounts = accounts_by_kind[p.account]
+        account_capital = None
+        concentration_error = None
+        if len(matching_accounts) != 1:
+            concentration_error = (
+                f"账户类型 {p.account.value} 对应 {len(matching_accounts)} 个账户，集中度不可计算"
+            )
+        elif not math.isfinite(matching_accounts[0].capital) or matching_accounts[0].capital <= 0:
+            concentration_error = f"账户 {matching_accounts[0].name} 的额度无效，集中度不可计算"
+        else:
+            account_capital = matching_accounts[0].capital
+
+        account_capital_pct = (
+            round(p.market_value / account_capital * 100, 2)
+            if account_capital is not None
+            else None
+        )
+        item = {
+            "symbol": p.symbol,
+            "account": p.account.value,
+            # Keep weight_pct for API compatibility, but give it the same explicit
+            # account-capital meaning used by the risk-control consumer.
+            "weight_pct": account_capital_pct,
+            "account_capital_pct": account_capital_pct,
+            "total_capital_pct": (
+                round(p.market_value / total_capital * 100, 2) if total_capital > 0 else None
+            ),
+            "invested_mix_pct": (
+                round(p.market_value / total_value * 100, 2) if total_value > 0 else None
+            ),
+        }
+        if concentration_error:
+            item["concentration_error"] = concentration_error
+        concentration.append(item)
+
+    concentration.sort(
+        key=lambda item: item["account_capital_pct"]
+        if item["account_capital_pct"] is not None
+        else -math.inf,
+        reverse=True,
+    )
+    concentration = concentration[:5]
+
+    balances = account_balances(portfolio, stack.config.data_dir)
+    total_available = round(sum(row["available_cash"] for row in balances), 4) if all(
+        isinstance(row.get("available_cash"), (int, float)) and math.isfinite(row["available_cash"])
+        for row in balances
+    ) else None
 
     return json.dumps(
         {
@@ -182,10 +247,13 @@ def tool_analyze_portfolio(stack: MarketStack) -> str:
             "trades_as_of": _market_now().isoformat(),
             "trade_history_note": "recent_trades 是按成交时间倒序的最近20笔实际流水，数量和 trade_id 以此为准；recent_closed_trades 是 FIFO 分批结算，同一卖出可能对应多条，不代表多笔成交。更早成交可用 search_decisions 的 execution_trades 核对，未查询到不能推算或编造。",
             "total_market_value": round(total_value, 2),
+            "total_account_capital": round(total_capital, 2),
+            "total_available_cash": total_available,
             "total_positions": len(positions),
+            "concentration_basis": "account_capital",
             "concentration_top5": concentration,
             "autonomous_trading_enabled": AutonomousTradingStore(stack.config.data_dir).read(),
-            "account_balances": account_balances(portfolio, stack.config.data_dir),
+            "account_balances": balances,
         },
         ensure_ascii=False,
     )
@@ -254,7 +322,14 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
     if price_limit_pct is None or price_source == "market_quote":
         price_limit_pct = rules.price_limit_pct
 
+    from trade_compass_agent.evaluation.signal_execution import resolve_signal_reference
+    try:
+        signal_ref = resolve_signal_reference(stack.config.data_dir, kwargs.get("signal_id"), symbol, acct.value)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc), "trade_rejected": True}, ensure_ascii=False)
+
     trade = PaperTrade(
+        **signal_ref,
         symbol=symbol,
         account=acct,
         side=side,
@@ -289,6 +364,9 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
         execution_guard = kwargs.get("_execution_guard")
         if execution_guard is not None:
             execution_guard()
+        from trade_compass_agent.llm.providers import check_execution_active
+        check_execution_active()
+        require_single_account(stack.config.data_dir, acct)
         if autonomous and not AutonomousTradingStore(stack.config.data_dir).read():
             raise TradeRejected("自主交易已关闭，本次交易未成交", "autonomous_trading_disabled")
         if price_source != "market_quote":
@@ -318,7 +396,7 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
         return json.dumps({"error": str(exc), "trade_rejected": True}, ensure_ascii=False)
 
     try:
-        _update_signal_tracker(stack.config.data_dir, symbol, side, price)
+        _update_signal_tracker(stack.config.data_dir, portfolio)
     except Exception as exc:
         # The authoritative fill already exists; reporting a failed order here
         # could make the agent retry a trade that has actually executed.
@@ -338,6 +416,14 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
     else:
         position_after = {"quantity": held.quantity if held else 0, "avg_cost": round(held.avg_cost, 3) if held else 0}
 
+    settlement = {}
+    if side == "sell":
+        closed = [row for row in portfolio.realized_trades() if row.exit_trade_id == trade_id]
+        settlement = {
+            "realized_pnl": round(sum(row.pnl for row in closed), 2),
+            "realized_pnl_basis": "fifo_after_entry_and_exit_fees",
+        }
+
     return json.dumps(
         {
             "status": "executed",
@@ -350,11 +436,13 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
             "reason": reason,
             "trade_id": trade_id,
             "decision_id": decision_id,
+            **signal_ref,
             "timestamp": trade.timestamp.isoformat(),
             "price_source": price_source,
             "price_as_of": price_as_of.isoformat() if price_as_of else None,
             "requested_price": requested_price if requested_price > 0 else None,
             "position_after": position_after,
+            **settlement,
         },
         ensure_ascii=False,
     )
@@ -429,23 +517,10 @@ def _load_signal_map(data_dir: Path) -> dict[str, dict[str, Any]]:
     return result
 
 
-def _update_signal_tracker(data_dir: Path, symbol: str, side: str, price: float) -> None:
-    """Update signal tracker when a trade is executed."""
-    tracker = SignalTracker(data_dir)
-    active = tracker.get_active()
-    pending = [r for r in tracker._load_all() if r.status == "pending"]
-
-    if side == "buy":
-        for record in reversed(pending):
-            if record.symbol == symbol:
-                tracker.update_entry(record.signal_id, price)
-                break
-    elif side == "sell":
-        for record in reversed(active):
-            if record.symbol == symbol:
-                days_held = (datetime.now() - datetime.fromisoformat(record.emitted_at)).days
-                tracker.update_exit(record.signal_id, price, days_held=days_held)
-                break
+def _update_signal_tracker(data_dir: Path, portfolio: JsonPaperPortfolio) -> None:
+    """Rebuild explicitly linked outcomes after a committed ledger mutation."""
+    from trade_compass_agent.evaluation.signal_execution import reconcile_signal_executions
+    reconcile_signal_executions(data_dir, portfolio)
 
 
 def tool_batch_paper_trades(stack: MarketStack, **kwargs: Any) -> str:
@@ -519,7 +594,14 @@ def tool_batch_paper_trades(stack: MarketStack, **kwargs: Any) -> str:
             results.append({"symbol": symbol, "status": "rejected", "error": msg})
             continue
 
-        portfolio.record(trade)
+        try:
+            portfolio.record(
+                trade,
+                before_record=lambda _portfolio: require_single_account(stack.config.data_dir, acct),
+            )
+        except ValueError as exc:
+            results.append({"symbol": symbol, "status": "rejected", "error": str(exc)})
+            continue
         _sync_decision_journal(
             stack.config.data_dir,
             stack.config.memory_dir,
@@ -540,6 +622,12 @@ def tool_batch_paper_trades(stack: MarketStack, **kwargs: Any) -> str:
         })
 
     executed = sum(1 for r in results if r["status"] == "executed")
+    if executed:
+        try:
+            from trade_compass_agent.evaluation.signal_execution import reconcile_signal_executions
+            reconcile_signal_executions(stack.config.data_dir, portfolio)
+        except Exception as exc:
+            logger.warning("Imported trades executed but signal synchronization failed: %s", exc)
     return json.dumps(
         {"total": len(trades_data), "executed": executed, "results": results},
         ensure_ascii=False,

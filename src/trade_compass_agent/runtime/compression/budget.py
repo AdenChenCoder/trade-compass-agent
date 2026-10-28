@@ -8,6 +8,7 @@ trimming (Phase 1) or summarization (Phase 2) is needed.
 from __future__ import annotations
 
 import logging
+import string
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -34,6 +35,7 @@ _MODEL_CONTEXTS: dict[str, int] = {
     "deepseek-reasoner": 64_000,
     "deepseek-v3": 128_000,
     "deepseek-v4-pro": 128_000,
+    "deepseek-flash": 1_048_576,
     "gpt-4o": 128_000,
     "gpt-4o-mini": 128_000,
     "gpt-4-turbo": 128_000,
@@ -61,30 +63,40 @@ def estimate_tokens(text: str, chars_per_cjk: float = 1.5, chars_per_ascii: floa
     """Rough token estimate for mixed Chinese/English text.
 
     Chinese characters cost ~1 token per 1.5 chars (BPE tokenizer).
-    ASCII text costs ~1 token per 4 chars.
-    This is a heuristic: off by ±20% but fast and deterministic.
+    ASCII prose costs ~1 token per 4 chars. Digits and ASCII punctuation
+    conservatively count individually so financial codes, amounts, and JSON
+    do not inherit the much cheaper prose estimate.
+    This is a heuristic, not a tokenizer: fast and deterministic.
     """
     if not text:
         return 0
     cjk_chars = 0
     ascii_chars = 0
+    single_tokens = 0
     for ch in text:
         if _is_cjk(ord(ch)):
             cjk_chars += 1
+        elif ch in string.digits or ch in string.punctuation:
+            single_tokens += 1
         else:
             ascii_chars += 1
-    return int(cjk_chars / chars_per_cjk + ascii_chars / chars_per_ascii)
+    return single_tokens + int(cjk_chars / chars_per_cjk + ascii_chars / chars_per_ascii)
 
 
-def estimate_message_tokens(msg: ChatMessage, chars_per_token: float = 4.0) -> int:
+def estimate_message_tokens(
+    msg: ChatMessage, chars_per_token: float = 4.0, *, include_reasoning: bool = True,
+) -> int:
     """Estimate token cost of a single ChatMessage.
 
     Includes:
     - content text
+    - transient assistant reasoning sent with tool-round context
     - tool_calls JSON (function.name + function.arguments)
     - role label overhead (~4 tokens)
     """
     tokens = estimate_tokens(msg.content) + 4  # role overhead
+    if include_reasoning and msg.role == "assistant":
+        tokens += estimate_tokens(getattr(msg, "reasoning_content", ""))
     for tc in msg.tool_calls or []:
         fn = tc.get("function", {})
         tokens += estimate_tokens(str(fn.get("name", "")))
@@ -101,7 +113,7 @@ def _tool_schema_tokens(schema: dict) -> int:
     """Rough token cost of a single tool schema JSON."""
     import json
     raw = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
-    return len(raw) // 4  # ~4 chars per token for JSON
+    return estimate_tokens(raw)
 
 
 def estimate_request_tokens(
@@ -146,7 +158,7 @@ class TokenBudget:
             msgs = trim_old_tool_results(msgs, protect_count=budget.protect_recent_count)
     """
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, *, context_window: int | None = None, output_reserve: int = 0) -> None:
         cc = getattr(config, "context_compression", None)
         self.enabled = cc.enabled if cc else False
         self.trim_threshold_pct: float = cc.trim_threshold_pct if cc else 0.60
@@ -156,6 +168,8 @@ class TokenBudget:
         self.protect_recent_tokens: int = cc.protect_recent_tokens if cc else 16000
 
         self.context_budget = resolve_context_budget(config)
+        if type(context_window) is int and context_window > 0:
+            self.context_budget = min(self.context_budget, max(0, context_window - output_reserve))
         self._trim_threshold = int(self.context_budget * self.trim_threshold_pct)
         self._summary_threshold = int(self.context_budget * self.summary_threshold_pct)
         self._emergency_threshold = int(self.context_budget * self.emergency_threshold_pct)

@@ -86,7 +86,10 @@ def tool_run_builtin_operation(config: AppConfig, name: str, args: dict[str, Any
         job_id=str(args.get("job_id") or ""),
         run_id=str(args.get("run_id") or ""),
     )
-    output = asyncio.run(handler(ctx))
+    from trade_compass_agent.llm.usage import llm_usage_context
+
+    with llm_usage_context(job_id=ctx.job_id, run_id=ctx.run_id):
+        output = asyncio.run(handler(ctx))
     return json.dumps(
         {
             "message": output.message,

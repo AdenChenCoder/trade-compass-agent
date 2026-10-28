@@ -128,7 +128,13 @@ def tool_get_fund_flow(category: str = "summary", limit: int = 10) -> dict[str, 
         }
 
     provider = FundFlowProvider()
-    result: dict[str, Any] = {}
+    retrieved = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    result: dict[str, Any] = {
+        "_meta": {"source": "sina", "retrieved_at": retrieved, "data_as_of": None,
+                  "timezone": "Asia/Shanghai", "freshness": "unknown", "category": category,
+                  "classification": "sina_moneyflow", "selection": "top_net_inflow", "limit": limit},
+        "note": "接口未提供行情时点；以下为最近可得资金快照，获取时间不代表今日或实时数据，未入榜不代表流出。",
+    }
     unavailable: list[str] = []
 
     if category in ("main_force", "summary"):
@@ -164,6 +170,6 @@ def tool_get_fund_flow(category: str = "summary", limit: int = 10) -> dict[str, 
     if unavailable:
         result["unavailable"] = unavailable
         if not _is_cn_trading_hours():
-            result["note"] = "当前为非交易时段，部分实时数据可能不可用。资金流向数据反映最近交易日情况。"
+            result["note"] += "当前为非交易时段，部分数据可能不可用。"
 
     return result

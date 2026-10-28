@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 from datetime import datetime
 
 from trade_compass_agent.data.quality import DataQualityLayer
+from trade_compass_agent.data.metadata import bars_metadata
 from trade_compass_agent.runtime.market_stack import MarketStack
 
 
@@ -16,11 +19,19 @@ def _meta_tag(source: str, freshness: str = "realtime") -> dict:
 
 
 def tool_get_bars(stack: MarketStack, *, symbol: str, timeframe: str = "1d", limit: int = 60) -> str:
+    symbols = [value for value in re.split(r"[,，;；\s]+", symbol.strip()) if value]
+    if len(symbols) != 1:
+        return json.dumps({"error": "get_bars 只接受一个标的；多个标的请调用 batch_get_bars。",
+            "error_type": "invalid_arguments", "symbol": symbol, "symbols": symbols, "timeframe": timeframe,
+            "suggested_tool": "batch_get_bars", "suggested_arguments": {
+                "symbols": ",".join(symbols), "timeframe": timeframe, "limit": limit}}, ensure_ascii=False)
     bars = stack.provider.get_bars(symbol.strip(), timeframe=timeframe, limit=limit)
     quality = DataQualityLayer().check_bars(bars)
     provider_name = getattr(stack.provider, "last_resolved_provider", None) or getattr(stack.provider, "name", "unknown")
     payload = {
-        "_meta": _meta_tag(provider_name),
+        "_meta": bars_metadata(bars, provider_name, timeframe),
+        "as_of": bars[-1].timestamp.isoformat() if bars else None,
+        "adjusted": bars[-1].adjusted if bars else None,
         "symbol": symbol,
         "timeframe": timeframe,
         "count": len(bars),
@@ -46,28 +57,20 @@ def tool_get_bars(stack: MarketStack, *, symbol: str, timeframe: str = "1d", lim
 
 
 def _fetch_major_indices() -> list[dict]:
-    """Fetch major A-share indices via Sina (works 24/7)."""
-    import requests
-
-    index_codes = "s_sh000001,s_sz399001,s_sz399006"
-    url = f"https://hq.sinajs.cn/list={index_codes}"
-    try:
-        resp = requests.get(url, timeout=5, headers={"Referer": "https://finance.sina.com.cn"})
-        resp.raise_for_status()
-    except Exception:
-        return []
-
+    """Use dated quotes; response time alone cannot certify today's market."""
+    from trade_compass_agent.runtime.tools.search import tool_sina_realtime_quote
+    data = json.loads(tool_sina_realtime_quote(symbols="sh000001,sz399001,sz399006"))
     results = []
-    for line in resp.text.strip().split("\n"):
-        if "=" not in line:
-            continue
-        data = line.split("=", 1)[1].strip('";').split(",")
-        if len(data) < 4:
-            continue
+    for quote in data.get("quotes", []):
+        price, previous = quote.get("price"), quote.get("prev_close")
+        valid = isinstance(price, (int, float)) and math.isfinite(price) and price > 0
+        comparable = valid and isinstance(previous, (int, float)) and math.isfinite(previous) and previous > 0
         results.append({
-            "name": data[0],
-            "price": float(data[1] or 0),
-            "change_pct": float(data[3] or 0),
+            "symbol": quote["symbol"], "name": quote["name"],
+            "price": price if valid else None,
+            "change_pct": round((price / previous - 1) * 100, 2) if comparable else None,
+            "date": quote.get("date"), "time": quote.get("time"),
+            "data_status": "available" if valid else "unavailable",
         })
     return results
 
@@ -75,8 +78,14 @@ def _fetch_major_indices() -> list[dict]:
 def tool_get_market_pulse(stack: MarketStack) -> str:
     pulse = stack.market_pulse_provider.get_market_pulse()
     indices = _fetch_major_indices()
+    warnings = list(pulse.warnings)
+    warnings.append("指数按各条行情日期和时间使用；板块未提供统一行情时点，获取时间不代表已核实的实时行情。")
+    if len(indices) < 3 or any(row["data_status"] == "unavailable" for row in indices):
+        warnings.append("部分指数未取得有效报价，不能按零点或零涨幅解读。")
     payload = {
-        "_meta": _meta_tag(pulse.provider_name),
+        "_meta": {**_meta_tag(pulse.provider_name, "sample" if pulse.provider_name == "sample" else "mixed"),
+                  "retrieved_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                  "data_as_of": None, "timezone": "Asia/Shanghai", "is_sample": pulse.provider_name == "sample"},
         "provider_name": pulse.provider_name,
         "timestamp": pulse.timestamp.isoformat(),
         "indices": indices,
@@ -90,7 +99,7 @@ def tool_get_market_pulse(stack: MarketStack) -> str:
             "strong_count": pulse.limit_up.strong_count,
             "top_industries": pulse.limit_up.top_industries,
         },
-        "warnings": pulse.warnings,
+        "warnings": warnings,
     }
     return json.dumps(payload, ensure_ascii=False)
 

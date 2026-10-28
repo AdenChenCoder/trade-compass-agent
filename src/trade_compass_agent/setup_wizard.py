@@ -16,23 +16,23 @@ from trade_compass_agent.concurrency import atomic_write
 
 
 _LLM_OPTIONS = (
-    ("deepseek", "DeepSeek（推荐）"),
+    ("deepseek", "DeepSeek"),
     ("openai", "OpenAI"),
     ("anthropic", "Anthropic"),
     ("openrouter", "OpenRouter"),
     ("dashscope", "DashScope / 通义千问"),
     ("ollama", "Ollama（本地，无需 API Key）"),
-    ("lmstudio", "LM Studio（本地，无需 API Key）"),
+    ("lmstudio", "LM Studio（本地，无需 API Key，推荐）"),
     ("disabled", "暂不启用 LLM"),
 )
 _LLM_DEFAULT_MODELS = {
-    "deepseek": "deepseek-chat",
+    "deepseek": "deepseek-flash",
     "openai": "gpt-4o-mini",
     "anthropic": "claude-3-5-sonnet-latest",
     "openrouter": "deepseek/deepseek-chat",
     "dashscope": "qwen-plus",
-    "ollama": "llama3.2",
-    "lmstudio": "local-model",
+    "ollama": "gemma4:26b",
+    "lmstudio": "qwen3.8-27b",
     "disabled": "",
 }
 _LLM_KEY_ENVS = {
@@ -247,24 +247,35 @@ def run_setup_wizard(
         if changed:
             env_updates[key_env] = value
         configured_key = bool(value if changed else env.get(key_env))
+    elif provider in {"ollama", "lmstudio"}:
+        llm_raw["api_key_env"] = ""
     if provider != "disabled":
         configure_vision = ui.confirm(
             "配置独立视觉模型（图片分析）",
             default=bool(llm_raw.get("vision_model", "")),
         )
         if configure_vision:
-            vision_provider = str(llm_raw.get("vision_provider", "") or provider)
+            vision_provider = (
+                provider
+                if provider != old_provider
+                else str(llm_raw.get("vision_provider", "") or provider)
+            )
             vision_provider = ui.select(
                 "选择视觉模型提供商：",
                 _LLM_OPTIONS[:-1],
                 current=vision_provider
                 if vision_provider in dict(_LLM_OPTIONS[:-1])
-                else provider,
+                else "lmstudio",
             )
             llm_raw["vision_provider"] = vision_provider
+            vision_model_default = (
+                _LLM_DEFAULT_MODELS[vision_provider]
+                if provider != old_provider
+                else str(llm_raw.get("vision_model", "") or _LLM_DEFAULT_MODELS[vision_provider])
+            )
             llm_raw["vision_model"] = ui.text(
                 "视觉模型名称",
-                default=str(llm_raw.get("vision_model", "") or _LLM_DEFAULT_MODELS[vision_provider]),
+                default=vision_model_default,
             )
             vision_key_env = _LLM_KEY_ENVS.get(vision_provider, "")
             llm_raw["vision_api_key_env"] = vision_key_env
@@ -442,7 +453,8 @@ def run_setup_wizard(
     raw["agent"] = agent_raw
 
     ui.write("\n配置摘要（密钥已隐藏）")
-    ui.write(f"  LLM:      {provider} / {model or 'disabled'}")
+    display_model = model or "disabled"
+    ui.write(f"  LLM:      {provider} / {display_model}")
     ui.write(f"  数据:     {data_provider}" + (" + Tushare" if use_tushare else ""))
     ui.write(f"  自动化:   {'启用' if scheduler_enabled else '停用'}")
     ui.write(f"  消息渠道: {', '.join(selected_channels) or '无'}")

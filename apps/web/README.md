@@ -5,6 +5,7 @@ Vite 6 + React 19 SPA for the Agent-first UI.
 ## Scripts
 
 ```bash
+uv run trade-compass dev       # from repository root: API + Web UI with hot reload
 pnpm --dir apps/web dev        # http://127.0.0.1:3000, proxies /api → :19704
 pnpm --dir apps/web build      # output: src/trade_compass_agent/web_dist/
 pnpm --dir apps/web typecheck

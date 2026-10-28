@@ -21,6 +21,8 @@ import pytest
 from trade_compass_agent.config import load_app_config
 from trade_compass_agent.domain import AccountKind, PaperTrade
 from trade_compass_agent.evaluation.signal_tracker import SignalTracker
+from trade_compass_agent.evaluation.signal_execution import reconcile_signal_executions
+from trade_compass_agent.runtime.exceptions import AgentUnavailableError
 from trade_compass_agent.ops.tick_scheduler import TickScheduler
 from trade_compass_agent.portfolio import JsonPaperPortfolio
 from trade_compass_agent.runtime.market_stack import MarketStack
@@ -44,6 +46,10 @@ def trading_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("TRADE_COMPASS_DATA_PROVIDER", "sample")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    # A no-LLM workflow check must not pick up a locally signed-in native provider.
+    def unavailable_client(*args, **kwargs):
+        raise AgentUnavailableError("offline trading-day test")
+    monkeypatch.setattr("trade_compass_agent.runtime.loop.create_chat_client", unavailable_client)
 
     # Invalidate config cache
     import trade_compass_agent.config as cfg_mod
@@ -120,6 +126,8 @@ def test_full_trading_day_flow(trading_env):
         price=1850.0,
         timestamp=yesterday,
         reason="根据信号入场",
+        trade_id="e2e-linked-entry",
+        signal_id=signal_id,
     ))
 
     # Verify portfolio has the position
@@ -128,8 +136,8 @@ def test_full_trading_day_flow(trading_env):
     assert positions[0].symbol == "600519"
     assert positions[0].quantity == 100
 
-    # Manually update tracker (normally done by tool_place_paper_trade)
-    tracker.update_entry(signal_id, actual_entry=1850.0)
+    # Rebuild from the explicit ledger link, as the execution tool/workflow does.
+    reconcile_signal_executions(data_dir, portfolio)
 
     # Signal tracker should now show "active"
     tracker2 = SignalTracker(data_dir)

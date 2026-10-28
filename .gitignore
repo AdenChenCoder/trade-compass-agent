@@ -18,6 +18,9 @@ apps/web/dist/
 apps/mobile/dist/
 apps/web/node_modules/
 src/trade_compass_agent/web_dist/
+*.llm-backup.yaml
+*.mobile-backup.yaml
+/.worktrees/
 src/trade_compass_agent/mobile_dist/
 src/trade_compass_agent/mobile_bin/
 graphify-out/
