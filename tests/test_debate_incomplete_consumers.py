@@ -17,12 +17,13 @@ from trade_compass_agent.runtime.tools.dispatch import tool_dispatch_specialists
 
 
 @pytest.mark.parametrize("consumer", ["asset", "dispatch", "agent"])
-@pytest.mark.parametrize("incomplete", [False, True])
-def test_debate_incomplete_research_reaches_consumer(tmp_path, monkeypatch, consumer, incomplete):
+@pytest.mark.parametrize("failure", [None, "budget", "provider"])
+def test_debate_incomplete_research_reaches_consumer(tmp_path, monkeypatch, consumer, failure):
     config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory", data_provider="sample",
                        llm=LLMConfig(provider="codex", model=""))
     stack = MarketStack.from_config(config)
-    reason = "技术研究未完成：已达到工具预算。"
+    incomplete = failure is not None
+    reason = "技术研究未完成：已达到工具预算。" if failure != "provider" else "专家任务未完成：模型额度不足。"
     available = "已保留技术研究中取得的日线信息。"
     stages = []
 
@@ -30,6 +31,8 @@ def test_debate_incomplete_research_reaches_consumer(tmp_path, monkeypatch, cons
         agent = kwargs["agent"].id
         stages.append(agent)
         if agent == "technical_analyst":
+            if failure == "provider":
+                return json.dumps({"error": "模型额度不足。", "report_markdown": available}, ensure_ascii=False)
             if incomplete:
                 return json.dumps({"error": reason, "incomplete_reason": reason,
                                    "report_markdown": available, "warnings": [reason]}, ensure_ascii=False)

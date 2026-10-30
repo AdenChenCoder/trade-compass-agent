@@ -205,6 +205,11 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
   Nested research workers inherit the parent execution context and retain partial
   completion through final reports. Image analysis requires an actual image
   transport; text-only native responses cannot stand in for visual evidence.
+  Ordinary specialist errors and empty results also retain incomplete status through
+  dispatch, HTTP and learning gates. Serialize shared SQLite schema/WAL initialization
+  across cold concurrent sessions without serializing their model execution.
+  Explicit sample/synthetic quotes cannot become market-price fills, even if their
+  prices, timestamps and volumes otherwise pass execution checks.
 - Premarket plans may use the exact previous trading session's dated close as a
   planning reference. Keep it separate from last-trade fallbacks and live valuation;
   reference coverage cannot make a price fresh or relax execution quote checks.

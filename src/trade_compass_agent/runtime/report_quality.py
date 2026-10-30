@@ -667,11 +667,26 @@ def _market_open_issues(text, tool_results, reference_date):
     return issues
 
 
+def _unverified_tool_citations(text, tool_results):
+    available = {name for name, _ in tool_results}
+    issues = []
+    prose = re.sub(r"```.*?```", "", text, flags=re.S)
+    for line in prose.splitlines():
+        if re.search(r"示例|未调用|没有调用|不能调用|不能使用|未执行|错误引用|伪造|历史", line):
+            continue
+        for match in re.finditer(r"\[(functions\.[A-Za-z][A-Za-z0-9_]*|clock__curr_time)(?=\s|[\]：:])", line):
+            claimed = match[1]
+            if claimed.removeprefix("functions.") not in available:
+                issues.append(f"工具引用{claimed}没有本轮执行回执，不能作为计算或事实依据")
+    return list(dict.fromkeys(issues))
+
+
 def report_issues(text: str, tool_results, *, reference_date=None) -> list[str]:
     """Check explicit identities and arithmetic relationships, not trading strategy."""
     facts = report_facts(tool_results)
     verified_names = {fact["name"] for fact in facts.values() if fact.get("name")}
     issues = _cash_total_issues(re.sub(r"[*`]", "", text), tool_results, reference_date)
+    issues.extend(_unverified_tool_citations(text, tool_results))
     issues.extend(_relative_date_issues(re.sub(r"[*`]", "", text), reference_date))
     issues.extend(_news_date_issues(re.sub(r"[*`]", "", text), tool_results, reference_date))
     current_symbol = next(iter(facts)) if len(facts) == 1 else None

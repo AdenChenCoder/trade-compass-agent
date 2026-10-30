@@ -673,6 +673,10 @@ def _latest_execution_price(stack: MarketStack, symbol: str) -> tuple[float, dat
     if not bars:
         raise ValueError("行情源未返回数据")
     latest = max(bars, key=lambda bar: bar.timestamp)
+    sources = {latest.source, getattr(stack.provider, "name", None),
+               getattr(stack.provider, "last_resolved_provider", None)}
+    if sources.intersection({"sample", "synthetic"}):
+        raise TradeRejected("样例或合成行情不能作为市场成交报价，本次模拟交易未成交", "sample_quote")
     price = float(latest.close)
     if not math.isfinite(price) or price <= 0:
         raise ValueError("行情价格无效")

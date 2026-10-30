@@ -503,7 +503,13 @@ def _incomplete_agent_output(output: str) -> dict | None:
         payload = json.loads(output)
     except (TypeError, ValueError):
         return None
-    return payload if isinstance(payload, dict) and payload.get("incomplete_reason") else None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("incomplete_reason"):
+        return payload
+    if payload.get("error"):
+        return {**payload, "incomplete_reason": f"专家任务未完成：{payload['error']}"}
+    return None
 
 
 def _display_agent_output(output: str) -> str:
