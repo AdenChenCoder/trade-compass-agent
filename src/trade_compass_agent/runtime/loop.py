@@ -4,7 +4,7 @@ import json
 import time
 from datetime import datetime
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from trade_compass_agent.config import AppConfig, load_app_config
 from trade_compass_agent.runtime.exceptions import AgentTurnError, LLMIncompleteResponseError, TurnInterruptedError
@@ -380,8 +380,17 @@ class AgentLoop:
         turn_id: str | None = None,
         is_cancelled: Callable[[], bool] | None = None,
     ) -> TurnResponse:
+        from contextlib import nullcontext
+        from trade_compass_agent.llm.native_session import native_session_guard
+        from trade_compass_agent.llm.providers import llm_request_deadline
+
         resolved_session = self.session_store.get_or_create(session_id)
-        with llm_usage_context(session_id=resolved_session.session_id):
+        guard = (native_session_guard(self.config.data_dir, resolved_session.session_id)
+                 if self.config.llm.provider == "codex" else nullcontext())
+        budget_guard = (llm_request_deadline(time.monotonic() + self.config.llm.agent_timeout)
+                        if self.config.llm.provider == "codex" else nullcontext())
+        with guard, budget_guard, llm_usage_context(session_id=resolved_session.session_id):
+            self._nudge.bind_session(self.config.data_dir, resolved_session.session_id)
             return self._run_turn(
                 message,
                 session_id=resolved_session.session_id,
@@ -399,6 +408,8 @@ class AgentLoop:
         turn_id: str | None = None,
         is_cancelled: Callable[[], bool] | None = None,
     ) -> TurnResponse:
+        from trade_compass_agent.llm.native import NativeAgentClient
+
         def _check_cancelled() -> None:
             if is_cancelled and is_cancelled():
                 raise TurnInterruptedError(final_text)
@@ -425,6 +436,9 @@ class AgentLoop:
             ),
         )
         session = self.session_store.get_or_create(session_id)
+        from trade_compass_agent.llm.native_session import NativeConversation
+        native_conversation = (NativeConversation(self.config.data_dir, session.session_id, session.messages)
+                               if isinstance(client, NativeAgentClient) else None)
         publish_after_verification = session.session_id.startswith("scheduler-")
         if turn_id:
             self._emit(
@@ -550,10 +564,27 @@ class AgentLoop:
 
         sections: list[TurnSection] = []
         final_text = ""
+        published_response = None
         max_rounds = self.config.agent.max_tool_rounds
+        incomplete_reason = ""
         tool_calls_log: list[tuple[str, str]] = []
 
         def record_tool_effects(name: str, arguments: str, result: str) -> None:
+            nonlocal incomplete_reason
+            try:
+                payload = json.loads(result)
+                candidates = [payload]
+                if name == "dispatch_specialists" and isinstance(payload, dict):
+                    for item in payload.get("results", []):
+                        try:
+                            candidates.append(json.loads(item.get("output", "")))
+                        except (ValueError, TypeError, AttributeError):
+                            continue
+                for candidate in candidates:
+                    if isinstance(candidate, dict) and candidate.get("incomplete_reason"):
+                        incomplete_reason = str(candidate["incomplete_reason"])
+            except (ValueError, TypeError):
+                pass
             self._nudge.on_tool_iteration()
             if should_capture(name, result):
                 summary = extract_summary(name, result)
@@ -575,8 +606,50 @@ class AgentLoop:
                 sections.append(section)
                 self._emit("section", _section_to_dict(section))
 
+        def native_delta(chunk: str) -> None:
+            nonlocal final_text
+            final_text += chunk
+            if not publish_after_verification:
+                self._emit("delta", {"text": chunk})
+
+        native_tool_started = {}
+
+        def native_tool_result(tc, result):
+            self._emit("tool_end", build_tool_end_payload(tc.name, native_tool_started.pop(tc.id), result))
+            tool_calls_log.append((tc.name, result))
+            messages.append(ChatMessage(role="tool", content=result, tool_call_id=tc.id, name=tc.name))
+            self.session_store.append(session, SessionMessageRecord(
+                role="tool", content=result, timestamp=datetime.now(), tool_call_id=tc.id, name=tc.name))
+            record_tool_effects(tc.name, tc.arguments, result)
+
+        def native_tool(tc) -> str:
+            _check_cancelled()
+            assistant = ChatMessage(role="assistant", tool_calls=[{
+                "id": tc.id, "type": "function",
+                "function": {"name": tc.name, "arguments": tc.arguments},
+            }])
+            messages.append(assistant)
+            self.session_store.append(session, SessionMessageRecord(
+                role="assistant", content="", timestamp=datetime.now(), tool_calls=assistant.tool_calls))
+            self._emit("tool_start", build_tool_start_payload(tc.name, tc.arguments))
+            native_tool_started[tc.id] = time.monotonic()
+            result = _execute_tool_calls([tc], self._tools, is_cancelled, tool_calls_log, self.report_date)[tc.id]
+            native_tool_result(tc, result)
+            return result
+
         try:
-            for _round in range(max_rounds):
+            native = isinstance(client, NativeAgentClient)
+            if native:
+                self._emit("status", {"text": "思考中…"})
+                completion = client.run_agent(
+                    messages, tools=self._tools.schemas, execute_tool=native_tool,
+                    on_delta=native_delta, is_cancelled=is_cancelled,
+                    on_tool_interrupted=native_tool_result,
+                    conversation=native_conversation,
+                )
+                final_text = completion.content or ""
+                incomplete_reason = completion.incomplete_reason or incomplete_reason
+            for _round in range(0 if native else max_rounds):
                 _check_cancelled()
                 is_last_round = (_round == max_rounds - 1)
                 if _round:
@@ -759,8 +832,14 @@ class AgentLoop:
             def review_call(system, user):
                 _check_cancelled()
                 review_messages = [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
-                reviewed = client.stream_complete(review_messages, tools=None,
-                    on_delta=lambda _chunk: None, is_cancelled=is_cancelled)
+                if native:
+                    def reject_review_tool(_tc):
+                        raise AgentTurnError("报告复核阶段不能执行工具")
+                    reviewed = client.run_agent(review_messages, tools=[], execute_tool=reject_review_tool,
+                        on_delta=lambda _chunk: None, is_cancelled=is_cancelled, max_calls=1)
+                else:
+                    reviewed = client.stream_complete(review_messages, tools=None,
+                        on_delta=lambda _chunk: None, is_cancelled=is_cancelled)
                 return reviewed.content or ""
 
             if publish_after_verification and unverified_execution_claim(final_text, tool_calls_log):
@@ -798,8 +877,14 @@ class AgentLoop:
                                                         if name in {"get_market_pulse", "get_fund_flow"}]
                             })}, ensure_ascii=False))]
                     _check_cancelled()
-                    corrected = client.stream_complete(correction, tools=None,
-                        on_delta=lambda _chunk: None, is_cancelled=is_cancelled)
+                    if native:
+                        def reject_tool(_tc):
+                            raise AgentTurnError("报告校正阶段不能执行工具")
+                        corrected = client.run_agent(correction, tools=[], execute_tool=reject_tool,
+                            on_delta=lambda _chunk: None, is_cancelled=is_cancelled, max_calls=1)
+                    else:
+                        corrected = client.stream_complete(correction, tools=None,
+                            on_delta=lambda _chunk: None, is_cancelled=is_cancelled)
                     candidate = (corrected.content or "").strip()
                     remaining = report_issues(candidate, tool_calls_log, reference_date=self.report_date)
                     if self.verify_report_grounding and candidate:
@@ -823,6 +908,10 @@ class AgentLoop:
                 final_text += "\n\n数据可用性：\n" + "\n".join(f"- {w}" for w in quality.warnings)
             if quality.execution_warnings:
                 final_text += "\n\n未成交记录：\n" + "\n".join(f"- {w}" for w in quality.execution_warnings)
+            if incomplete_reason:
+                quality.degraded = True
+                quality.warnings.append(incomplete_reason)
+                final_text += "\n\n" + incomplete_reason
             final_text += "".join(build_report_evidence(final_text, tool_calls_log))
             if publish_after_verification:
                 self._emit("delta", {"text": final_text})
@@ -845,8 +934,20 @@ class AgentLoop:
                 warnings=quality.warnings,
                 degraded=quality.degraded,
             )
+            published_response = response
+            if native_conversation:
+                native_conversation.commit(session.messages)
             if not quality.degraded:
-                curate_turn_insight(config=self.config, user_message=message, response=response)
+                from trade_compass_agent.llm.providers import LLMExecutionCancelled, llm_request_deadline
+                try:
+                    with llm_request_deadline(time.monotonic() + self.config.llm.timeout,
+                                              is_cancelled=is_cancelled):
+                        _check_cancelled()
+                        curate_turn_insight(config=self.config, user_message=message, response=response)
+                        _check_cancelled()
+                except LLMExecutionCancelled:
+                    _check_cancelled()  # User stop is distinct from parent workflow expiry.
+                    raise
             self._nudge.on_user_turn()
             review_messages = messages + [ChatMessage(role="assistant", content=final_text)]
             try:
@@ -869,24 +970,30 @@ class AgentLoop:
             )
             return response
         except TurnInterruptedError as exc:
-            summary = _interrupt_summary(exc.partial or final_text)
             section_payload = [_section_to_dict(s) for s in sections]
-            self.session_store.append(
-                session,
-                SessionMessageRecord(
-                    role="assistant",
-                    content=summary,
-                    timestamp=datetime.now(),
-                    sections=section_payload or None,
-                ),
-            )
-            response = TurnResponse(
-                session_id=session.session_id,
-                summary=summary,
-                sections=sections,
-                turn_id=turn_id,
-                interrupted=True,
-            )
+            if published_response is not None:
+                # The main answer already exists in history and its native cursor.
+                # Stopping auxiliary learning must not append a second copy of it.
+                response = replace(published_response, interrupted=True)
+                self._update_session_summary(session, tool_calls_log, final_text)
+            else:
+                summary = _interrupt_summary(exc.partial or final_text)
+                self.session_store.append(
+                    session,
+                    SessionMessageRecord(
+                        role="assistant",
+                        content=summary,
+                        timestamp=datetime.now(),
+                        sections=section_payload or None,
+                    ),
+                )
+                response = TurnResponse(
+                    session_id=session.session_id,
+                    summary=summary,
+                    sections=sections,
+                    turn_id=turn_id,
+                    interrupted=True,
+                )
             self._emit(
                 "interrupted",
                 {

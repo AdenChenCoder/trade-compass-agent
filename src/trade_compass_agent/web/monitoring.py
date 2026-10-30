@@ -53,13 +53,19 @@ def _check_llm_key() -> str:
     from trade_compass_agent.config import load_app_config
 
     try:
-        provider = load_app_config().llm.provider
+        config = load_app_config()
+        provider = config.llm.provider
     except Exception:
         return "error"
     if provider in {"lmstudio", "ollama"}:
         return "ok"
     if provider == "disabled":
         return "disabled"
+    if provider == "codex":
+        from trade_compass_agent.llm.connection import check_connection
+
+        status = check_connection(config, timeout=1)["status"]
+        return "ok" if status == "authenticated" else status
     has_key = any(
         os.getenv(k)
         for k in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DASHSCOPE_API_KEY")

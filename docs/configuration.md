@@ -92,8 +92,109 @@ Saving connection settings retains the first previous configuration beside
 the active YAML as `*.llm-backup.yaml`. To recover, stop new tasks, restore that
 file to the active config path, and restart Trade Compass. History and memory
 are not migrated or removed by a connection change.
-Previously selected models and credential environment-variable names are retained per provider under `llm_connections`, so switching back can
+Previously selected models, credential environment-variable names and executable paths are retained per provider under `llm_connections`, so switching back can
 reuse them. Secret values continue to live in the existing credential stores.
+
+### Native Codex agent
+
+This adapter is development work and is not included in the stable 0.3.0
+package. Validate it with isolated development configuration, data and memory
+before a future release; do not replace the stable installation with this checkout.
+
+Select **Codex** in Settings → Agent connection, or run
+`trade-compass setup`. API providers and local models remain available.
+The agent runs on the computer hosting Trade Compass; inference can still use
+cloud services and the account's allowance. Connection checks inspect local
+authentication only; they do not prove model availability or remaining quota.
+
+Native subprocesses inherit explicitly configured proxy environment variables.
+On macOS, when none is explicitly set, they also use the system HTTP/HTTPS
+proxy settings. Existing proxy exclusions remain in effect.
+
+For Codex, install the official Codex CLI, run `codex login` on that computer,
+and configure:
+
+```yaml
+llm:
+  provider: codex
+  model: ""  # use the agent's configured default model
+  cli_path: ""  # resolve codex from the service's PATH, or set an absolute path
+  agent_timeout: 600
+  native_max_tool_calls: 30
+  timeout: 90  # text-only support tasks
+```
+
+`llm.native_max_tool_calls` is a positive integer limiting business-tool calls
+within each native agent run; its default is 30. It is independent of
+`agent.max_tool_rounds`, which controls the application-managed API/local-model
+loop. A tool-call count is not a model-round count: several tools can belong to
+one model round. Codex keeps its native conversation across successful turns.
+
+`llm.agent_timeout` is the total time budget, including a final conclusion.
+An earlier parent-task deadline takes precedence. The tool phase reserves the
+smaller of `llm.timeout` and 25% of the effective total budget for a text-only
+conclusion. This reserve does not extend the deadline. When the call limit or
+tool-phase time limit is reached, further business tools are disabled; the
+conclusion uses the existing receipts and passes the application's report checks.
+It must retain failures and unfinished work instead of treating a budget stop as
+completed research. Previously committed mutations are not replayed to finish
+the report. Long tasks, including their conclusion and checks, are not guaranteed
+to finish within the remaining budget. Switching connections preserves these
+budget settings.
+
+Codex uses the official app-server stdio protocol and its experimental dynamic
+tool interface. Codex CLI 0.165.0 is the validated runtime for this adapter;
+other versions need the same installed-package acceptance checks. Unsupported versions fail visibly without
+switching to another provider or replaying a task. A background service must
+have access to the same executable and credential store as the signed-in user.
+
+The native agent owns reasoning and tool iteration. Business tools, trade
+authorization, human rules, memory governance and visible history stay under
+Trade Compass control. The adapter also handles text-only support calls and
+specialists, so selecting a native agent does not require a second API key for
+those paths. An independently configured vision provider still uses its own
+credentials; native text calls do not claim image-input support.
+
+The independent trade-authorization check also uses `llm.timeout` for Codex,
+bounded by the parent task's remaining time. Other providers retain the
+30-second authorization limit. A timeout never authorizes an order.
+
+Background review counters belong to each application conversation and persist
+under the configured data root across process restarts. Memory review retains
+its 10-turn threshold; Skill review retains its 15-tool-iteration threshold.
+Existing conversation history is not replayed when the new checkpoint is first
+created. The existing external-memory permission still controls whether a
+review can run. Learning archives become searchable immediately; an archive is
+not an accepted knowledge entry. Stopping post-answer learning preserves the
+published answer and prevents further learning publication.
+
+Completed conversation turns retain a Codex thread identifier and resume that
+thread across application restarts. The application transcript remains the
+authoritative user history; the native cursor is derived operational state under
+the data root. Codex keeps its own thread history in its credential/runtime home.
+The latest published reply is supplied on continuation so application corrections
+and caveats take precedence over the original model draft.
+
+Changing the model, CLI configuration, tool definitions or application history
+starts a new native thread using the saved application context. An interrupted or
+failed turn also prevents reuse of its uncertain native state. Budget-limited
+reports remain visible in application history, but their interrupted native turn
+is not reused; the next request starts from that saved application history.
+A missing native
+thread can be rebuilt only before the new turn has been submitted; authentication
+or transport errors are surfaced instead of silently retried. Text-only support
+calls and independent specialist runs use ephemeral threads.
+
+Native commands and unrelated vendor connectors are disabled; business writes
+must go through the application's tools. Cancellation stops further tool calls
+and closes the runtime; already committed business operations stay committed.
+There is no automatic task replay on failure.
+
+Usage records count native agent runs and retain each run's token usage when
+available. Resumed turns subtract the previous completed turn's cumulative
+usage. Missing baselines and interrupted tool phases with a separate summary
+remain unmeasured rather than reporting a partial count as the total. These
+records do not estimate subscription charges from API prices.
 
 ### API and local model providers
 

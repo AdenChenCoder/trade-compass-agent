@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 
 from trade_compass_agent.memory.tree.search import MemorySearchIndex, search_memory_chunks
 from trade_compass_agent.memory.tree.storage import MemoryTreeStore, write_memory_chunk
@@ -21,7 +22,14 @@ def tool_search_memory(memory_dir, query: str, *, limit: int = 8) -> str:
 
 
 def tool_write_memory(memory_dir, scope: str, content: str) -> str:
-    chunk = write_memory_chunk(memory_dir, scope, content)
+    content_hash = hashlib.sha256(content.strip().encode("utf-8")).hexdigest()
+    try:
+        chunk = write_memory_chunk(memory_dir, scope, content)
+    except ValueError as exc:
+        if not str(exc).startswith("invalid memory scope:"):
+            raise
+        return json.dumps({"error": str(exc), "error_type": "invalid_scope", "tool": "write_memory",
+                           "scope": scope, "content_hash": content_hash}, ensure_ascii=False)
     index = MemorySearchIndex(memory_dir / "tree" / "chunks.db")
     index.index_file(chunk.scope, chunk.content, chunk.path)
     return json.dumps(
@@ -29,6 +37,7 @@ def tool_write_memory(memory_dir, scope: str, content: str) -> str:
             "scope": chunk.scope,
             "path": str(chunk.path),
             "created_at": chunk.created_at.isoformat(),
+            "content_hash": content_hash,
         },
         ensure_ascii=False,
     )

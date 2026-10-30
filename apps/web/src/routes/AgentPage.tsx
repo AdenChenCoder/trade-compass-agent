@@ -810,7 +810,7 @@ export function AgentPage() {
       const msg =
         err instanceof ApiError
           ? err.status === 503
-            ? `${err.message}（请配置 LLM API key）`
+            ? err.message
             : err.status === 502
               ? err.message || "Agent 执行失败，请稍后重试"
               : err.status >= 500

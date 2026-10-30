@@ -53,6 +53,14 @@ def collect_doctor_checks() -> list[DoctorCheck]:
     if provider == "disabled":
         status = "FAIL" if config.agent.require_llm else "WARN"
         checks.append(DoctorCheck("llm", status, "provider is disabled"))
+    elif provider in {"codex"}:
+        from trade_compass_agent.llm.connection import check_connection
+
+        connection = check_connection(config)
+        status = "PASS" if connection["status"] == "authenticated" else "WARN"
+        if connection["status"] in {"missing", "unauthenticated"} and config.agent.require_llm:
+            status = "FAIL"
+        checks.append(DoctorCheck("llm", status, connection["message"]))
     elif provider not in {"ollama", "lmstudio", "openai", "deepseek", "anthropic", "openrouter", "dashscope"}:
         checks.append(DoctorCheck("llm", "FAIL", f"Unsupported model connection: {provider}"))
     elif not api_key and provider not in {"ollama", "lmstudio"}:

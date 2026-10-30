@@ -187,6 +187,7 @@ class ChatCompletion:
     model: str = ""
     provider: str = ""
     reasoning_content: str = field(default="", repr=False)
+    incomplete_reason: str = ""
 
 
 class ChatClient(Protocol):
@@ -370,6 +371,15 @@ def create_llm_provider(
 
     if not enabled or provider == "disabled":
         return DisabledLLMProvider()
+
+    if provider in {"codex"}:
+        from dataclasses import replace
+        from trade_compass_agent.llm.native import NativeAgentClient, NativeTextProvider
+
+        config = config or load_app_config()
+        config = replace(config, llm=replace(config.llm, provider=provider, model=model),
+                         data_dir=data_dir or config.data_dir)
+        return NativeTextProvider(NativeAgentClient(config))
 
     if provider not in {"ollama", "lmstudio", *_PROVIDER_KEY_ENVS}:
         from trade_compass_agent.runtime.exceptions import AgentUnavailableError
@@ -885,7 +895,7 @@ def _is_transient_stream_error(exc: Exception) -> bool:
 
 _UNCONFIGURED_MSG = (
     "LLM is required but not configured. Set llm.provider to one of: "
-    "ollama, lmstudio, openai, deepseek, anthropic, openrouter, dashscope. "
+    "ollama, lmstudio, openai, deepseek, anthropic, openrouter, dashscope, codex. "
     "Ollama and LM Studio do not require API keys; remote providers require "
     "their matching API key env (see config/default.yaml)."
 )
@@ -898,6 +908,10 @@ def create_chat_client(config: AppConfig | None = None) -> ChatClient:
 
     app_config = config or load_app_config()
     llm = app_config.llm
+    if llm.provider in {"codex"}:
+        from trade_compass_agent.llm.native import NativeAgentClient
+
+        return NativeAgentClient(app_config)
     if llm.provider not in {"", "disabled", "ollama", "lmstudio", *_PROVIDER_KEY_ENVS}:
         raise AgentUnavailableError(f"Unsupported model connection: {llm.provider}")
     max_retries = 0 if _request_deadline.get() is not None else llm.max_retries
@@ -980,6 +994,8 @@ def create_vision_client(config: AppConfig | None = None) -> ChatClient | None:
     vision_model = llm.vision_model
     if vision_model:
         vision_provider = llm.vision_provider or llm.provider
+        if vision_provider == "codex":
+            return None
         key_env = llm.vision_api_key_env or _PROVIDER_KEY_ENVS.get(vision_provider, llm.api_key_env)
         local_provider = vision_provider in {"ollama", "lmstudio"}
         api_key = resolve_api_key(key_env) if key_env and not local_provider else ""
@@ -1002,7 +1018,7 @@ def create_vision_client(config: AppConfig | None = None) -> ChatClient | None:
         except RuntimeError:
             return None
 
-    if is_vision_capable(llm.model):
+    if llm.provider != "codex" and is_vision_capable(llm.model):
         try:
             return create_chat_client(config)
         except AgentUnavailableError:

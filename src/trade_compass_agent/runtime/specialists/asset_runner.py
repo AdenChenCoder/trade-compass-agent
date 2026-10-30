@@ -73,6 +73,8 @@ def structure_specialist_output(profile: SpecialistProfile, output: str) -> dict
                 "profile_version": profile.version,
             },
         }
+        if parsed is not None:
+            payload.update({key: parsed[key] for key in ("error", "incomplete_reason") if key in parsed})
     else:
         payload = parsed if parsed is not None else {"raw_output": output}
         metadata = payload.setdefault("metadata", {})

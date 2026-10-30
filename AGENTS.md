@@ -134,6 +134,9 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
   Background completion must compare the original versions plus its own accepted
   write receipts; concurrent edits remain eligible for review. Persist each source
   task before serializing execution so a busy worker cannot discard another input.
+  Review nudges belong to each conversation and survive new Web runtime instances
+  and restart. Learning archives must be indexed when published; stopping learning
+  after the main answer preserves that answer without appending it again.
 - Keep new review batches bounded while reusing valid older batch checkpoints.
   Direct memory model calls honor the configured agent budget and earlier parent
   deadline/cancellation; an HTTP read timeout alone is not a wall-clock budget.
@@ -180,9 +183,28 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
   changes, restart through its existing supervisor and verify the new process
   and affected task entry point. Do not mix freshly imported handlers with
   cached modules or replay missed autonomous trades to validate a restart.
+- Native Agent adapters preserve application-owned history and business-tool
+  authorization. Native resume handles are derived state: bind them to the
+  published transcript and runtime/tool profile, serialize same-session writers,
+  and never replay a submitted turn to recover a missing or uncertain handle.
+  Verify real thread reuse across process restart separately from text recall.
+  Keep application context compaction enabled, and bound
+  subprocess request writes as well as response reads by cancellation/deadlines.
+- SSE transport failures belong to reconnect handling, not agent failure
+  messages. Close streams on completed, interrupted, or failed terminal events;
+  verify cancellation before the first response delta in the actual UI.
 - Scheduled model steps need a budget for multiple tool rounds with the configured
   model. Verify inference profiles, output reserves, and transient reasoning for
   every supported model after a switch. Scope tools to the task; preserve evidence checks.
+- Native tool-call limits and API model-round limits are distinct settings.
+  Budget exhaustion must retain receipts, disclose partial completion, and prevent
+  automatic learning from an incomplete run. Summary calls share the original
+  deadline and cannot replay mutations; cancellation and deadlines propagate into
+  nested tools. An interrupted tool's outcome is unknown until verified, not proof
+  that no mutation occurred.
+  Nested research workers inherit the parent execution context and retain partial
+  completion through final reports. Image analysis requires an actual image
+  transport; text-only native responses cannot stand in for visual evidence.
 - Premarket plans may use the exact previous trading session's dated close as a
   planning reference. Keep it separate from last-trade fallbacks and live valuation;
   reference coverage cannot make a price fresh or relax execution quote checks.

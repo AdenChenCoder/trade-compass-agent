@@ -14,6 +14,8 @@ import hashlib
 import os
 import time
 from datetime import datetime
+from contextlib import contextmanager, nullcontext
+from pathlib import Path
 
 from trade_compass_agent.concurrency import atomic_write, file_transaction
 import threading
@@ -110,22 +112,50 @@ class ReviewNudgeTracker:
         self._iters_since_skill = 0
         self._memory_written_this_turn = False
         self._lock = threading.Lock()
+        self._state_path: Path | None = None
+
+    def bind_session(self, data_dir: Path, session_id: str) -> None:
+        # Counters are operational state, separate from the published transcript.
+        # Existing history is not replayed when this checkpoint is first created.
+        digest = hashlib.sha256(session_id.encode()).hexdigest()
+        with self._lock:
+            self._state_path = data_dir / "review_nudges" / f"{digest}.json"
+            self._turns_since_memory = 0
+            self._iters_since_skill = 0
+            self._memory_written_this_turn = False
+
+    @contextmanager
+    def _state(self, *, write=True):
+        with self._lock:
+            path = self._state_path
+            guard = file_transaction(path.with_suffix(".lock")) if path else nullcontext()
+            with guard:
+                if path and path.exists():
+                    saved = json.loads(path.read_text())
+                    self._turns_since_memory = saved["turns_since_memory"]
+                    self._iters_since_skill = saved["iters_since_skill"]
+                yield
+                if path and write:
+                    atomic_write(path, json.dumps({
+                        "turns_since_memory": self._turns_since_memory,
+                        "iters_since_skill": self._iters_since_skill,
+                    }))
 
     def on_user_turn(self) -> None:
-        with self._lock:
+        with self._state():
             self._turns_since_memory += 1
 
     def on_tool_iteration(self) -> None:
-        with self._lock:
+        with self._state():
             self._iters_since_skill += 1
 
     def on_memory_write(self) -> None:
-        with self._lock:
+        with self._state():
             self._turns_since_memory = 0
             self._memory_written_this_turn = True
 
     def on_skill_write(self) -> None:
-        with self._lock:
+        with self._state():
             self._iters_since_skill = 0
 
     def should_review(self) -> tuple[bool, bool]:
@@ -134,7 +164,7 @@ class ReviewNudgeTracker:
         Implements dual-write exclusion: if main agent wrote memory this turn,
         skip memory review even if the nudge threshold was met.
         """
-        with self._lock:
+        with self._state(write=False):
             mem = self._turns_since_memory >= self._memory_interval
             if self._memory_written_this_turn:
                 mem = False
@@ -147,7 +177,7 @@ class ReviewNudgeTracker:
             self._memory_written_this_turn = False
 
     def reset_after_review(self, reviewed_memory: bool, reviewed_skills: bool) -> None:
-        with self._lock:
+        with self._state():
             if reviewed_memory:
                 self._turns_since_memory = 0
             if reviewed_skills:

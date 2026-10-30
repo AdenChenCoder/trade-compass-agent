@@ -5,13 +5,14 @@ import re
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from dataclasses import replace
 from typing import Any
 
 from trade_compass_agent.config import AppConfig
 from trade_compass_agent.domain.signals import SignalRating, TradingSignal, parse_signal_rating
-from trade_compass_agent.llm.providers import ChatClient, ChatMessage, create_chat_client
-from trade_compass_agent.runtime.exceptions import AgentUnavailableError
+from trade_compass_agent.llm.providers import ChatClient, ChatMessage, LLMExecutionCancelled, check_execution_active, create_chat_client
+from trade_compass_agent.runtime.exceptions import AgentUnavailableError, TurnInterruptedError
 from trade_compass_agent.runtime.specialists.multi_agent.assets import (
     MultiAgentPlanAsset,
     PlanAgentAsset,
@@ -73,15 +74,17 @@ class DebateTeamStrategy:
             )
 
         reports: list[str] = []
+        warnings: list[str] = []
         for symbol in symbols:
             state.record("multi_agent.symbol_started", {"symbol": symbol})
-            report = _run_symbol_debate(
+            report, incomplete_reasons = _run_symbol_debate(
                 state,
                 plan_asset=plan_asset,
                 symbol=symbol,
                 client=client,
                 app_config=app_config,
             )
+            warnings.extend(incomplete_reasons)
             if len(symbols) > 1:
                 report = f"# {symbol}\n\n{report}"
             reports.append(report)
@@ -90,8 +93,15 @@ class DebateTeamStrategy:
                 {"symbol": symbol, "bytes": len(report.encode("utf-8"))},
             )
 
+        output = "\n\n---\n\n".join(reports)
+        warnings = list(dict.fromkeys(warnings))
+        if warnings:
+            reason = "；".join(warnings)
+            output = json.dumps({"error": reason, "incomplete_reason": reason,
+                                 "report_markdown": output, "warnings": warnings}, ensure_ascii=False)
         return MultiAgentRunResult(
-            output="\n\n---\n\n".join(reports),
+            output=output,
+            warnings=tuple(warnings),
             metadata={
                 "symbols": symbols,
                 "strategy": self.name,
@@ -109,7 +119,7 @@ def _run_symbol_debate(
     symbol: str,
     client: ChatClient,
     app_config: AppConfig,
-) -> str:
+) -> tuple[str, list[str]]:
     context = str(state.metadata.get("context") or "")
     if not context:
         context = build_situation_summary(state.stack)
@@ -165,6 +175,7 @@ def _run_symbol_debate(
 
     signal = _parse_verdict(symbol, pm_verdict)
     risk_note = ""
+    risk_challenge = pm_defense = ""
     if signal and _risk_stage_enabled(plan_asset) and signal.rating in (
         SignalRating.BUY,
         SignalRating.STRONG_BUY,
@@ -180,9 +191,9 @@ def _run_symbol_debate(
             pm_verdict=pm_verdict,
         )
         if risk_challenge:
-            risk_note += f"\n\n## 风控质询\n\n{risk_challenge}"
+            risk_note += f"\n\n## 风控质询\n\n{_display_agent_output(risk_challenge)}"
         if pm_defense:
-            risk_note += f"\n\n## PM 回应\n\n{pm_defense}"
+            risk_note += f"\n\n## PM 回应\n\n{_display_agent_output(pm_defense)}"
             defense_signal = _parse_verdict(symbol, pm_defense)
             if defense_signal:
                 signal = defense_signal
@@ -199,7 +210,13 @@ def _run_symbol_debate(
         )
         if warned.reasoning != signal.reasoning:
             report += f"\n\n> **风险提示**: {warned.reasoning[len(signal.reasoning):]}"
-    return report
+    incomplete_reasons = []
+    for output in [*research_reports.values(), *(v for round in rounds for v in round.values()),
+                   pm_verdict, risk_challenge, pm_defense]:
+        payload = _incomplete_agent_output(output)
+        if payload:
+            incomplete_reasons.append(str(payload["incomplete_reason"]))
+    return report, incomplete_reasons
 
 
 def _run_research_stage(
@@ -222,11 +239,13 @@ def _run_research_stage(
     event_lock = threading.Lock()
 
     def _emit(evt: TurnEvent) -> None:
+        check_execution_active()
         if state.on_event:
             with event_lock:
                 state.on_event(evt)
 
     def _run(agent: PlanAgentAsset) -> tuple[str, str]:
+        check_execution_active()
         _emit(
             TurnEvent(
                 event="multi_agent.agent_started",
@@ -247,6 +266,7 @@ def _run_research_stage(
             max_rounds=_int_default(plan_asset, "analyst_max_tool_rounds", 4),
             on_event=_emit,
         )
+        check_execution_active()
         _emit(
             TurnEvent(
                 event="multi_agent.agent_finished",
@@ -262,14 +282,21 @@ def _run_research_stage(
         return agent.role or agent.id, output
 
     with ThreadPoolExecutor(max_workers=max(1, min(len(agents), 4))) as pool:
-        futures = [pool.submit(_run, agent) for agent in agents]
+        futures = [pool.submit(copy_context().run, _run, agent) for agent in agents]
         for future in as_completed(futures):
             try:
                 label, output = future.result()
+                check_execution_active()
+            except (TurnInterruptedError, LLMExecutionCancelled):
+                for pending in futures:
+                    pending.cancel()
+                raise
             except Exception as exc:
+                check_execution_active()
                 label = "agent_error"
                 output = json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
             results[label] = output
+    check_execution_active()
     return results
 
 
@@ -410,6 +437,7 @@ def _run_agent(
     max_rounds: int,
     on_event: Callable[[TurnEvent], None] | None,
 ) -> str:
+    check_execution_active()
     messages = [
         ChatMessage(role="system", content=_render(agent.prompt, variables)),
         ChatMessage(role="user", content=user_content),
@@ -420,7 +448,7 @@ def _run_agent(
         if on_event:
             on_event(TurnEvent(event=event, data={**data, "agent": agent.id}))
 
-    return run_react_loop(
+    result = run_react_loop(
         client=client,
         messages=messages,
         tool_schemas=tool_schemas,
@@ -428,6 +456,8 @@ def _run_agent(
         max_rounds=max_rounds,
         on_tool_event=_emit,
     )
+    check_execution_active()
+    return result
 
 
 def _execute_tool(
@@ -468,6 +498,21 @@ def _stage_agents(
     ]
 
 
+def _incomplete_agent_output(output: str) -> dict | None:
+    try:
+        payload = json.loads(output)
+    except (TypeError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) and payload.get("incomplete_reason") else None
+
+
+def _display_agent_output(output: str) -> str:
+    payload = _incomplete_agent_output(output)
+    if payload is None:
+        return output
+    return f"{payload.get('report_markdown', '')}\n\n{payload['incomplete_reason']}".strip()
+
+
 def _format_report(
     research_reports: dict[str, str],
     rounds: list[dict[str, str]],
@@ -479,9 +524,9 @@ def _format_report(
     if rounds:
         last_round = rounds[-1]
         for agent_id, output in last_round.items():
-            sections.append(f"## {agent_id}\n\n{output}")
+            sections.append(f"## {agent_id}\n\n{_display_agent_output(output)}")
     if pm_verdict:
-        sections.append(f"## PM 决策\n\n{pm_verdict}")
+        sections.append(f"## PM 决策\n\n{_display_agent_output(pm_verdict)}")
     return "\n\n".join(sections)
 
 
@@ -494,7 +539,7 @@ def _format_research(
         return ""
     prefix = "#" * heading_level
     return "\n\n".join(
-        f"{prefix} {label}\n{report}" for label, report in research_reports.items()
+        f"{prefix} {label}\n{_display_agent_output(report)}" for label, report in research_reports.items()
     )
 
 

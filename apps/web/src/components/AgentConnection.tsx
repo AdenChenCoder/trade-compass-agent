@@ -16,6 +16,7 @@ export function AgentConnection() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const current = draft ?? query.data;
+  const native = current?.provider === "codex";
   const dirty = draft !== null && (draft.provider !== query.data?.provider || draft.model !== query.data?.model);
 
   async function act(work: () => Promise<void>) {
@@ -51,13 +52,17 @@ export function AgentConnection() {
           <div className="space-y-2">
             <label htmlFor="agent-model" className="text-sm font-medium">模型</label>
             <Input id="agent-model" value={current.model} maxLength={200} disabled={busy || current.provider === "disabled"}
-              placeholder="输入模型名称"
+              placeholder={native ? "使用 Agent 默认模型" : "输入模型名称"}
               onChange={event => {
                 setDraft({ provider: current.provider, model: event.target.value });
                 setMessage(""); setError("");
               }} />
           </div>
         </div>
+        {native ? <p className="text-sm text-muted-foreground">
+          Agent 在运行交易罗盘的电脑上执行，推理可能使用云端服务及账户额度。
+          首次使用请在该电脑运行 codex login。
+        </p> : null}
         <div className="flex flex-wrap gap-2">
           <Button disabled={busy || !dirty} onClick={() => act(async () => {
             const result = await saveAgentConnection(current.provider, current.model);

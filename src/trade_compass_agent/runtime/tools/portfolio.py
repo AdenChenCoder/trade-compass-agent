@@ -594,10 +594,15 @@ def tool_batch_paper_trades(stack: MarketStack, **kwargs: Any) -> str:
             results.append({"symbol": symbol, "status": "rejected", "error": msg})
             continue
 
+        def validate_import(_portfolio):
+            from trade_compass_agent.llm.providers import check_execution_active
+            check_execution_active()
+            require_single_account(stack.config.data_dir, acct)
+
         try:
             portfolio.record(
                 trade,
-                before_record=lambda _portfolio: require_single_account(stack.config.data_dir, acct),
+                before_record=validate_import,
             )
         except ValueError as exc:
             results.append({"symbol": symbol, "status": "rejected", "error": str(exc)})

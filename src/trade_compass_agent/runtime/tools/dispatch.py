@@ -4,8 +4,11 @@ import json
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 
 from trade_compass_agent.config import AppConfig
+from trade_compass_agent.llm.providers import LLMExecutionCancelled, check_execution_active
+from trade_compass_agent.runtime.exceptions import TurnInterruptedError
 from trade_compass_agent.runtime.types import TurnEvent
 from trade_compass_agent.runtime.market_stack import MarketStack
 from trade_compass_agent.runtime.specialists.assets import load_specialist_profiles
@@ -24,12 +27,14 @@ def tool_dispatch_specialists(
         return json.dumps({"error": "tasks must be a list"}, ensure_ascii=False)
 
     app_config = config or stack.config
+    check_execution_active()
 
     if len(tasks) <= 1:
         raw = _run_sequential(stack, tasks, app_config=app_config, on_event=on_event)
     else:
         raw = _run_parallel(stack, tasks, app_config=app_config, on_event=on_event)
 
+    check_execution_active()
     return _attach_situation_summary(raw, stack, on_event)
 
 
@@ -42,6 +47,7 @@ def _run_sequential(
 ) -> str:
     results: list[dict] = []
     for item in tasks:
+        check_execution_active()
         if not isinstance(item, dict):
             results.append({"error": "invalid task item", "task": str(item)})
             continue
@@ -61,10 +67,14 @@ def _run_sequential(
             output = run_specialist(
                 stack, name, task, config=app_config, on_event=on_event,
             )
+        except TurnInterruptedError:
+            raise
         except Exception as exc:
+            check_execution_active()
             output = json.dumps(
                 {"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False
             )
+        check_execution_active()
         status = _detect_status(output)
         if on_event:
             on_event(
@@ -110,6 +120,7 @@ def _run_parallel(
             )
 
     def _invoke(idx: int, item: dict) -> tuple[int, dict]:
+        check_execution_active()
         if not isinstance(item, dict):
             return idx, {"error": "invalid task item", "task": str(item)}
         name = str(item.get("specialist") or item.get("name") or "")
@@ -120,10 +131,14 @@ def _run_parallel(
             output = run_specialist(
                 stack, name, task_text, config=app_config, on_event=_safe_emit,
             )
+        except TurnInterruptedError:
+            raise
         except Exception as exc:
+            check_execution_active()
             output = json.dumps(
                 {"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False
             )
+        check_execution_active()
         status = _detect_status(output)
         _safe_emit(
             TurnEvent(
@@ -138,11 +153,21 @@ def _run_parallel(
         return idx, {"specialist": name, "task": task_text, "output": output}
 
     with ThreadPoolExecutor(max_workers=min(len(tasks), 4)) as pool:
-        futures = [pool.submit(_invoke, i, item) for i, item in enumerate(tasks)]
+        futures = [pool.submit(copy_context().run, _invoke, i, item) for i, item in enumerate(tasks)]
         for future in as_completed(futures):
             try:
                 idx, result = future.result()
+            except (TurnInterruptedError, LLMExecutionCancelled):
+                for pending in futures:
+                    pending.cancel()
+                raise
             except Exception as exc:
+                try:
+                    check_execution_active()
+                except (TimeoutError, LLMExecutionCancelled):
+                    for pending in futures:
+                        pending.cancel()
+                    raise
                 idx = 0
                 result = {"error": f"future failed: {type(exc).__name__}: {exc}"}
             results[idx] = result
@@ -188,15 +213,20 @@ def _attach_situation_summary(
         if len(results) < 2:
             return raw_results
 
+        check_execution_active()
         if on_event:
             on_event(TurnEvent(event="summariser_started", data={"label": "situation_summariser"}))
 
         summary = build_situation_summary(stack)
+        check_execution_active()
         parsed["situation_summary"] = summary
 
         if on_event:
             on_event(TurnEvent(event="summariser_done", data={"label": "situation_summariser"}))
 
         return json.dumps(parsed, ensure_ascii=False)
+    except TurnInterruptedError:
+        raise
     except Exception:
+        check_execution_active()
         return raw_results

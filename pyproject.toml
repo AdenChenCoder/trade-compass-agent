@@ -124,6 +124,7 @@ exclude = [
   "/apps/web/*.tsbuildinfo",
   "/data",
   "/memory_vault",
+  "/output",
   "/temp",
   "/docs/*-20??-??-??.*",
   "/apps/mobile/dist",

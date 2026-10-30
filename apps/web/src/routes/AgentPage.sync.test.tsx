@@ -91,7 +91,8 @@ it.each([503, 502, 409])("preserves a %s failure as a draft through sync and rem
   expect(element.querySelector('textarea')!.value).toBe('失败后需要保留的消息');
   expect(element.textContent).toContain('本次请求未执行');
   expect(posts).toBe(1);
-  expect(rendered()).toEqual([...contents(50), code === 503 ? '本次请求未执行（请配置 LLM API key）' : '本次请求未执行']);
+  expect(rendered()).toEqual([...contents(50), '本次请求未执行']);
+  expect(element.textContent).not.toContain('请配置 LLM API key');
   retry = true; await submit(); await sync();
   expect(rendered()).toEqual([...contents(50), ...extraMessages.map(m => m.content)]);
   expect(element.textContent).not.toContain('本次请求未执行');

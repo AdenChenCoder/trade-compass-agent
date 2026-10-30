@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 
 from trade_compass_agent.config import AppConfig
-from trade_compass_agent.llm.providers import ChatClient, ChatMessage, create_chat_client, create_vision_client
+from trade_compass_agent.llm.providers import ChatClient, ChatMessage, create_vision_client
 from trade_compass_agent.runtime.exceptions import AgentUnavailableError
 from trade_compass_agent.runtime.market_stack import MarketStack
 
@@ -489,9 +489,11 @@ def analyze_chart_pattern(
     """
     app_config = config or stack.config
     try:
-        chat_client = client or create_vision_client(app_config) or create_chat_client(app_config)
+        chat_client = client or create_vision_client(app_config)
     except AgentUnavailableError as exc:
         return f"**视觉分析不可用:** {exc}"
+    if chat_client is None or not callable(getattr(chat_client, "complete_raw", None)):
+        return "**视觉分析不可用:** 请配置可接收图片的独立视觉模型。"
 
     provider = stack.provider
 
@@ -533,10 +535,8 @@ def analyze_chart_pattern(
             content_parts.append({"type": "text", "text": "\n\n--- 以下是同一股票的**周线**图，用于多周期验证 ---"})
             content_parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{weekly_chart}"}})
 
-    messages = [ChatMessage(role="user", content=content_parts)]
-
     try:
-        response = chat_client.complete(messages)
+        response = chat_client.complete_raw([{"role": "user", "content": content_parts}])
         report = response.content or "（分析无输出）"
     except Exception as exc:
         logger.warning("Vision LLM call failed: %s, falling back to text analysis", exc)
@@ -630,7 +630,7 @@ def _fallback_text_analysis(
         footer = "\n\n<details><summary>📊 量化指标原始数据</summary>\n\n```json\n"
         footer += json.dumps(indicators, ensure_ascii=False, indent=2)
         footer += "\n```\n</details>"
-        return report + footer
+        return "图像分析未完成，以下仅依据日线数据和量化指标：\n\n" + report + footer
     except Exception as exc:
         return f"**分析失败:** {exc}"
 

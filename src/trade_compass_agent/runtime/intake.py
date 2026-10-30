@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from trade_compass_agent.config import AppConfig
-from trade_compass_agent.llm.providers import ChatMessage, create_vision_client, is_vision_capable
+from trade_compass_agent.llm.providers import create_vision_client, is_vision_capable
 
 AttachmentType = Literal["text", "url", "image", "pdf"]
 
@@ -251,12 +251,6 @@ def _vision_describe(client, data_url: str, mime: str | None) -> str:
     if not data_url.startswith("data:") and not data_url.startswith("http"):
         image_url = f"data:{mime or 'image/png'};base64,{data_url}"
 
-    messages = [
-        ChatMessage(
-            role="user",
-            content="Describe this trading-related image briefly in Chinese (chart, table, or screenshot).",
-        )
-    ]
     if hasattr(client, "complete_raw"):
         completion = client.complete_raw(
             [
@@ -272,8 +266,8 @@ def _vision_describe(client, data_url: str, mime: str | None) -> str:
         )
         return (completion.content or "").strip() or "(empty vision response)"
 
-    completion = client.complete(messages)
-    return (completion.content or "").strip() or "(empty vision response)"
+    from trade_compass_agent.runtime.exceptions import AgentUnavailableError
+    raise AgentUnavailableError("当前接入不能读取图片，请配置独立视觉模型。")
 
 
 def attachment_from_file_bytes(data: bytes, mime: str) -> Attachment:

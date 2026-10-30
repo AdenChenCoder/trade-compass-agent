@@ -15,6 +15,8 @@ export interface TurnResponse {
   summary: string;
   sections: TurnSection[];
   interrupted?: boolean;
+  warnings?: string[];
+  degraded?: boolean;
 }
 
 export interface AgentSkill {

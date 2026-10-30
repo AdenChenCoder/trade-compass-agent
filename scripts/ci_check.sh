@@ -14,6 +14,23 @@ fi
   scripts/check_assets.py \
   scripts/check_dist.py \
   scripts/mobile_probe.py \
+  src/trade_compass_agent/llm/native.py \
+  src/trade_compass_agent/llm/codex_transport.py \
+  src/trade_compass_agent/llm/native_environment.py \
+  src/trade_compass_agent/llm/native_session.py \
+  src/trade_compass_agent/llm/connection.py \
+  tests/test_native_agents.py \
+  tests/test_native_budgets.py \
+  tests/test_native_usage.py \
+  tests/test_native_budget_config.py \
+  tests/test_native_specialist_recovery.py \
+  tests/test_specialist_dispatch_termination.py \
+  tests/test_learning_archive.py \
+  tests/test_review_nudge_persistence.py \
+  tests/test_native_vision_boundary.py \
+  tests/test_debate_research_termination.py \
+  tests/test_debate_incomplete_consumers.py \
+  tests/test_memory_write_recovery.py \
   tests/test_mobile_access.py \
   tests/test_mobile_pwa.py \
   tests/test_mobile_peer.py \

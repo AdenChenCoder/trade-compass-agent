@@ -115,6 +115,13 @@ def review_report_evidence(text, task, tool_results, llm_call) -> list[str]:
 def _quality_queries(name, data):
     """A corrected single/batch query resolves only the same symbol and period."""
     timeframe = data.get("timeframe", "1d" if name in {"get_bars", "batch_get_bars"} or name.startswith("compute_") else "")
+    if name == "write_memory":
+        if data.get("error_type") == "invalid_scope":
+            timeframe = f"invalid_scope:{data.get('content_hash', '')}"
+        elif (data.get("error") or data.get("unavailable")) and not data.get("fact_check_failed"):
+            timeframe = f"error:{data.get('content_hash', '')}"
+        # Fact-check repairs retain the existing same-bucket correction contract;
+        # runtime/invalid-bucket failures need the stronger receipt correlation.
     if name == "sina_realtime_quote" or name == "batch_get_bars":
         results = ({row["symbol"]: row for row in data.get("quotes", []) if isinstance(row, dict) and row.get("symbol")}
                    if name == "sina_realtime_quote" else data.get("results", {}))
@@ -145,6 +152,15 @@ def assess_data_quality(tool_results, *, planning_reference_date: str | None = N
         if name == "place_paper_trade" and data.get("trade_rejected") is True and data.get("error"):
             result.execution_warnings.append(str(data["error"]))
             continue
+        if (name == "write_memory" and data.get("path") and data.get("content_hash")
+                and not any(data.get(key) for key in ("error", "fact_check_failed", "execution_unconfirmed"))):
+            # An invalid bucket has no persisted target. Correcting it resolves
+            # only that exact note, never a different write or unknown outcome.
+            for key, previous in list(latest.items()):
+                if (key[0] == name and previous.get("error_type") == "invalid_scope"
+                        and previous.get("content_hash") == data["content_hash"]
+                        and not previous.get("fact_check_failed") and not previous.get("execution_unconfirmed")):
+                    latest.pop(key)
         latest.update(_quality_queries(name, data))
     for (name, scope, _), data in latest.items():
         label = _LABELS.get(name, name)
@@ -153,6 +169,9 @@ def assess_data_quality(tool_results, *, planning_reference_date: str | None = N
             result.degraded = True
             continue
         if data.get("error") or data.get("unavailable") is True:
+            if name == "write_memory":
+                result.warnings.append(f"归档记忆未保存{'（' + scope + '）' if scope else ''}：{data.get('error') or '未确认写入结果'}")
+                continue
             reason = "查询参数有误，未取得对应数据" if data.get("error_type") == "invalid_arguments" else "暂不可用"
             result.warnings.append(f"{label}{'（' + scope + '）' if scope else ''}{reason}")
             result.degraded |= name in _CORE_DATA

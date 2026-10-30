@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from trade_compass_agent.command_catalog import command_catalog
 from trade_compass_agent.config import AppConfig, load_app_config
+from trade_compass_agent.llm.providers import LLMExecutionCancelled
 from trade_compass_agent.ops.audit import JsonAuditLog
 from trade_compass_agent.ops.session_cleanup import SCHEDULER_SESSION_PREFIX
 from trade_compass_agent.runtime.exceptions import AgentTurnError, AgentUnavailableError
@@ -33,7 +34,7 @@ router = APIRouter(prefix="/agent")
 
 
 class ConnectionUpdate(BaseModel):
-    provider: Literal["lmstudio", "ollama", "deepseek", "openai",
+    provider: Literal["codex", "lmstudio", "ollama", "deepseek", "openai",
                       "anthropic", "openrouter", "dashscope", "disabled"]
     model: str = Field(default="", max_length=200)
 
@@ -136,6 +137,8 @@ class TurnResponsePayload(BaseModel):
     summary: str
     sections: list[TurnSectionPayload] = Field(default_factory=list)
     interrupted: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    degraded: bool = False
 
 
 class ControlRequest(BaseModel):
@@ -337,6 +340,10 @@ def execute_agent_turn(body: TurnRequest, *, reserved_turn_id=None, reserved_can
             TurnEvent(event="error", data={"message": str(exc), "ok": False}),
         )
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except LLMExecutionCancelled as exc:
+        message = "任务已超时或停止，已有记录已保留。"
+        capture(TurnEvent(event="error", data={"message": message, "ok": False}))
+        raise HTTPException(status_code=504, detail=message) from exc
     except Exception as exc:
         _publish_stream(
             session_id,
@@ -365,6 +372,8 @@ def execute_agent_turn(body: TurnRequest, *, reserved_turn_id=None, reserved_can
         turn_id=turn_id,
         summary=result.summary,
         interrupted=result.interrupted,
+        warnings=list(getattr(result, "warnings", []) or []),
+        degraded=bool(getattr(result, "degraded", False)),
         sections=[
             TurnSectionPayload(
                 title=s.title,

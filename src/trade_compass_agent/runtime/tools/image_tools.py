@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from trade_compass_agent.config import AppConfig
-from trade_compass_agent.llm.providers import ChatMessage, create_vision_client
+from trade_compass_agent.llm.providers import create_vision_client
 from trade_compass_agent.llm.usage import LLMCallAudit, ProviderTokenUsage
 
 logger = logging.getLogger(__name__)
@@ -121,8 +121,7 @@ def tool_image_analyze(config: AppConfig, **kwargs: Any) -> str:
             )
             description = (completion.content or "").strip()
         else:
-            completion = client.complete([ChatMessage(role="user", content=prompt)])
-            description = (completion.content or "").strip()
+            return json.dumps({"error": "当前接入不能读取图片，请配置独立视觉模型。"}, ensure_ascii=False)
 
         if not description:
             return json.dumps({"error": "vision model 返回空响应"}, ensure_ascii=False)
