@@ -148,7 +148,9 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
   out of public session records and factual summary inputs.
 - Trading rejections are execution outcomes, distinct from data availability.
   Preserve the actual rejection reason without reporting a functioning tool as
-  unavailable or treating queried historical trades as new executions.
+  unavailable or treating queried historical trades as new executions. Completed
+  fill tables, fees, and rejection recaps are not new directional advice; retain
+  market-evidence warnings for recommendations alongside those receipts.
 - Reports and learned profit claims use authoritative FIFO net settlements,
   including allocated entry and exit fees, and verified post-trade balances.
   Quantity/price annotations are not company-name claims; retain checks for
