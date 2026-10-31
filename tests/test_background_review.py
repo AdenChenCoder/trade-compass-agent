@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from trade_compass_agent.config import AgentConfig, AppConfig
+from trade_compass_agent.config import AgentConfig, AppConfig, LLMConfig
 from trade_compass_agent.ops.run_store import SqliteRunStore
 from trade_compass_agent.runtime.background_review import (
     is_committed_mutation, spawn_background_review, _run_review_agent_loop, _review_context,
@@ -75,46 +75,74 @@ def test_privacy_opt_out_skips_llm_memory_compaction(tmp_path, monkeypatch):
     assert compact_memory_summary(config) is None
 
 
-def test_maintenance_fingerprint_deduplicates_sources_and_serializes_review(tmp_path, monkeypatch):
-    from trade_compass_agent.runtime.background_review import resume_background_reviews
+@pytest.mark.parametrize("hold_second", [False, True])
+def test_maintenance_fingerprint_deduplicates_sources_and_serializes_review(tmp_path, monkeypatch, hold_second):
+    import trade_compass_agent.runtime.background_review as background
 
     started = threading.Event()
     release = threading.Event()
+    second_started = threading.Event()
+    release_second = threading.Event()
+    drained = threading.Event()
     calls = []
+    finished = set()
+    finished_lock = threading.Lock()
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "vault",
+                       allow_external_llm_memory=True, llm=LLMConfig(provider="disabled"))
+    execute_request = background._execute_request
+
+    def observed_execute(*args, **kwargs):
+        try:
+            return execute_request(*args, **kwargs)
+        finally:
+            with finished_lock:
+                finished.add(args[2]["id"])
+                if len(finished) == 3:
+                    drained.set()
 
     def review(_config, _prompt, **kwargs):
         calls.append(kwargs["request_id"])
         if len(calls) == 1:
             started.set()
             assert release.wait(5)
+        elif len(calls) == 2:
+            second_started.set()
+            if hold_second:
+                assert release_second.wait(5)
         return {"summary": "Nothing to save.", "commits": [], "errors": []}
 
-    monkeypatch.setattr("trade_compass_agent.runtime.background_review._run_review_agent_loop", review)
-    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "vault",
-                       allow_external_llm_memory=True)
+    monkeypatch.setattr(background, "_run_review_agent_loop", review)
+    monkeypatch.setattr(background, "_execute_request", observed_execute)
     args = ([{"role": "user", "content": "same memory"}], True, False, None, None, None)
-    first = spawn_background_review(*args, config=config, source_session_id="one",
-                                    source_turn_id="a", maintenance_fingerprint="fingerprint")
-    assert started.wait(5)
-    assert spawn_background_review(*args, config=config, source_session_id="two",
-                                   source_turn_id="b", maintenance_fingerprint="fingerprint") is None
-    assert spawn_background_review([{"role": "user", "content": "other"}], False, True, None, None, None,
-                                   config=config, source_session_id="two", source_turn_id="b") is None
-    assert spawn_background_review([{"role": "user", "content": "yet another"}], False, True, None, None, None,
-                                   config=config, source_session_id="three", source_turn_id="c") is None
-    requests = list((config.memory_dir / "background_reviews").glob("*.json"))
-    assert len(requests) == 3
-    assert len(calls) == 1
-    release.set()
-    first.join(timeout=5)
-    assert not first.is_alive()
-    resume_background_reviews(config)
-    for _ in range(50):
-        if len(calls) == 3 and all(json.loads(path.read_text())["status"] == "completed" for path in requests):
-            break
-        threading.Event().wait(.01)
-    assert len(calls) == 3
-    assert all(json.loads(path.read_text())["status"] == "completed" for path in requests)
+    try:
+        first = spawn_background_review(*args, config=config, source_session_id="one",
+                                        source_turn_id="a", maintenance_fingerprint="fingerprint")
+        assert started.wait(5)
+        assert spawn_background_review(*args, config=config, source_session_id="two",
+                                       source_turn_id="b", maintenance_fingerprint="fingerprint") is None
+        assert spawn_background_review([{"role": "user", "content": "other"}], False, True, None, None, None,
+                                       config=config, source_session_id="two", source_turn_id="b") is None
+        assert spawn_background_review([{"role": "user", "content": "yet another"}], False, True, None, None, None,
+                                       config=config, source_session_id="three", source_turn_id="c") is None
+        requests = list((config.memory_dir / "background_reviews").glob("*.json"))
+        assert len(requests) == 3
+        assert len(calls) == 1
+        release.set()
+        first.join(timeout=5)
+        assert not first.is_alive()
+        assert second_started.wait(5)
+        background.resume_background_reviews(config)
+        if hold_second:
+            assert len(calls) == 2  # A busy worker must not start the third source in parallel.
+        release_second.set()
+        assert drained.wait(5)  # Observe worker completion, not a half-second scheduling guess.
+        assert len(calls) == 3
+        assert all(json.loads(path.read_text())["status"] == "completed" for path in requests)
+    finally:
+        release.set()
+        release_second.set()
+        # Keep the model mock installed until the test's queued workers finish.
+        drained.wait(5)
 
 
 def test_completed_maintenance_does_not_requeue_its_own_memory_changes(tmp_path, monkeypatch):

@@ -104,7 +104,10 @@ diagnostics and nested workflows can still write state. Mock model execution in
 unit tests explicitly: clearing API keys does not disable a local LLM service.
 Tests of default configuration or dotenv resolution must explicitly clear the
 corresponding environment overrides; test harness isolation must not replace
-the path contract being asserted.
+the path contract being asserted. Concurrency tests wait for owned worker
+completion and durable terminal records, rather than assuming that queued
+background work drains within an arbitrary subsecond interval; release blocked
+workers in cleanup before removing model mocks.
 
 ## Known pitfalls
 
