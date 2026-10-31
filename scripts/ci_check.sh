@@ -33,6 +33,8 @@ fi
   tests/test_learning_archive.py \
   tests/test_review_nudge_persistence.py \
   tests/test_native_vision_boundary.py \
+  tests/test_native_image_input.py \
+  src/trade_compass_agent/llm/native_images.py \
   tests/test_debate_research_termination.py \
   tests/test_debate_incomplete_consumers.py \
   tests/test_memory_write_recovery.py \

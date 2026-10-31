@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 from trade_compass_agent.config import AppConfig, load_app_config
-from trade_compass_agent.runtime.exceptions import AgentTurnError, LLMIncompleteResponseError, TurnInterruptedError
+from trade_compass_agent.runtime.exceptions import AttachmentInputError, AgentTurnError, LLMIncompleteResponseError, TurnInterruptedError
 from trade_compass_agent.runtime.activity_events import (
     build_tool_end_payload,
     build_tool_start_payload,
@@ -445,13 +445,24 @@ class AgentLoop:
                 "turn_started",
                 {"turn_id": turn_id, "session_id": session.session_id},
             )
+        parsed_attachments = parse_attachments(attachments)
+        native_images = ([att for att in parsed_attachments if att.type == "image"]
+                         if isinstance(client, NativeAgentClient) else [])
         enriched = enrich_user_message(
             message,
-            parse_attachments(attachments),
+            [att for att in parsed_attachments if att not in native_images],
             config=self.config,
             memory_dir=self.config.memory_dir,
         )
+        if native_images:
+            enriched += "\n\n" + "\n".join(f"[附件·图片 {i + 1}]" for i in range(len(native_images)))
         history = [m.to_chat_message() for m in self.session_store.load_context(session)]
+        if not isinstance(client, NativeAgentClient):
+            # A provider switch must retain access to native-uploaded evidence
+            # through the existing vision tools, including text-only backends.
+            history = [replace(m, content=m.content + "\n\n" + "\n".join(
+                f"[附件·图片保存于 {path}，可使用image_analyze读取]" for path in m.image_paths))
+                if m.image_paths else m for m in history]
         self._tools.set_trade_context(
             message, attachments=enriched[len(message.strip()):].strip() if attachments else "",
             previous_reply=next((m.content for m in reversed(history) if m.role == "assistant" and m.content), ""),
@@ -513,6 +524,7 @@ class AgentLoop:
                                     tool_call_id=item.tool_call_id,
                                     name=item.name,
                                     tool_calls=list(item.tool_calls or []),
+                                    image_paths=list(item.image_paths),
                                 )
                                 for item in (compacted_messages[1:] if in_turn else compacted_messages[1:-1])
                             ]
@@ -626,6 +638,10 @@ class AgentLoop:
         try:
             native = isinstance(client, NativeAgentClient)
             try:
+                if native_images:
+                    from trade_compass_agent.llm.native_images import save_image
+                    user_record.image_paths = [save_image(att.content, att.url, self.config) for att in native_images]
+                    messages[-1] = replace(messages[-1], image_paths=list(user_record.image_paths))
                 compact_context(in_turn=False, request_tools=None if self.config.agent.max_tool_rounds == 1 else self._tools.schemas)
                 if native:
                     # A rewritten application checkpoint must reach the next
@@ -1017,7 +1033,7 @@ class AgentLoop:
             )
             return response
         except Exception as exc:
-            error_summary = f"分析过程中出现错误：{type(exc).__name__}"
+            error_summary = str(exc) if isinstance(exc, AttachmentInputError) else f"分析过程中出现错误：{type(exc).__name__}"
             self.session_store.append(
                 session,
                 SessionMessageRecord(

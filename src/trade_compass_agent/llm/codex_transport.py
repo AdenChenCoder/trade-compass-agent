@@ -35,7 +35,7 @@ class CodexTransport:
         # disable host capabilities. Mutations go through application tools.
         args = [binary, "app-server"]
         for feature in ("shell_tool", "unified_exec", "plugins", "apps", "hooks", "multi_agent",
-                        "memories", "code_mode", "browser_use", "computer_use", "image_generation",
+                        "memories", "code_mode", "browser_use", "computer_use", "image_generation", "view_image",
                         "unbounded_connection_retries"):
             args.extend(["-c", f"features.{feature}=false"])
         args.extend(["-c", "web_search=\"disabled\"", "-c", "project_doc_max_bytes=0"])

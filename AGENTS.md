@@ -212,6 +212,10 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
   Nested research workers inherit the parent execution context and retain partial
   completion through final reports. Image analysis requires an actual image
   transport; text-only native responses cannot stand in for visual evidence.
+  Native image uploads retain validated immutable assets and original visual requests
+  through restart and compaction. Disable the vendor image-file tool; explicit image
+  inputs and application tools remain the only image access paths. Codex chat uploads
+  go directly to Codex; explicit auxiliary vision settings still govern image tools.
   Ordinary specialist errors and empty results also retain incomplete status through
   dispatch, HTTP and learning gates. Serialize shared SQLite schema/WAL initialization
   across cold concurrent sessions without serializing their model execution.

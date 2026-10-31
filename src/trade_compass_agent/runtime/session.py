@@ -26,6 +26,7 @@ class SessionMessageRecord:
     name: str | None = None
     tool_calls: list[dict] = field(default_factory=list)
     autonomous_trading_enabled: bool = False
+    image_paths: list[str] = field(default_factory=list)
 
     def to_chat_message(self) -> ChatMessage:
         return ChatMessage(
@@ -34,6 +35,7 @@ class SessionMessageRecord:
             tool_call_id=self.tool_call_id,
             name=self.name,
             tool_calls=list(self.tool_calls),
+            image_paths=list(self.image_paths),
         )
 
 
@@ -116,6 +118,8 @@ class SessionStore:
             record["sections"] = message.sections
         if message.autonomous_trading_enabled:
             record["autonomous_trading_enabled"] = True
+        if message.image_paths:
+            record["image_paths"] = message.image_paths
         return record
 
     def _write_records(
@@ -181,6 +185,7 @@ class SessionStore:
                     name=raw.get("name"),
                     tool_calls=raw.get("tool_calls") or [],
                     autonomous_trading_enabled=raw.get("autonomous_trading_enabled") is True,
+                    image_paths=raw.get("image_paths") or [],
                 )
             )
         return AgentSession(
@@ -250,6 +255,7 @@ class SessionStore:
                             name=raw.get("name"),
                             tool_calls=raw.get("tool_calls") or [],
                             autonomous_trading_enabled=raw.get("autonomous_trading_enabled") is True,
+                            image_paths=raw.get("image_paths") or [],
                         )
                     )
                 total_messages += 1
@@ -297,6 +303,7 @@ class SessionStore:
                     name=raw.get("name"),
                     tool_calls=raw.get("tool_calls") or [],
                     autonomous_trading_enabled=raw.get("autonomous_trading_enabled") is True,
+                    image_paths=raw.get("image_paths") or [],
                 )
             )
         return messages

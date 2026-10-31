@@ -492,7 +492,7 @@ def analyze_chart_pattern(
         chat_client = client or create_vision_client(app_config)
     except AgentUnavailableError as exc:
         return f"**视觉分析不可用:** {exc}"
-    if chat_client is None or not callable(getattr(chat_client, "complete_raw", None)):
+    if chat_client is None or not any(callable(getattr(chat_client, method, None)) for method in ("complete_raw", "analyze_images")):
         return "**视觉分析不可用:** 请配置可接收图片的独立视觉模型。"
 
     provider = stack.provider
@@ -536,7 +536,12 @@ def analyze_chart_pattern(
             content_parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{weekly_chart}"}})
 
     try:
-        response = chat_client.complete_raw([{"role": "user", "content": content_parts}])
+        if hasattr(chat_client, "analyze_images"):
+            images = [part["image_url"]["url"] for part in content_parts if part["type"] == "image_url"]
+            prompt = "\n".join(part["text"] for part in content_parts if part["type"] == "text")
+            response = chat_client.analyze_images(images, prompt)
+        else:
+            response = chat_client.complete_raw([{"role": "user", "content": content_parts}])
         report = response.content or "（分析无输出）"
     except Exception as exc:
         logger.warning("Vision LLM call failed: %s, falling back to text analysis", exc)

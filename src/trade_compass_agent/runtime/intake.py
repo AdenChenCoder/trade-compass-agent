@@ -251,6 +251,8 @@ def _vision_describe(client, data_url: str, mime: str | None) -> str:
     if not data_url.startswith("data:") and not data_url.startswith("http"):
         image_url = f"data:{mime or 'image/png'};base64,{data_url}"
 
+    if hasattr(client, "analyze_images"):
+        return (client.analyze_images([image_url], "请简要用中文描述这张图片。").content or "").strip()
     if hasattr(client, "complete_raw"):
         completion = client.complete_raw(
             [

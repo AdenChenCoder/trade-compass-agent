@@ -153,7 +153,18 @@ authorization, human rules, memory governance and visible history stay under
 Trade Compass control. The adapter also handles text-only support calls and
 specialists, so selecting a native agent does not require a second API key for
 those paths. An independently configured vision provider still uses its own
-credentials; native text calls do not claim image-input support.
+credentials for `image_analyze` and chart-analysis tools. Codex chat image attachments
+go directly to the selected Codex model, even when an auxiliary vision model is
+configured; they do not require LM Studio or a separate image-description call.
+Static PNG, JPEG and WebP uploads are validated and retained under the data root
+(20MB per image). Public image URLs are downloaded using the same public-network
+restrictions as URL fetching; unavailable links must be replaced with an upload.
+Original image requests survive context compaction, and rebuilding a native thread
+reattaches those images. Missing or changed originals produce a visible error and
+require the original image to be uploaded again. This does not enable image generation
+or arbitrary file access: the vendor's built-in image-file tool is disabled.
+Native vision support calls use `llm.timeout` and the earlier parent deadline,
+rather than the API providers' output-token settings.
 
 The independent trade-authorization check also uses `llm.timeout` for Codex,
 bounded by the parent task's remaining time. Other providers retain the

@@ -39,6 +39,10 @@ for line in sys.stdin:
         emit({'id':msg['id'],'result':{'userAgent':'codex/0.163.0'}})
     elif method == 'config/read':
         emit({'id':msg['id'],'result':{'config':{'mcp_servers':{'unrelated':{'enabled':True}}}}})
+    elif method == 'model/list':
+        emit({'id':msg['id'],'result':{'data':[{'id':os.environ.get('FAKE_IMAGE_MODEL','test-vision'),
+            'model':os.environ.get('FAKE_IMAGE_MODEL','test-vision'),
+            'inputModalities':os.environ.get('FAKE_IMAGE_MODALITIES','text,image').split(',')}]}})
     elif method == 'thread/start':
         params=msg['params']
         assert params['sandbox']=='read-only'
@@ -67,7 +71,7 @@ for line in sys.stdin:
         emit({'id':msg['id'],'result':{'turn':{'id':'turn-test'}}})
         if os.environ.get('FAKE_STALL') or (tools and os.environ.get('FAKE_STALL_TOOLS')):
             continue
-        if tools:
+        if tools and not os.environ.get('FAKE_SKIP_TOOLS'):
             tool_number=1
             request_tool()
             continue

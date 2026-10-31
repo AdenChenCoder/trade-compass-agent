@@ -98,13 +98,17 @@ def tool_image_analyze(config: AppConfig, **kwargs: Any) -> str:
             ensure_ascii=False,
         )
 
+    if hasattr(client, "analyze_images") and not path.resolve().is_relative_to((config.data_dir / "uploads").resolve()):
+        return json.dumps({"error": "只能分析已上传的图片，请先上传原图。"}, ensure_ascii=False)
     try:
         image_data = base64.b64encode(path.read_bytes()).decode("ascii")
         mime = _mime_from_path(path)
         data_url = f"data:{mime};base64,{image_data}"
 
+        if hasattr(client, "analyze_images"):
+            description = (client.analyze_images([data_url], prompt).content or "").strip()
         # Ollama's /v1 endpoint has bugs with vision; use native API if available
-        if hasattr(client, "name") and "ollama" in getattr(client, "name", ""):
+        elif hasattr(client, "name") and "ollama" in getattr(client, "name", ""):
             description = _ollama_vision(config, client.model, image_data, prompt)
         elif hasattr(client, "complete_raw"):
             completion = client.complete_raw(

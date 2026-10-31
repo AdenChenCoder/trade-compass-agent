@@ -178,6 +178,7 @@ class ChatMessage:
     name: str | None = None
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     reasoning_content: str = field(default="", repr=False)
+    image_paths: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -995,7 +996,9 @@ def create_vision_client(config: AppConfig | None = None) -> ChatClient | None:
     if vision_model:
         vision_provider = llm.vision_provider or llm.provider
         if vision_provider == "codex":
-            return None
+            from dataclasses import replace
+            from trade_compass_agent.llm.native import NativeAgentClient
+            return NativeAgentClient(replace(app_config, llm=replace(llm, provider="codex", model=vision_model)))
         key_env = llm.vision_api_key_env or _PROVIDER_KEY_ENVS.get(vision_provider, llm.api_key_env)
         local_provider = vision_provider in {"ollama", "lmstudio"}
         api_key = resolve_api_key(key_env) if key_env and not local_provider else ""
@@ -1018,7 +1021,11 @@ def create_vision_client(config: AppConfig | None = None) -> ChatClient | None:
         except RuntimeError:
             return None
 
-    if llm.provider != "codex" and is_vision_capable(llm.model):
+    if llm.provider == "codex":
+        from trade_compass_agent.llm.native import NativeAgentClient
+        return NativeAgentClient(app_config)
+
+    if is_vision_capable(llm.model):
         try:
             return create_chat_client(config)
         except AgentUnavailableError:

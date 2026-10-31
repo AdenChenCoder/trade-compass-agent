@@ -22,12 +22,16 @@ def config(tmp_path):
 
 
 @pytest.mark.parametrize("explicit", [False, True])
-def test_native_model_name_cannot_claim_image_input(config, monkeypatch, explicit):
+def test_native_vision_uses_the_native_image_transport(config, monkeypatch, explicit):
     if explicit:
         config = replace(config, llm=replace(config.llm, vision_model="gpt-4o", vision_provider="codex"))
     monkeypatch.setattr(providers, "create_chat_client", lambda *a, **k: pytest.fail("Text client is not a vision client"))
     monkeypatch.setattr(providers, "OpenAIChatClient", lambda *a, **k: pytest.fail("Codex must not be routed to the OpenAI API"))
-    assert providers.create_vision_client(config) is None
+    captured = []
+    client = SimpleNamespace(analyze_images=lambda *args: None)
+    monkeypatch.setattr("trade_compass_agent.llm.native.NativeAgentClient", lambda cfg: captured.append(cfg) or client)
+    assert providers.create_vision_client(config) is client
+    assert captured[0].llm.provider == "codex" and captured[0].llm.model == "gpt-4o"
 
 
 def test_codex_preserves_independent_lmstudio_vision(config, monkeypatch):

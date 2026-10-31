@@ -17,6 +17,15 @@ def fingerprint(value):
                                     default=str).encode()).hexdigest()
 
 
+def _transcript_fingerprint(history):
+    records = [asdict(message) for message in history]
+    for record in records:
+        # Preserve compatible cursors written before image references existed.
+        if not record.get("image_paths"):
+            record.pop("image_paths", None)
+    return fingerprint(records)
+
+
 def _root(data_dir, session_id):
     return data_dir / "native_agents" / "sessions" / fingerprint(session_id)
 
@@ -50,8 +59,8 @@ class NativeConversation:
         self.cwd = self.root / "workspace"
         self.cwd.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "cursor.json"
-        self.history_digest = fingerprint([asdict(m) for m in history])
-        self.context_digest = fingerprint([asdict(m) for m in (history if context is None else context)])
+        self.history_digest = _transcript_fingerprint(history)
+        self.context_digest = _transcript_fingerprint(history if context is None else context)
         try:
             self.record = json.loads(self.path.read_text(encoding="utf-8"))
         except (FileNotFoundError, ValueError):
@@ -80,8 +89,8 @@ class NativeConversation:
         # this cursor reusable. Failure/cancellation leaves it non-reusable.
         if self.pending is not None:
             atomic_write(self.path, json.dumps({**self.pending, "status": "ready",
-                         "history": fingerprint([asdict(m) for m in history]),
-                         "context": fingerprint([asdict(m) for m in (history if context is None else context)])}))
+                         "history": _transcript_fingerprint(history),
+                         "context": _transcript_fingerprint(history if context is None else context)}))
 
     def set_usage_total(self, total):
         # Publish the next accounting baseline only with the completed transcript.
