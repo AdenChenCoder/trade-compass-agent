@@ -14,6 +14,7 @@ let container: HTMLDivElement | null = null;
 const settings = { provider: "lmstudio", model: "existing", options: [
   { provider: "lmstudio", label: "LM Studio", model: "existing" },
   { provider: "ollama", label: "Ollama", model: "gemma4:26b" },
+  { provider: "codex", label: "Codex", model: "" },
 ] };
 
 async function render(value = settings) {
@@ -33,6 +34,28 @@ afterEach(async () => {
 });
 
 describe("Agent connection settings", () => {
+  it("saves a native choice with the agent default model", async () => {
+    const view = await render();
+    vi.mocked(saveAgentConnection).mockResolvedValue({ ...settings, provider: "codex", model: "" });
+    const select = view.querySelector("select")!;
+    await act(async () => { select.value = "codex"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(view.querySelector("input")?.value).toBe("");
+    expect(view.textContent).toContain("codex login");
+    const save = Array.from(view.querySelectorAll("button")).find(button => button.textContent === "保存")!;
+    await act(async () => { save.click(); });
+    expect(saveAgentConnection).toHaveBeenCalledWith("codex", "");
+    expect(view.textContent).toContain("将用于后续任务");
+  });
+
+  it("shows authentication state without claiming a successful model request", async () => {
+    const view = await render();
+    vi.mocked(checkAgentConnection).mockResolvedValue({ status: "unauthenticated", message: "未确认有效认证，请执行 codex login。" });
+    const check = Array.from(view.querySelectorAll("button")).find(button => button.textContent === "检查接入状态")!;
+    await act(async () => { check.click(); });
+    expect(view.querySelector('[role="status"]')?.textContent).toContain("未确认有效认证");
+    expect(view.textContent).not.toContain("连接成功");
+  });
+
   it("keeps an unsupported saved connection visible until the user chooses a replacement", async () => {
     const view = await render({ ...settings, provider: "unreleased-provider", model: "previous-model" });
     const select = view.querySelector("select")!;

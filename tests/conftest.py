@@ -22,6 +22,12 @@ def _isolate_native_tokenizer(monkeypatch):
     monkeypatch.setattr("trade_compass_agent.llm.providers._measure_lmstudio_context", lambda *a, **k: None)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_native_user_config(tmp_path, monkeypatch):
+    """Native subprocess tests must not use the developer's credentials/config."""
+    monkeypatch.setattr("trade_compass_agent.llm.native_runtime.host_codex_home", lambda: tmp_path / "codex-user")
+
+
 def pytest_sessionstart(session: pytest.Session) -> None:
     """Keep the test process offline unless a test injects an explicit fake key."""
     del session

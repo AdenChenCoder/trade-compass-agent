@@ -8,7 +8,11 @@ from trade_compass_agent.domain import Bar
 
 def bars_metadata(bars: list[Bar], provider: str, timeframe: str) -> dict:
     sources = sorted({bar.source for bar in bars if bar.source})
-    sample = provider == "sample" or "sample" in sources
+    sample = bool({provider, *sources} & {"sample", "synthetic"})
+    # These adapters normalize lots to shares. Other sources do not establish
+    # a common volume unit, so consumers must not infer one from the number.
+    volume_sources = set(sources) or {provider}
+    volume_unit = "shares" if volume_sources <= {"tencent", "tushare"} else "unknown"
     cached = provider == "cache"
     observations = [bar.timestamp.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
                     if bar.timestamp.tzinfo is None else bar.timestamp for bar in bars]
@@ -25,5 +29,6 @@ def bars_metadata(bars: list[Bar], provider: str, timeframe: str) -> dict:
         "adjustment": "mixed" if len(adjustments) > 1 else (
             "adjusted" if adjusted else "unadjusted" if adjusted is False else "unknown"),
         "is_sample": sample, "is_cached": cached,
+        "volume_unit": volume_unit,
         "freshness": "sample" if sample else "cached" if cached else "historical" if bars else "unknown",
     }

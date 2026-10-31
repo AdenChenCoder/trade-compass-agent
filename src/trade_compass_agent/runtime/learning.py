@@ -3,9 +3,19 @@ from __future__ import annotations
 from pathlib import Path
 
 from trade_compass_agent.config import AppConfig
-from trade_compass_agent.llm.providers import LLMRequest, create_llm_provider
+from trade_compass_agent.llm.providers import LLMRequest, check_execution_active, create_llm_provider
+from trade_compass_agent.memory.tree.search import MemorySearchIndex
 from trade_compass_agent.memory.tree.storage import MemoryTreeStore
 from trade_compass_agent.runtime.types import TurnResponse
+
+
+def _write_summary(config: AppConfig, scope: str, text: str) -> Path:
+    check_execution_active()
+    chunk = MemoryTreeStore(config.memory_dir).write(scope, text)
+    MemorySearchIndex(config.memory_dir / "tree" / "chunks.db").index_file(
+        chunk.scope, chunk.content, chunk.path,
+    )
+    return chunk.path
 
 
 def curate_turn_insight(
@@ -51,9 +61,7 @@ def curate_turn_insight(
     if not text or text.upper() == "SKIP":
         return None
 
-    store = MemoryTreeStore(config.memory_dir)
-    chunk = store.write("insights", text)
-    return str(chunk.path)
+    return str(_write_summary(config, "insights", text))
 
 
 def compact_memory_summary(config: AppConfig) -> Path | None:
@@ -81,8 +89,7 @@ def compact_memory_summary(config: AppConfig) -> Path | None:
         config=config,
     )
     if provider.name == "disabled":
-        chunk = store.write("compaction", combined[:2000])
-        return chunk.path
+        return _write_summary(config, "compaction", combined[:2000])
 
     prompt = (
         "Compact these recent memory snippets into a <=200 word Chinese summary. "
@@ -95,5 +102,4 @@ def compact_memory_summary(config: AppConfig) -> Path | None:
     except Exception:
         summary = combined[:2000]
 
-    chunk = store.write("compaction", summary)
-    return chunk.path
+    return _write_summary(config, "compaction", summary)

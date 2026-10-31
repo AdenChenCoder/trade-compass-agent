@@ -34,6 +34,7 @@ def test_source_and_packaged_defaults_use_qwen38_multimodal_model() -> None:
             "api_key_env": "",
             "timeout": 900.0,
             "agent_timeout": 3600.0,
+            "native_max_tool_calls": 30,
             "max_retries": 2,
             "vision_model": "qwen3.8-27b",
             "vision_provider": "lmstudio",
@@ -69,6 +70,8 @@ def installed_layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     env_example.write_text("DEEPSEEK_API_KEY=\n", encoding="utf-8")
     monkeypatch.setenv("TRADE_COMPASS_HOME", str(home))
     monkeypatch.delenv("TRADE_COMPASS_CONFIG", raising=False)
+    monkeypatch.delenv("TRADE_COMPASS_DATA_DIR", raising=False)
+    monkeypatch.delenv("TRADE_COMPASS_MEMORY_DIR", raising=False)
     invalidate_config_cache()
     with (
         patch("trade_compass_agent.config.is_source_checkout", return_value=False),

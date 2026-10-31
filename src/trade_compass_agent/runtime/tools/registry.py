@@ -108,7 +108,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_bars",
-            "description": "Fetch OHLCV bars for exactly one symbol. For multiple symbols use batch_get_bars; never put a comma-separated list in symbol.",
+            "description": "Fetch OHLCV bars for exactly one symbol. For multiple symbols use batch_get_bars; never put a comma-separated list in symbol. count is the fetched total; bars contains at most the latest 30, with returned_count and bars_truncated declaring that window. volume uses _meta.volume_unit; unknown must not be relabeled as shares or lots. is_sample data cannot establish real market facts.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -233,7 +233,8 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "scope": {"type": "string", "description": "Scope bucket (e.g. 'market-notes', 'trade-log', 'analysis')"},
+                    "scope": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                              "description": "Lowercase ASCII bucket identifier, e.g. 'market-notes', 'trade-log', 'analysis'. Translate a descriptive category into a suitable identifier and report the actual identifier to the user."},
                     "content": {"type": "string", "description": "Note content to write"},
                 },
                 "required": ["scope", "content"],
@@ -910,7 +911,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "batch_get_bars",
-            "description": "Fetch OHLCV bars for multiple symbols in parallel. Much faster than calling get_bars one by one. Returns compact summaries by default.",
+            "description": "Fetch OHLCV bars for multiple symbols in parallel. Returns compact summaries by default. Full mode returns at most the latest 30 bars per symbol; bars_count is the fetched total, returned_count and bars_truncated describe the returned window. volume uses _meta.volume_unit; unknown must not be relabeled as shares or lots. is_sample data cannot establish real market facts.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1116,6 +1117,7 @@ class ToolRegistry:
     def execute(self, name: str, arguments: str | dict | None) -> str:
         from trade_compass_agent.portfolio.trading_policy import TradeRejected
         from trade_compass_agent.llm.providers import check_execution_active
+        from trade_compass_agent.runtime.exceptions import TurnInterruptedError
         check_execution_active()
 
         if name in self._exclude_tools:
@@ -1138,7 +1140,10 @@ class ToolRegistry:
         except TradeRejected as exc:
             self._consecutive_failures.pop(name, None)
             return json.dumps(exc.payload, ensure_ascii=False)
+        except TurnInterruptedError:
+            raise
         except Exception as exc:
+            check_execution_active()
             error_payload: dict[str, Any] = {"error": str(exc), "tool": name}
             try:
                 args = json.loads(arguments) if isinstance(arguments, str) else arguments or {}

@@ -36,9 +36,20 @@ def test_memory_tree_store_recent(tmp_path: Path) -> None:
     assert len(chunks) == 2
 
 
-def test_invalid_scope_raises(tmp_path: Path) -> None:
-    with pytest.raises(ValueError):
-        tool_write_memory(tmp_path / "memory", "BAD SCOPE!", "x")
+def test_invalid_scope_returns_recoverable_tool_error(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    result = json.loads(tool_write_memory(memory_dir, "BAD SCOPE!", "x"))
+    assert result["error_type"] == "invalid_scope"
+    assert result["scope"] == "BAD SCOPE!"
+    assert result["content_hash"]
+    assert not list(memory_dir.rglob("*.md"))
+
+
+def test_invalid_scope_still_raises_at_storage_boundary(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    with pytest.raises(ValueError, match="invalid memory scope:"):
+        MemoryTreeStore(memory_dir).write("BAD SCOPE!", "x")
+    assert not list(memory_dir.rglob("*.md"))
 
 
 def test_fts_index(tmp_path: Path) -> None:
@@ -80,3 +91,22 @@ def test_reindex_memory_vault(tmp_path: Path) -> None:
 
     count_with_knowledge = reindex_memory_vault(memory_dir, index_knowledge=True)
     assert count_with_knowledge == 2
+
+
+def test_chinese_terms_find_new_archive_beside_old_index_hits(tmp_path):
+    memory_dir = tmp_path / "memory"
+    tool_write_memory(memory_dir, "notes", "研究 验收 背景资料：这是旧的合成归档。")
+    content = "- 研究资料不足时，应明确标注未知事项及缺失证据，不能把估计当作事实。"
+    saved = json.loads(tool_write_memory(memory_dir, "insights", content))
+    for query in ["研究", "研究 资料不足", "研究 " + content]:
+        hits = json.loads(tool_search_memory(memory_dir, query))["results"]
+        assert saved["path"] in {hit["path"] for hit in hits}
+        assert hits[0]["path"] == saved["path"]
+
+
+def test_chinese_keyword_retrieval_keeps_explicit_date_constraint(tmp_path):
+    old = json.loads(tool_write_memory(tmp_path, "notes", "2026-10-20 研究资料不足时，应标注未知。"))
+    current = json.loads(tool_write_memory(tmp_path, "notes", "2026-10-21 研究资料不足时，应标注未知。"))
+    hits = json.loads(tool_search_memory(tmp_path, "2026-10-20 研究 资料不足"))["results"]
+    assert old["path"] in {hit["path"] for hit in hits}
+    assert current["path"] not in {hit["path"] for hit in hits}

@@ -244,8 +244,10 @@ def tool_analyze_portfolio(stack: MarketStack, *, planning_reference_date: date 
             "account_summaries": summary_data,
             "recent_closed_trades": recent_closed,
             "recent_trades": portfolio.trade_history(limit=20),
+            "total_trade_count": len(portfolio.trades),
+            "trade_history_truncated": len(portfolio.trades) > 20,
             "trades_as_of": _market_now().isoformat(),
-            "trade_history_note": "recent_trades 是按成交时间倒序的最近20笔实际流水，数量和 trade_id 以此为准；recent_closed_trades 是 FIFO 分批结算，同一卖出可能对应多条，不代表多笔成交。更早成交可用 search_decisions 的 execution_trades 核对，未查询到不能推算或编造。",
+            "trade_history_note": "total_trade_count 是完整本地账本的成交总数，不代表券商全部历史。recent_trades 是按成交时间倒序的最近20笔实际流水，数量和 trade_id 以此为准；recent_closed_trades 是 FIFO 分批结算，同一卖出可能对应多条，不代表多笔成交。更早成交可用 search_decisions 的 execution_trades 核对，未查询到不能推算或编造。",
             "total_market_value": round(total_value, 2),
             "total_account_capital": round(total_capital, 2),
             "total_available_cash": total_available,
@@ -594,10 +596,15 @@ def tool_batch_paper_trades(stack: MarketStack, **kwargs: Any) -> str:
             results.append({"symbol": symbol, "status": "rejected", "error": msg})
             continue
 
+        def validate_import(_portfolio):
+            from trade_compass_agent.llm.providers import check_execution_active
+            check_execution_active()
+            require_single_account(stack.config.data_dir, acct)
+
         try:
             portfolio.record(
                 trade,
-                before_record=lambda _portfolio: require_single_account(stack.config.data_dir, acct),
+                before_record=validate_import,
             )
         except ValueError as exc:
             results.append({"symbol": symbol, "status": "rejected", "error": str(exc)})
@@ -668,6 +675,10 @@ def _latest_execution_price(stack: MarketStack, symbol: str) -> tuple[float, dat
     if not bars:
         raise ValueError("行情源未返回数据")
     latest = max(bars, key=lambda bar: bar.timestamp)
+    sources = {latest.source, getattr(stack.provider, "name", None),
+               getattr(stack.provider, "last_resolved_provider", None)}
+    if sources.intersection({"sample", "synthetic"}):
+        raise TradeRejected("样例或合成行情不能作为市场成交报价，本次模拟交易未成交", "sample_quote")
     price = float(latest.close)
     if not math.isfinite(price) or price <= 0:
         raise ValueError("行情价格无效")

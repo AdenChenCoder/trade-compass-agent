@@ -7,4 +7,4 @@ __all__ = ["__version__"]
 try:
     __version__ = version("trade-compass-agent")
 except PackageNotFoundError:
-    __version__ = "0.3.0"
+    __version__ = "0.4.0"

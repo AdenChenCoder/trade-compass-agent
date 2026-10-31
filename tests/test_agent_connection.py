@@ -47,8 +47,8 @@ def test_switching_back_restores_custom_connection_without_exposing_credentials(
 
 
 
-@pytest.mark.parametrize("provider", ["codex", "claude_code"])
-def test_core_connections_reject_unreleased_providers_without_changing_config(client, tmp_path, monkeypatch, provider):
+@pytest.mark.parametrize("provider", ["claude_code", "unreleased-provider", "arbitrary_command"])
+def test_connections_reject_unknown_providers_without_changing_config(client, tmp_path, monkeypatch, provider):
     from trade_compass_agent.config import invalidate_config_cache, load_app_config, update_llm_connection
     from trade_compass_agent.llm.connection import check_connection
     from trade_compass_agent.llm.providers import create_chat_client, create_llm_provider

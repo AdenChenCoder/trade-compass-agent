@@ -7,6 +7,8 @@ overrides:
   postcss-selector-parser: 6.1.5
   # xcode only uses uuid.v4(); v11 retains its CommonJS API and fixes GHSA-w5hq-g745-h8pq.
   "xcode>uuid": 11.1.1
+  # Keep rimraf's glob API while fixing GHSA-3g3m-2fjr-6pw4 and GHSA-g3hv-75wg-m249.
+  "rimraf>glob": 14.0.2
 allowBuilds:
   esbuild: true
   sharp: true

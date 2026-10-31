@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from trade_compass_agent.config import AppConfig
-from trade_compass_agent.llm.providers import ChatMessage, create_vision_client
+from trade_compass_agent.llm.providers import create_vision_client
 from trade_compass_agent.llm.usage import LLMCallAudit, ProviderTokenUsage
 
 logger = logging.getLogger(__name__)
@@ -98,13 +98,17 @@ def tool_image_analyze(config: AppConfig, **kwargs: Any) -> str:
             ensure_ascii=False,
         )
 
+    if hasattr(client, "analyze_images") and not path.resolve().is_relative_to((config.data_dir / "uploads").resolve()):
+        return json.dumps({"error": "只能分析已上传的图片，请先上传原图。"}, ensure_ascii=False)
     try:
         image_data = base64.b64encode(path.read_bytes()).decode("ascii")
         mime = _mime_from_path(path)
         data_url = f"data:{mime};base64,{image_data}"
 
+        if hasattr(client, "analyze_images"):
+            description = (client.analyze_images([data_url], prompt).content or "").strip()
         # Ollama's /v1 endpoint has bugs with vision; use native API if available
-        if hasattr(client, "name") and "ollama" in getattr(client, "name", ""):
+        elif hasattr(client, "name") and "ollama" in getattr(client, "name", ""):
             description = _ollama_vision(config, client.model, image_data, prompt)
         elif hasattr(client, "complete_raw"):
             completion = client.complete_raw(
@@ -121,8 +125,7 @@ def tool_image_analyze(config: AppConfig, **kwargs: Any) -> str:
             )
             description = (completion.content or "").strip()
         else:
-            completion = client.complete([ChatMessage(role="user", content=prompt)])
-            description = (completion.content or "").strip()
+            return json.dumps({"error": "当前接入不能读取图片，请配置独立视觉模型。"}, ensure_ascii=False)
 
         if not description:
             return json.dumps({"error": "vision model 返回空响应"}, ensure_ascii=False)

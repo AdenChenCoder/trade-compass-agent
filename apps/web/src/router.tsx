@@ -1,6 +1,16 @@
 import { Navigate, createBrowserRouter } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { AgentPage } from "@/routes/AgentPage";
+import { recoverRoute } from "@/lib/route-recovery";
+
+function loadPage(path: string, load: Parameters<typeof recoverRoute>[0]) {
+  return recoverRoute(load, () => {
+    if (!router.state.initialized) return "/agent";
+    if (router.state.navigation.location?.pathname !== path) return null;
+    const current = router.state.location;
+    return current.pathname === path ? "/agent" : current.pathname + current.search + current.hash;
+  });
+}
 
 export const router = createBrowserRouter([
   {
@@ -10,59 +20,59 @@ export const router = createBrowserRouter([
       { path: "/agent", element: <AgentPage /> },
       {
         path: "/research",
-        lazy: async () => {
+        ...loadPage("/research", async () => {
           const { ResearchPage } = await import("@/routes/ResearchPage");
           return { Component: ResearchPage };
-        },
+        }),
       },
       {
         path: "/portfolio",
-        lazy: async () => {
+        ...loadPage("/portfolio", async () => {
           const { PortfolioPage } = await import("@/routes/PortfolioPage");
           return { Component: PortfolioPage };
-        },
+        }),
       },
       {
         path: "/memory",
-        lazy: async () => {
+        ...loadPage("/memory", async () => {
           const { MemoryPage } = await import("@/routes/MemoryPage");
           return { Component: MemoryPage };
-        },
+        }),
       },
       {
         path: "/audit",
-        lazy: async () => {
+        ...loadPage("/audit", async () => {
           const { AuditPage } = await import("@/routes/AuditPage");
           return { Component: AuditPage };
-        },
+        }),
       },
       {
         path: "/rules",
-        lazy: async () => {
+        ...loadPage("/rules", async () => {
           const { RulesPage } = await import("@/routes/RulesPage");
           return { Component: RulesPage };
-        },
+        }),
       },
       {
         path: "/skills",
-        lazy: async () => {
+        ...loadPage("/skills", async () => {
           const { SkillsPage } = await import("@/routes/SkillsPage");
           return { Component: SkillsPage };
-        },
+        }),
       },
       {
         path: "/jobs",
-        lazy: async () => {
+        ...loadPage("/jobs", async () => {
           const { JobsPage } = await import("@/routes/JobsPage");
           return { Component: JobsPage };
-        },
+        }),
       },
       {
         path: "/settings",
-        lazy: async () => {
+        ...loadPage("/settings", async () => {
           const { SettingsPage } = await import("@/routes/SettingsPage");
           return { Component: SettingsPage };
-        },
+        }),
       },
     ],
   },

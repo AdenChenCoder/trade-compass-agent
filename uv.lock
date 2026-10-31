@@ -4273,7 +4273,7 @@ wheels = [
 
 [[package]]
 name = "trade-compass-agent"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiortc" },
@@ -4289,6 +4289,7 @@ dependencies = [
     { name = "numpy" },
     { name = "openai" },
     { name = "pandas" },
+    { name = "pillow" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pywebpush" },
@@ -4375,6 +4376,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0,<3" },
     { name = "openai", specifier = ">=1.0,<3" },
     { name = "pandas", specifier = ">=2.2,<4" },
+    { name = "pillow", specifier = ">=13,<14" },
     { name = "pillow", marker = "sys_platform != 'darwin' and extra == 'vision'", specifier = ">=13.0.0,<14" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.9,<3" },
     { name = "pydantic", specifier = ">=2.0,<3" },

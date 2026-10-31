@@ -92,6 +92,75 @@ def test_judge_timeout_fails_without_a_fill(execution, monkeypatch):
     assert result['code'] == 'trade_authorization_unavailable' and not fills(stack)
 
 
+@pytest.mark.parametrize('provider,parent_budget,expected_timeout', [
+    ('codex', None, 180), ('lmstudio', None, 30), ('codex', 7, 7), ('lmstudio', 7, 7),
+])
+def test_authorization_budget_preserves_provider_policy_and_parent_deadline(execution, monkeypatch, provider, parent_budget, expected_timeout):
+    from contextlib import nullcontext
+    from dataclasses import replace
+    import time
+    from trade_compass_agent.llm.providers import llm_request_deadline, _remaining_request_time
+
+    stack, registry = execution
+    stack.config = replace(stack.config, llm=replace(stack.config.llm, provider=provider, timeout=180))
+    message = '买入000001一百股'
+    registry.set_trade_context(message)
+    observed = {}
+
+    def client(config):
+        observed['client_timeout'] = config.llm.timeout
+        observed['remaining'] = _remaining_request_time()
+        return SimpleNamespace(complete=lambda messages: ChatCompletion(content=json.dumps({
+            'authorized': True, 'instruction': message, 'reason': '明确买入'})))
+
+    def bounded(func, timeout, description):
+        observed['wait_timeout'] = timeout
+        return func()
+
+    monkeypatch.setattr('trade_compass_agent.runtime.trade_authorization.create_chat_client', client)
+    monkeypatch.setattr('trade_compass_agent.runtime.trade_authorization.run_with_timeout', bounded)
+    with llm_request_deadline(time.monotonic() + parent_budget) if parent_budget else nullcontext():
+        result = json.loads(registry.execute('place_paper_trade', order(user_instruction=message)))
+    assert result['status'] == 'executed' and len(fills(stack)) == 1
+    assert expected_timeout - 1 < observed['client_timeout'] <= expected_timeout
+    assert observed['wait_timeout'] == observed['client_timeout']
+    assert 0 < observed['remaining'] <= expected_timeout
+
+
+def test_native_authorization_child_timeout_fails_closed(execution, monkeypatch):
+    from trade_compass_agent.llm.providers import LLMExecutionCancelled
+
+    stack, registry = execution
+    registry.set_trade_context('买入000001一百股')
+
+    def child_deadline(messages):
+        raise LLMExecutionCancelled('child authorization deadline')
+
+    judge(monkeypatch, child_deadline)
+    result = json.loads(registry.execute('place_paper_trade', order(user_instruction='买入000001一百股')))
+    assert result['code'] == 'trade_authorization_unavailable' and not fills(stack)
+
+
+def test_parent_cancellation_during_authorization_cannot_return_an_approval(execution, monkeypatch):
+    import time
+    from trade_compass_agent.llm.providers import LLMExecutionCancelled, llm_request_deadline
+
+    stack, registry = execution
+    message = '买入000001一百股'
+    registry.set_trade_context(message)
+    cancelled = False
+
+    def late_approval(messages):
+        nonlocal cancelled
+        cancelled = True
+        return ChatCompletion(content=json.dumps({'authorized': True, 'instruction': message, 'reason': '明确买入'}))
+
+    judge(monkeypatch, late_approval)
+    with llm_request_deadline(time.monotonic() + 5, is_cancelled=lambda: cancelled), pytest.raises(LLMExecutionCancelled):
+        registry.execute('place_paper_trade', order(user_instruction=message))
+    assert not fills(stack)
+
+
 def test_scoped_authorization_tracks_only_committed_fills_and_resets_each_turn(execution, monkeypatch):
     stack, registry = execution
     message = '帮我买入000001一百股'
@@ -164,6 +233,40 @@ def test_sync_requires_sync_authorization_and_reports_only_executed_rows(executi
     batch['user_instruction'] = message
     assert json.loads(registry.execute('batch_paper_trades', batch))['executed'] == 1
     assert registry._completed_user_orders == [order(price=10)]
+
+
+@pytest.mark.parametrize('stop_after_first', [False, True])
+@pytest.mark.parametrize('stop_reason', ['cancel', 'deadline'])
+def test_batch_import_rechecks_execution_budget_at_each_commit(execution, monkeypatch, stop_after_first, stop_reason):
+    from trade_compass_agent.llm import providers
+
+    stack, registry = execution
+    message = '同步隔离验收的两笔虚构成交：买入000001各一百股，各10元'
+    registry.set_trade_context(message)
+    stopped = False
+
+    def authorize(messages):
+        nonlocal stopped
+        stopped = not stop_after_first
+        return ChatCompletion(content=json.dumps({'authorized': True, 'instruction': message, 'reason': '明确同步'}))
+
+    def after_commit(*args):
+        nonlocal stopped
+        stopped = True
+
+    judge(monkeypatch, authorize)
+    monkeypatch.setattr(portfolio_tools, '_sync_decision_journal', after_commit)
+    monkeypatch.setattr(providers.time, 'monotonic', lambda: 2 if stopped and stop_reason == 'deadline' else 0)
+    cancelled = (lambda: stopped) if stop_reason == 'cancel' else None
+    error = providers.LLMExecutionCancelled if stop_reason == 'cancel' else TimeoutError
+    with providers.llm_request_deadline(1, is_cancelled=cancelled), pytest.raises(error):
+        registry.execute('batch_paper_trades', {
+            'user_instruction': message,
+            'trades': [order(price=10, price_source='external_import'), order(price=10, price_source='external_import')],
+        })
+    persisted = fills(stack)
+    assert len(persisted) == int(stop_after_first)
+    assert all(trade.price_source == 'external_import' for trade in persisted)
 
 
 @pytest.mark.parametrize('reference', ['attachment', 'previous_reply'])

@@ -1,6 +1,6 @@
 [project]
 name = "trade-compass-agent"
-version = "0.3.0"
+version = "0.4.0"
 description = "交易罗盘: local-first A-share trading agent workbench for short-term trading, ETF rotation, simulation, review, and memory-driven improvement."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -40,6 +40,7 @@ dependencies = [
   "lmstudio>=1.5,<2",
   "mplfinance>=0.12.10b0,<0.13",
   "matplotlib>=3.8",
+  "pillow>=13,<14",
   "pywebpush>=2.0,<3",
 ]
 
@@ -120,10 +121,13 @@ packages = ["src/trade_compass_agent"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [
+  "/.venv",
+  "**/node_modules",
   "/.uv-cache",
   "/apps/web/*.tsbuildinfo",
   "/data",
   "/memory_vault",
+  "/output",
   "/temp",
   "/docs/*-20??-??-??.*",
   "/apps/mobile/dist",
