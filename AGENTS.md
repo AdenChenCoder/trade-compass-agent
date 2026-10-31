@@ -164,6 +164,11 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
   clause or section, and distinguish tool calls/metadata from explicit company
   names. Review and correction use the same fee-inclusive FIFO allocations;
   returned allocation totals never imply full account history.
+- Tool receipts distinguish fetched counts from truncated detail windows. Preserve
+  existing count meanings, declare returned coverage, and derive full ledger counts
+  from the ledger. Volume units require source evidence; unknown is not shares or
+  lots. Synthetic observations remain sample evidence across API and agent tools.
+  Host development instructions must not become workbench reply content.
 - Daily journals, close analyses, daily reflections, and weekly strategy reviews
   use distinct execution sessions per run. Keep prior sessions searchable, and
   verify actual current-turn reads before

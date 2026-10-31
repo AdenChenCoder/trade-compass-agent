@@ -29,6 +29,7 @@ fi
   tests/test_session_cold_start.py \
   tests/test_agent_simulation_flow.py \
   tests/test_report_tool_citations.py \
+  tests/test_tool_evidence_boundaries.py \
   tests/test_learning_archive.py \
   tests/test_review_nudge_persistence.py \
   tests/test_native_vision_boundary.py \

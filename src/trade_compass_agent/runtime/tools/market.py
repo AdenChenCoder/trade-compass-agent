@@ -26,6 +26,7 @@ def tool_get_bars(stack: MarketStack, *, symbol: str, timeframe: str = "1d", lim
             "suggested_tool": "batch_get_bars", "suggested_arguments": {
                 "symbols": ",".join(symbols), "timeframe": timeframe, "limit": limit}}, ensure_ascii=False)
     bars = stack.provider.get_bars(symbol.strip(), timeframe=timeframe, limit=limit)
+    returned = bars[-min(limit, 30):]
     quality = DataQualityLayer().check_bars(bars)
     provider_name = getattr(stack.provider, "last_resolved_provider", None) or getattr(stack.provider, "name", "unknown")
     payload = {
@@ -35,6 +36,8 @@ def tool_get_bars(stack: MarketStack, *, symbol: str, timeframe: str = "1d", lim
         "symbol": symbol,
         "timeframe": timeframe,
         "count": len(bars),
+        "returned_count": len(returned),
+        "bars_truncated": len(returned) < len(bars),
         "provider": provider_name,
         "warnings": quality.warnings,
         "bars": [
@@ -50,7 +53,7 @@ def tool_get_bars(stack: MarketStack, *, symbol: str, timeframe: str = "1d", lim
                 **({"source": bar.source} if bar.source else {}),
                 **({"turnover_pct": bar.turnover_pct} if bar.turnover_pct is not None else {}),
             }
-            for bar in bars[-min(limit, 30) :]
+            for bar in returned
         ],
     }
     return json.dumps(payload, ensure_ascii=False)

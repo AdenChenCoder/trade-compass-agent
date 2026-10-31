@@ -34,6 +34,13 @@ def protocol(config):
     return [json.loads(line) for line in (config.data_dir.parent / "protocol.jsonl").read_text().splitlines()]
 
 
+def started_turns(config):
+    path = config.data_dir.parent / "protocol.jsonl"
+    if not path.exists():
+        return 0
+    return sum(call.get("method") == "turn/start" for call in protocol(config))
+
+
 def test_tool_budget_summarizes_receipts_and_preserves_history(budget_config, monkeypatch):
     monkeypatch.setenv("FAKE_TOOL_COUNT", "3")
     events = []
@@ -100,11 +107,11 @@ def test_tool_time_budget_reserves_summary_inside_parent_deadline(budget_config,
 
 def test_cancellation_does_not_start_budget_summary(budget_config, monkeypatch):
     monkeypatch.setenv("FAKE_STALL_TOOLS", "1")
-    started = time.monotonic()
+    config = replace(budget_config, llm=replace(budget_config.llm, agent_timeout=10))
     with pytest.raises(TurnInterruptedError):
-        NativeAgentClient(budget_config).run_agent(
+        NativeAgentClient(config).run_agent(
             [ChatMessage(role="user", content="查询")], tools=[{"name": "get_bars"}],
-            execute_tool=lambda tc: "{}", is_cancelled=lambda: time.monotonic() - started > .2,
+            execute_tool=lambda tc: "{}", is_cancelled=lambda: started_turns(config) == 1,
         )
     assert len([c for c in protocol(budget_config) if c.get("method") == "turn/start"]) == 1
 
@@ -168,18 +175,23 @@ def test_callback_deadline_retains_unknown_outcome_and_summary_reserve(budget_co
 
 def test_user_cancellation_reaches_nested_model_without_late_mutation(budget_config, monkeypatch):
     writes = []
-    started = time.monotonic()
+    config = replace(budget_config, llm=replace(budget_config.llm, agent_timeout=10))
+
+    def cancelled():
+        # Cancel at the observed nested request, not during process startup on
+        # a busy machine. The configured deadlines still bound a broken run.
+        return started_turns(config) == 2
 
     def execute(tc):
         monkeypatch.setenv("FAKE_STALL", "1")
-        NativeAgentClient(budget_config).complete([ChatMessage(role="user", content="专家研究")])
+        NativeAgentClient(config).complete([ChatMessage(role="user", content="专家研究")])
         writes.append(tc.id)
         return "{}"
 
     with pytest.raises(TurnInterruptedError):
-        NativeAgentClient(budget_config).run_agent(
+        NativeAgentClient(config).run_agent(
             [ChatMessage(role="user", content="查询")], tools=[{"name": "get_bars"}], execute_tool=execute,
-            is_cancelled=lambda: time.monotonic() - started > .3,
+            is_cancelled=cancelled,
         )
     assert not writes
     assert len([c for c in protocol(budget_config) if c.get("method") == "turn/start"]) == 2

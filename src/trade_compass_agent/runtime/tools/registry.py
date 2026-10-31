@@ -108,7 +108,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_bars",
-            "description": "Fetch OHLCV bars for exactly one symbol. For multiple symbols use batch_get_bars; never put a comma-separated list in symbol.",
+            "description": "Fetch OHLCV bars for exactly one symbol. For multiple symbols use batch_get_bars; never put a comma-separated list in symbol. count is the fetched total; bars contains at most the latest 30, with returned_count and bars_truncated declaring that window. volume uses _meta.volume_unit; unknown must not be relabeled as shares or lots. is_sample data cannot establish real market facts.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -911,7 +911,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "batch_get_bars",
-            "description": "Fetch OHLCV bars for multiple symbols in parallel. Much faster than calling get_bars one by one. Returns compact summaries by default.",
+            "description": "Fetch OHLCV bars for multiple symbols in parallel. Returns compact summaries by default. Full mode returns at most the latest 30 bars per symbol; bars_count is the fetched total, returned_count and bars_truncated describe the returned window. volume uses _meta.volume_unit; unknown must not be relabeled as shares or lots. is_sample data cannot establish real market facts.",
             "parameters": {
                 "type": "object",
                 "properties": {
