@@ -9,6 +9,11 @@ import pytest
 from trade_compass_agent.config import load_project_dotenv
 
 
+@pytest.fixture(autouse=True)
+def default_dotenv_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TRADE_COMPASS_ENV_FILE", raising=False)
+
+
 def test_load_project_dotenv_reads_deepseek_key(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
