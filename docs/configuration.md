@@ -182,7 +182,19 @@ published answer and prevents further learning publication.
 Completed conversation turns retain a Codex thread identifier and resume that
 thread across application restarts. The application transcript remains the
 authoritative user history; the native cursor is derived operational state under
-the data root. Codex keeps its own thread history in its credential/runtime home.
+the data root. Codex stores its native thread history and databases under
+`data_dir/native_agents/codex-runtime`, separately from the desktop app's chats.
+Only the child process receives this runtime location. Existing native records
+are copied on first continuation after checking their thread ID and application
+workspace; the original record remains available for recovery.
+
+The isolated adapter currently supports Codex's default `file` credential store.
+It references the existing user configuration and `auth.json` without copying
+credentials, so the existing login, token refresh and logout remain authoritative.
+Explicit `keyring`, `auto`, and `ephemeral` credential policies fail visibly before
+starting a task; they are not silently converted to file storage. The connection
+check uses the same isolated runtime as actual tasks. Native database/log path
+overrides and desktop parent-thread identity are not inherited into this runtime.
 The latest published reply is supplied on continuation so application corrections
 and caveats take precedence over the original model draft.
 

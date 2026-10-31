@@ -237,9 +237,11 @@ class NativeAgentClient:
                conversation, resumed_prompt, messages, resumed_messages):
         from trade_compass_agent.llm.codex_transport import CodexRPCError, CodexTransport
         from trade_compass_agent.llm.native_session import fingerprint
+        from trade_compass_agent.llm.native_runtime import prepare_native_runtime
 
         binary = executable("codex", self.config.llm.cli_path)
-        with CodexTransport(binary, cwd, check) as rpc:
+        runtime = prepare_native_runtime(self.config.data_dir, conversation, check=check)
+        with CodexTransport(binary, cwd, check, runtime=runtime) as rpc:
             rpc.call("initialize", {"clientInfo": {"name": "trade_compass", "title": "Trade Compass", "version": __version__},
                                     "capabilities": {"experimentalApi": True}})
             rpc.send({"method": "initialized"})
@@ -250,8 +252,12 @@ class NativeAgentClient:
                 entry = next((m for m in catalog.get("data", []) if selected in {m.get("id"), m.get("model")}), None)
                 if entry and "image" not in entry.get("inputModalities", ["text", "image"]):
                     raise AgentUnavailableError("当前Codex模型不支持图片，请选择支持图片的模型。")
+            # Codex returns null storage paths by default. Retain those keys so
+            # existing cursors keep their fingerprint when storage is isolated.
+            profile_config = {key: None if key in {"sqlite_home", "log_dir"} else value
+                              for key, value in inherited.items()}
             profile = fingerprint([str(Path(binary).resolve()), Path(binary).stat().st_mtime_ns,
-                                   self.model, schemas, inherited])
+                                   self.model, schemas, profile_config])
             config = {f"mcp_servers.{name}.enabled": False
                       for name in (inherited.get("mcp_servers") or {})}
             config.update({"web_search": "disabled"})

@@ -193,6 +193,10 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
   published transcript, application context checkpoint and runtime/tool profile, serialize same-session writers,
   and never replay a submitted turn to recover a missing or uncertain handle.
   Verify real thread reuse across process restart separately from text recall.
+  Native runtime history and databases must not populate the host Codex chat list.
+  Check both the application history and host chat list after real calls and restart.
+  Preserve credentials and legacy thread ownership when isolating runtime storage;
+  never silently downgrade credential storage policies or discard resumable history.
   Keep application context compaction enabled. A rewritten checkpoint must reach
   the native model; a stopped or expired preflight summary must retain the submitted
   question and a visible terminal state without starting the business turn. Bound

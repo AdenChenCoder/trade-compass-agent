@@ -7,7 +7,7 @@ import subprocess
 import yaml
 
 from trade_compass_agent.config import resolve_config_path
-from trade_compass_agent.llm.native_environment import native_agent_environment
+from trade_compass_agent.llm.native_runtime import native_runtime_environment, prepare_native_runtime
 
 from trade_compass_agent.llm.providers import _PROVIDER_KEY_ENVS, resolve_api_key
 
@@ -47,10 +47,15 @@ def check_connection(config, *, timeout=5):
 
         try:
             binary = executable(provider, config.llm.cli_path)
-            args = [binary, "login", "status"]
-            result = subprocess.run(args, capture_output=True, timeout=timeout, env=native_agent_environment())
         except AgentUnavailableError as exc:
             return {"status": "missing", "message": str(exc)}
+        try:
+            runtime = prepare_native_runtime(config.data_dir)
+        except AgentUnavailableError as exc:
+            return {"status": "unsupported", "message": str(exc)}
+        try:
+            args = [binary, "login", "status"]
+            result = subprocess.run(args, capture_output=True, timeout=timeout, env=native_runtime_environment(runtime))
         except (OSError, subprocess.TimeoutExpired):
             return {"status": "unknown", "message": "暂时无法检查认证状态，请在本机终端检查 Agent。"}
         if result.returncode != 0:

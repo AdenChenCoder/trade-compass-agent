@@ -17,9 +17,11 @@ fi
   src/trade_compass_agent/llm/native.py \
   src/trade_compass_agent/llm/codex_transport.py \
   src/trade_compass_agent/llm/native_environment.py \
+  src/trade_compass_agent/llm/native_runtime.py \
   src/trade_compass_agent/llm/native_session.py \
   src/trade_compass_agent/llm/connection.py \
   tests/test_native_agents.py \
+  tests/test_native_runtime.py \
   tests/test_native_budgets.py \
   tests/test_native_usage.py \
   tests/test_native_budget_config.py \

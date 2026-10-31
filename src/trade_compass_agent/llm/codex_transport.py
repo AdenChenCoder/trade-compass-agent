@@ -14,6 +14,7 @@ from collections import deque
 
 from trade_compass_agent.runtime.exceptions import AgentUnavailableError
 from trade_compass_agent.llm.native_environment import native_agent_environment
+from trade_compass_agent.llm.native_runtime import native_runtime_environment
 
 
 class CodexRPCError(AgentUnavailableError):
@@ -26,7 +27,7 @@ class CodexRPCError(AgentUnavailableError):
 
 
 class CodexTransport:
-    def __init__(self, binary, cwd, check):
+    def __init__(self, binary, cwd, check, *, runtime=None):
         self.check = check
         self.events = queue.Queue()
         self.sequence = 0
@@ -39,9 +40,12 @@ class CodexTransport:
                         "unbounded_connection_retries"):
             args.extend(["-c", f"features.{feature}=false"])
         args.extend(["-c", "web_search=\"disabled\"", "-c", "project_doc_max_bytes=0"])
+        if runtime is not None:
+            args.extend(["-c", f"sqlite_home={json.dumps(str(runtime))}",
+                         "-c", f"log_dir={json.dumps(str(runtime / 'log'))}"])
         self.process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.DEVNULL, text=True, encoding="utf-8", start_new_session=True,
-                                        env=native_agent_environment())
+                                        env=native_runtime_environment(runtime) if runtime is not None else native_agent_environment())
         os.set_blocking(self.process.stdin.fileno(), False)
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
@@ -94,6 +98,8 @@ class CodexTransport:
                     except BlockingIOError:
                         continue
                     payload = payload[written:]
+        except TimeoutError:
+            raise
         except (BrokenPipeError, OSError):
             raise AgentUnavailableError("Codex 已断开，请检查登录和 CLI 版本后重试。") from None
 

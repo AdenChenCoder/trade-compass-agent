@@ -26,7 +26,7 @@ def usage_runner(tmp_path, monkeypatch):
     history = []
 
     class Transport:
-        def __init__(self, binary, cwd, check):
+        def __init__(self, binary, cwd, check, *, runtime=None):
             self.events = deque()
 
         def __enter__(self):
