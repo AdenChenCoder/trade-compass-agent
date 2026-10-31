@@ -216,6 +216,8 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
   through restart and compaction. Disable the vendor image-file tool; explicit image
   inputs and application tools remain the only image access paths. Codex chat uploads
   go directly to Codex; explicit auxiliary vision settings still govern image tools.
+  Batched attachments preserve selection order despite asynchronous reads; block
+  submission until reads finish and discard stale reads after a conversation switch.
   Ordinary specialist errors and empty results also retain incomplete status through
   dispatch, HTTP and learning gates. Serialize shared SQLite schema/WAL initialization
   across cold concurrent sessions without serializing their model execution.
