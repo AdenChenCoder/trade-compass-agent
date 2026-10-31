@@ -121,6 +121,7 @@ packages = ["src/trade_compass_agent"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [
+  "**/node_modules",
   "/.uv-cache",
   "/apps/web/*.tsbuildinfo",
   "/data",

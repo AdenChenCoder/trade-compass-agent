@@ -238,6 +238,9 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
 - `.trade-compass/skills/` becomes
   `trade_compass_agent/builtin_skills/` inside a wheel.
 - Source and packaged configuration defaults are separate files.
+- Source distributions explicitly exclude workspace node_modules, independent of
+  Git ignore discovery. Verify both archive contents and rebuilding the wheel
+  from the source distribution before treating a build as release evidence.
 - TestPyPI must not be used as a dependency index; download only this project's
   wheel there, then resolve dependencies from production PyPI.
 - A successful upload is not release acceptance. Install the published version
