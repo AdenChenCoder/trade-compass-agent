@@ -186,6 +186,9 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
 - Exact Chinese memory phrases must reach the matching record before loose FTS
   matches. Verify the actual tool result after updates and reopen, not only index presence.
 - Editable builds and release builds have different frontend behavior.
+  A failed lazy page load must keep the current page, drafts and attachments
+  mounted. Do not automatically refresh or replay a task to recover; verify
+  retry and abandoned-navigation behavior with an actual built bundle.
 - Updating source does not reload an already running service. After service
   changes, restart through its existing supervisor and verify the new process
   and affected task entry point. Do not mix freshly imported handlers with
