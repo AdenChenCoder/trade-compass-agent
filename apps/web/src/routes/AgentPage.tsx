@@ -177,6 +177,23 @@ function appendTurnError(
   ]);
 }
 
+function readFileAttachment(file: File): Promise<TurnAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("读取附件失败"));
+    reader.onabort = () => reject(new Error("附件读取已取消"));
+    reader.onload = () => {
+      if (typeof reader.result !== "string") return reject(new Error("读取附件失败"));
+      const binary = file.type.startsWith("image/") || file.type === "application/pdf" || file.name.endsWith(".pdf");
+      resolve(binary
+        ? { type: file.type.startsWith("image/") ? "image" : "pdf", content: reader.result.split(",")[1], mime: file.type || "application/pdf" }
+        : { type: "text", content: reader.result.slice(0, 50000), mime: file.type || undefined });
+    };
+    if (file.type.startsWith("image/") || file.type === "application/pdf" || file.name.endsWith(".pdf")) reader.readAsDataURL(file);
+    else reader.readAsText(file);
+  });
+}
+
 export function AgentPage() {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const messagesRef = useRef(messages);
@@ -192,6 +209,9 @@ export function AgentPage() {
   const [toolTrace, setToolTrace] = useState<ToolTraceEntry[]>([]);
   const [pendingSections, setPendingSections] = useState<TurnSection[]>([]);
   const [attachments, setAttachments] = useState<TurnAttachment[]>([]);
+  const [readingAttachments, setReadingAttachments] = useState(false);
+  const attachmentReadRef = useRef(false);
+  const attachmentGenerationRef = useRef(0);
   const [nextBefore, setNextBefore] = useState<number | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [showNewMessages, setShowNewMessages] = useState(false);
@@ -410,37 +430,21 @@ export function AgentPage() {
     };
   }, [clearMissingStoredSession]);
 
-  const addFileAttachment = useCallback((file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== "string") return;
-      if (file.type.startsWith("image/")) {
-        const base64 = result.includes(",") ? result.split(",")[1] : result;
-        setAttachments((prev) => [
-          ...prev,
-          { type: "image", content: base64, mime: file.type || "image/png" },
-        ]);
-        return;
+  const addFileAttachments = useCallback(async (files: File[]) => {
+    if (attachmentReadRef.current || !files.length) return;
+    attachmentReadRef.current = true;
+    const generation = ++attachmentGenerationRef.current;
+    setReadingAttachments(true);
+    try {
+      const batch = await Promise.all(files.map(readFileAttachment));
+      if (generation === attachmentGenerationRef.current) setAttachments(prev => [...prev, ...batch]);
+    } catch {
+      if (generation === attachmentGenerationRef.current) toast.error("读取附件失败，请重新选择。");
+    } finally {
+      if (generation === attachmentGenerationRef.current) {
+        attachmentReadRef.current = false;
+        setReadingAttachments(false);
       }
-      if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-        const base64 = result.includes(",") ? result.split(",")[1] : result;
-        setAttachments((prev) => [
-          ...prev,
-          { type: "pdf" as "text", content: base64, mime: "application/pdf" },
-        ]);
-        return;
-      }
-      const text = result.includes(",") ? atob(result.split(",")[1]) : result;
-      setAttachments((prev) => [
-        ...prev,
-        { type: "text", content: text.slice(0, 50000), mime: file.type || undefined },
-      ]);
-    };
-    if (file.type.startsWith("image/") || file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-      reader.readAsDataURL(file);
-    } else {
-      reader.readAsText(file);
     }
   }, []);
 
@@ -700,7 +704,7 @@ export function AgentPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     let text = input.trim();
-    if (!text || streaming || remoteBusy) return;
+    if (!text || streaming || remoteBusy || attachmentReadRef.current) return;
 
     const skillMatch = text.match(/^\/skill\s+([\w-]+)\s*(.*)/s);
     if (skillMatch) {
@@ -810,7 +814,7 @@ export function AgentPage() {
       const msg =
         err instanceof ApiError
           ? err.status === 503
-            ? `${err.message}（请配置 LLM API key）`
+            ? err.message
             : err.status === 502
               ? err.message || "Agent 执行失败，请稍后重试"
               : err.status >= 500
@@ -847,6 +851,9 @@ export function AgentPage() {
     setMessages([]);
     setInput("");
     setAttachments([]);
+    attachmentGenerationRef.current++;
+    attachmentReadRef.current = false;
+    setReadingAttachments(false);
     setToolTrace([]);
     setPendingSections([]);
     setStreaming(false);
@@ -1144,6 +1151,7 @@ export function AgentPage() {
               input={input}
               onSelect={handleSkillSelect}
             />
+            {readingAttachments ? <p role="status" className="px-3 pt-2 text-xs text-muted-foreground">正在读取附件…</p> : null}
             {attachments.length > 0 ? (
               <ul className="flex flex-wrap gap-2 border-b px-3 py-2">
                 {attachments.map((att, i) => (
@@ -1183,7 +1191,7 @@ export function AgentPage() {
                 onChange={(e) => {
                   const files = e.target.files;
                   if (!files) return;
-                  for (const file of files) addFileAttachment(file);
+                  void addFileAttachments(Array.from(files));
                   e.target.value = "";
                 }}
               />
@@ -1192,7 +1200,7 @@ export function AgentPage() {
                 variant="ghost"
                 size="icon"
                 className="shrink-0 text-muted-foreground hover:text-foreground"
-                disabled={streaming}
+                disabled={streaming || readingAttachments}
                 onClick={() => fileInputRef.current?.click()}
                 title="添加附件"
               >
@@ -1207,11 +1215,10 @@ export function AgentPage() {
                 onPaste={(e) => {
                   const items = e.clipboardData?.items;
                   if (!items) return;
-                  for (const item of items) {
-                    if (item.kind === "file") {
-                      const file = item.getAsFile();
-                      if (file) addFileAttachment(file);
-                    }
+                  const files = Array.from(items).flatMap(item => item.kind === "file" ? [item.getAsFile()].filter((file): file is File => file !== null) : []);
+                  if (files.length) {
+                    e.preventDefault();
+                    void addFileAttachments(files);
                   }
                 }}
                 placeholder={remoteBusy ? "电脑正在回复另一端发起的消息，你可以先写好下一条…" : "输入问题，可粘贴链接或添加附件…"}
@@ -1228,8 +1235,8 @@ export function AgentPage() {
                 type={streaming ? "button" : "submit"}
                 size="icon"
                 className="shrink-0"
-                disabled={!streaming && (!input.trim() || remoteBusy)}
-                title={streaming ? "停止" : remoteBusy ? "等待本轮回复完成" : "发送"}
+                disabled={!streaming && (!input.trim() || remoteBusy || readingAttachments)}
+                title={streaming ? "停止" : readingAttachments ? "正在读取附件" : remoteBusy ? "等待本轮回复完成" : "发送"}
                 onClick={streaming ? () => void handleStop() : undefined}
               >
                 {streaming ? (

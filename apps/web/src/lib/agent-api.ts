@@ -81,7 +81,7 @@ export async function checkAgentConnection(): Promise<{ status: string; message:
 }
 
 export interface TurnAttachment {
-  type: "text" | "url" | "image";
+  type: "text" | "url" | "image" | "pdf";
   content?: string;
   url?: string;
   mime?: string;

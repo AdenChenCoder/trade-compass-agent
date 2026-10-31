@@ -72,6 +72,85 @@ const submit = async () => {
   await act(async () => { element.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
 };
 
+function controlledFiles() {
+  const readers: { result: string | null; onload?: () => void; onerror?: () => void }[] = [];
+  vi.stubGlobal('FileReader', class {
+    result: string | null = null;
+    onload?: () => void;
+    onerror?: () => void;
+    readAsDataURL() { readers.push(this); }
+    readAsText() { readers.push(this); }
+  });
+  const select = async (files: File[]) => {
+    const input = element.querySelector('input[type="file"]')!;
+    Object.defineProperty(input, 'files', { value: files, configurable: true });
+    await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+  };
+  const finish = async (index: number, value: string) => {
+    await act(async () => { readers[index].result = value; readers[index].onload?.(); });
+  };
+  return { readers, select, finish };
+}
+
+it('keeps selected image order despite reverse completion and blocks incomplete sends', async () => {
+  vi.stubGlobal('EventSource', class { addEventListener() {} close() {} });
+  const uploads = controlledFiles(); const existingFetch = fetch; const requests: { attachments: { content: string }[] }[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (path: string, options?: RequestInit) => {
+    if (path.endsWith('/turn') && options?.method === 'POST') {
+      requests.push(JSON.parse(options.body as string));
+      return Response.json({ session_id: 'original', turn_id: 'images', summary: '已读取图片', sections: [] });
+    }
+    return existingFetch(path, options);
+  }));
+  await draft('比较两张图');
+  await uploads.select([new File(['a'], 'first.png', { type: 'image/png' }), new File(['b'], 'second.png', { type: 'image/png' })]);
+  expect(element.textContent).toContain('正在读取附件');
+  await submit(); expect(requests).toHaveLength(0);
+  await uploads.finish(1, 'data:image/png;base64,SECOND');
+  await submit(); expect(requests).toHaveLength(0);
+  await uploads.finish(0, 'data:image/png;base64,FIRST');
+  expect(element.querySelectorAll('[aria-label="移除附件"]')).toHaveLength(2);
+  await submit();
+  expect(requests[0].attachments.map(item => item.content)).toEqual(['FIRST', 'SECOND']);
+});
+
+it('retains the draft and existing attachment when a new file read fails', async () => {
+  const uploads = controlledFiles(); await draft('保留草稿');
+  await uploads.select([new File(['a'], 'first.png', { type: 'image/png' })]);
+  await uploads.finish(0, 'data:image/png;base64,FIRST');
+  await uploads.select([new File(['b'], 'failed.png', { type: 'image/png' })]);
+  await act(async () => { uploads.readers[1].onerror?.(); });
+  expect(element.querySelector('textarea')!.value).toBe('保留草稿');
+  expect(element.querySelectorAll('[aria-label="移除附件"]')).toHaveLength(1);
+  expect(element.textContent).not.toContain('正在读取附件');
+});
+
+it('does not move pending attachments into a newly selected conversation', async () => {
+  const uploads = controlledFiles();
+  await uploads.select([new File(['a'], 'old.png', { type: 'image/png' })]);
+  const newChat = [...element.querySelectorAll('button')].find(button => button.textContent?.includes('新对话'))!;
+  await act(async () => { newChat.click(); });
+  await uploads.finish(0, 'data:image/png;base64,OLD');
+  expect(element.querySelectorAll('[aria-label="移除附件"]')).toHaveLength(0);
+  expect(element.textContent).not.toContain('正在读取附件');
+});
+
+it('preserves plain CSV bytes when reading a text attachment', async () => {
+  vi.stubGlobal('EventSource', class { addEventListener() {} close() {} });
+  const uploads = controlledFiles(); const existingFetch = fetch; const requests: { attachments: { content: string }[] }[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (path: string, options?: RequestInit) => {
+    if (path.endsWith('/turn') && options?.method === 'POST') {
+      requests.push(JSON.parse(options.body as string));
+      return Response.json({ session_id: 'original', turn_id: 'csv', summary: '已读取附件', sections: [] });
+    }
+    return existingFetch(path, options);
+  }));
+  await draft('读取表格');
+  await uploads.select([new File(['a,b'], 'table.csv', { type: 'text/csv' })]);
+  await uploads.finish(0, '方案,费用\n甲,174.20'); await submit();
+  expect(requests[0].attachments[0].content).toBe('方案,费用\n甲,174.20');
+});
+
 it.each([503, 502, 409])("preserves a %s failure as a draft through sync and removes the error after a successful retry", async code => {
   vi.stubGlobal('EventSource', class { addEventListener() {} close() {} });
   const existingFetch = fetch;
@@ -91,7 +170,8 @@ it.each([503, 502, 409])("preserves a %s failure as a draft through sync and rem
   expect(element.querySelector('textarea')!.value).toBe('失败后需要保留的消息');
   expect(element.textContent).toContain('本次请求未执行');
   expect(posts).toBe(1);
-  expect(rendered()).toEqual([...contents(50), code === 503 ? '本次请求未执行（请配置 LLM API key）' : '本次请求未执行']);
+  expect(rendered()).toEqual([...contents(50), '本次请求未执行']);
+  expect(element.textContent).not.toContain('请配置 LLM API key');
   retry = true; await submit(); await sync();
   expect(rendered()).toEqual([...contents(50), ...extraMessages.map(m => m.content)]);
   expect(element.textContent).not.toContain('本次请求未执行');

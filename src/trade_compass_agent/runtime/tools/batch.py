@@ -14,6 +14,7 @@ from datetime import datetime
 
 import requests
 
+from trade_compass_agent.data.metadata import bars_metadata
 from trade_compass_agent.data.fundamentals import FundamentalsSnapshot
 from trade_compass_agent.data.network import (
     extend_no_proxy_for_eastmoney,
@@ -87,7 +88,6 @@ def tool_batch_get_bars(
                 errors[sym] = err or "no data"
                 continue
             if summary_only:
-                from trade_compass_agent.data.metadata import bars_metadata
                 latest = bars[-1]
                 provider_name = getattr(stack.provider, "name", "unknown")
                 metadata = bars_metadata(bars, provider_name, timeframe)
@@ -118,6 +118,9 @@ def tool_batch_get_bars(
                 tail = bars[-min(limit, 30):]
                 results[sym] = {
                     "bars_count": len(bars),
+                    "returned_count": len(tail),
+                    "bars_truncated": len(tail) < len(bars),
+                    "_meta": bars_metadata(bars, getattr(stack.provider, "name", "unknown"), timeframe),
                     "as_of": bars[-1].timestamp.isoformat(),
                     "source": bars[-1].source,
                     "adjusted": bars[-1].adjusted,

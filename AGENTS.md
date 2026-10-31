@@ -134,6 +134,9 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
   Background completion must compare the original versions plus its own accepted
   write receipts; concurrent edits remain eligible for review. Persist each source
   task before serializing execution so a busy worker cannot discard another input.
+  Review nudges belong to each conversation and survive new Web runtime instances
+  and restart. Learning archives must be indexed when published; stopping learning
+  after the main answer preserves that answer without appending it again.
 - Keep new review batches bounded while reusing valid older batch checkpoints.
   Direct memory model calls honor the configured agent budget and earlier parent
   deadline/cancellation; an HTTP read timeout alone is not a wall-clock budget.
@@ -161,6 +164,11 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
   clause or section, and distinguish tool calls/metadata from explicit company
   names. Review and correction use the same fee-inclusive FIFO allocations;
   returned allocation totals never imply full account history.
+- Tool receipts distinguish fetched counts from truncated detail windows. Preserve
+  existing count meanings, declare returned coverage, and derive full ledger counts
+  from the ledger. Volume units require source evidence; unknown is not shares or
+  lots. Synthetic observations remain sample evidence across API and agent tools.
+  Host development instructions must not become workbench reply content.
 - Daily journals, close analyses, daily reflections, and weekly strategy reviews
   use distinct execution sessions per run. Keep prior sessions searchable, and
   verify actual current-turn reads before
@@ -180,9 +188,47 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
   changes, restart through its existing supervisor and verify the new process
   and affected task entry point. Do not mix freshly imported handlers with
   cached modules or replay missed autonomous trades to validate a restart.
+- Native Agent adapters preserve application-owned history and business-tool
+  authorization. Native resume handles are derived state: bind them to the
+  published transcript, application context checkpoint and runtime/tool profile, serialize same-session writers,
+  and never replay a submitted turn to recover a missing or uncertain handle.
+  Verify real thread reuse across process restart separately from text recall.
+  Native runtime history and databases must not populate the host Codex chat list.
+  Check both the application history and host chat list after real calls and restart.
+  Preserve credentials and legacy thread ownership when isolating runtime storage;
+  never silently downgrade credential storage policies or discard resumable history.
+  Runtime credential references must not break backup/export or copy host secrets;
+  preserve application and native session records through preview and restore.
+  Keep application context compaction enabled. A rewritten checkpoint must reach
+  the native model; a stopped or expired preflight summary must retain the submitted
+  question and a visible terminal state without starting the business turn. Bound
+  subprocess request writes as well as response reads by cancellation/deadlines.
+- SSE transport failures belong to reconnect handling, not agent failure
+  messages. Close streams on completed, interrupted, or failed terminal events;
+  verify cancellation before the first response delta in the actual UI.
 - Scheduled model steps need a budget for multiple tool rounds with the configured
   model. Verify inference profiles, output reserves, and transient reasoning for
   every supported model after a switch. Scope tools to the task; preserve evidence checks.
+- Native tool-call limits and API model-round limits are distinct settings.
+  Budget exhaustion must retain receipts, disclose partial completion, and prevent
+  automatic learning from an incomplete run. Summary calls share the original
+  deadline and cannot replay mutations; cancellation and deadlines propagate into
+  nested tools. An interrupted tool's outcome is unknown until verified, not proof
+  that no mutation occurred.
+  Nested research workers inherit the parent execution context and retain partial
+  completion through final reports. Image analysis requires an actual image
+  transport; text-only native responses cannot stand in for visual evidence.
+  Native image uploads retain validated immutable assets and original visual requests
+  through restart and compaction. Disable the vendor image-file tool; explicit image
+  inputs and application tools remain the only image access paths. Codex chat uploads
+  go directly to Codex; explicit auxiliary vision settings still govern image tools.
+  Batched attachments preserve selection order despite asynchronous reads; block
+  submission until reads finish and discard stale reads after a conversation switch.
+  Ordinary specialist errors and empty results also retain incomplete status through
+  dispatch, HTTP and learning gates. Serialize shared SQLite schema/WAL initialization
+  across cold concurrent sessions without serializing their model execution.
+  Explicit sample/synthetic quotes cannot become market-price fills, even if their
+  prices, timestamps and volumes otherwise pass execution checks.
 - Premarket plans may use the exact previous trading session's dated close as a
   planning reference. Keep it separate from last-trade fallbacks and live valuation;
   reference coverage cannot make a price fresh or relax execution quote checks.

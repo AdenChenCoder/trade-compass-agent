@@ -299,6 +299,11 @@ def summarize_middle_turns(
                 remaining.extend(unit)
         summary_input_msgs = remaining
 
+    # Keep original image-bearing messages and their request context; a textual
+    # summary cannot replace visual evidence or reliably reconstruct its mapping.
+    protected_images = [message for message in summary_input_msgs if message.image_paths]
+    summary_input_msgs = [message for message in summary_input_msgs if not message.image_paths]
+
     # Skip summarization if middle section is too small to be worth it
     if len(summary_input_msgs) < 4:
         logger.debug("summarize: middle section too small (%d messages)", len(middle_msgs))
@@ -338,12 +343,13 @@ def summarize_middle_turns(
     compressed.extend(head_msgs)
     compressed.extend(task_anchor)
     compressed.append(ChatMessage(role="user", content=summary_msg_content))
+    compressed.extend(protected_images)
     compressed.extend(protected_progress)
     # Flatten the tail messages — put the most recent user message LAST
     # so the LLM knows this is the current task
     compressed.extend(tail_msgs)
 
-    preserved_middle = [*task_anchor, *protected_progress]
+    preserved_middle = [*task_anchor, *protected_images, *protected_progress]
     messages_summarized = len(middle_msgs) - len(preserved_middle)
     chars_saved = (sum(len(m.content or "") for m in middle_msgs)
                    - sum(len(m.content or "") for m in preserved_middle) - len(summary_msg_content))

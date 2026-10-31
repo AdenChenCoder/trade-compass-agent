@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import replace
 
 from trade_compass_agent.data.network import run_with_timeout
-from trade_compass_agent.llm.providers import ChatMessage, create_chat_client
+from trade_compass_agent.llm.providers import (
+    ChatMessage, LLMExecutionCancelled, _remaining_request_time, check_execution_active,
+    create_chat_client, llm_request_deadline,
+)
 from trade_compass_agent.portfolio.trading_policy import TradeRejected
+from trade_compass_agent.runtime.exceptions import TurnInterruptedError
 
 
 _PROMPT = """你只核验用户是否明确授权所提交的模拟交易，不分析市场、不制定策略、不能调用工具。
@@ -46,16 +51,22 @@ def authorize_user_trade(config, message: str, scope: dict, completed_orders: li
     user_instruction string is deliberately not evidence for this decision.
     """
     try:
-        check_config = replace(config, llm=replace(config.llm, timeout=min(config.llm.timeout, 30), max_retries=0))
+        timeout = config.llm.timeout if config.llm.provider == "codex" else min(config.llm.timeout, 30)
+        remaining = _remaining_request_time()
+        if remaining is not None:
+            timeout = min(timeout, remaining)
+        check_config = replace(config, llm=replace(config.llm, timeout=timeout, max_retries=0))
         request = json.dumps({"current_user_message": message, **scope,
                               "completed_orders": completed_orders,
                               "supporting_context": supporting_context or {}}, ensure_ascii=False)
-        response = run_with_timeout(
-            lambda: create_chat_client(check_config).complete([
-                ChatMessage(role="system", content=_PROMPT),
-                ChatMessage(role="user", content=request),
-            ]), 30, "explicit trade authorization",
-        )
+        with llm_request_deadline(time.monotonic() + timeout):
+            response = run_with_timeout(
+                lambda: create_chat_client(check_config).complete([
+                    ChatMessage(role="system", content=_PROMPT),
+                    ChatMessage(role="user", content=request),
+                ]), timeout, "explicit trade authorization",
+            )
+            check_execution_active()
         raw = (response.content or "").strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
@@ -65,6 +76,11 @@ def authorize_user_trade(config, message: str, scope: dict, completed_orders: li
                 and instruction.strip() and instruction in message
                 and isinstance(verdict.get("reason"), str) and verdict["reason"].strip()):
             return verdict
-    except Exception as exc:
+    except TurnInterruptedError:
+        raise
+    except (Exception, LLMExecutionCancelled) as exc:
+        # A child-model timeout is a failed authorization; a cancelled or expired
+        # parent operation must continue unwinding instead of returning a verdict.
+        check_execution_active()
         raise TradeRejected("暂时无法核验本轮交易指令，本次未成交，可稍后重试", "trade_authorization_unavailable") from exc
     raise TradeRejected("本轮用户指令未明确授权这笔操作，本次未成交", "invalid_user_instruction")

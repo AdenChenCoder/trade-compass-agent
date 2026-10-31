@@ -34,6 +34,7 @@ def test_source_and_packaged_defaults_use_qwen38_multimodal_model() -> None:
             "api_key_env": "",
             "timeout": 900.0,
             "agent_timeout": 3600.0,
+            "native_max_tool_calls": 30,
             "max_retries": 2,
             "vision_model": "qwen3.8-27b",
             "vision_provider": "lmstudio",

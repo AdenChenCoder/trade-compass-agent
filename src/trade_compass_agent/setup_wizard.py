@@ -23,6 +23,7 @@ _LLM_OPTIONS = (
     ("dashscope", "DashScope / 通义千问"),
     ("ollama", "Ollama（本地，无需 API Key）"),
     ("lmstudio", "LM Studio（本地，无需 API Key，推荐）"),
+    ("codex", "Codex（本机 Agent，使用 Codex 登录）"),
     ("disabled", "暂不启用 LLM"),
 )
 _LLM_DEFAULT_MODELS = {
@@ -33,6 +34,7 @@ _LLM_DEFAULT_MODELS = {
     "dashscope": "qwen-plus",
     "ollama": "gemma4:26b",
     "lmstudio": "qwen3.8-27b",
+    "codex": "",
     "disabled": "",
 }
 _LLM_KEY_ENVS = {
@@ -240,15 +242,19 @@ def run_setup_wizard(
     llm_raw["model"] = model
     agent_raw["require_llm"] = provider != "disabled"
     key_env = _LLM_KEY_ENVS.get(provider, "")
-    configured_key = provider in {"ollama", "lmstudio", "disabled"}
+    configured_key = provider in {"ollama", "lmstudio", "disabled", "codex"}
     if key_env:
         llm_raw["api_key_env"] = key_env
         changed, value = ui.secret(key_env, configured=bool(env.get(key_env)))
         if changed:
             env_updates[key_env] = value
         configured_key = bool(value if changed else env.get(key_env))
-    elif provider in {"ollama", "lmstudio"}:
+    elif provider in {"ollama", "lmstudio", "codex"}:
         llm_raw["api_key_env"] = ""
+    if provider in {"codex"}:
+        llm_raw["cli_path"] = ui.text("Agent 可执行文件路径（留空自动查找）",
+                                    default=str(llm_raw.get("cli_path", "")) if provider == old_provider else "")
+        ui.write("使用 Agent 自身的认证；留空模型名称将使用其默认模型。推理可能使用云端服务及账户额度。")
     if provider != "disabled":
         configure_vision = ui.confirm(
             "配置独立视觉模型（图片分析）",
@@ -262,9 +268,9 @@ def run_setup_wizard(
             )
             vision_provider = ui.select(
                 "选择视觉模型提供商：",
-                _LLM_OPTIONS[:-1],
+                tuple(option for option in _LLM_OPTIONS[:-1] if option[0] not in {"codex"}),
                 current=vision_provider
-                if vision_provider in dict(_LLM_OPTIONS[:-1])
+                if vision_provider in dict(_LLM_OPTIONS[:-1]) and vision_provider not in {"codex"}
                 else "lmstudio",
             )
             llm_raw["vision_provider"] = vision_provider
@@ -453,7 +459,7 @@ def run_setup_wizard(
     raw["agent"] = agent_raw
 
     ui.write("\n配置摘要（密钥已隐藏）")
-    display_model = model or "disabled"
+    display_model = model or ("默认模型" if provider in {"codex"} else "disabled")
     ui.write(f"  LLM:      {provider} / {display_model}")
     ui.write(f"  数据:     {data_provider}" + (" + Tushare" if use_tushare else ""))
     ui.write(f"  自动化:   {'启用' if scheduler_enabled else '停用'}")

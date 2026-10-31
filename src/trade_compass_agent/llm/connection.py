@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import subprocess
+
 import yaml
 
 from trade_compass_agent.config import resolve_config_path
+from trade_compass_agent.llm.native_runtime import native_runtime_environment, prepare_native_runtime
 
 from trade_compass_agent.llm.providers import _PROVIDER_KEY_ENVS, resolve_api_key
 
 
 CONNECTIONS = [
+    {"provider": "codex", "label": "Codex", "model": ""},
     {"provider": "lmstudio", "label": "LM Studio", "model": "qwen3.8-27b"},
     {"provider": "ollama", "label": "Ollama", "model": "gemma4:26b"},
     {"provider": "deepseek", "label": "DeepSeek", "model": "deepseek-flash"},
@@ -33,10 +37,30 @@ def connection_settings(config):
     return {"provider": config.llm.provider, "model": config.llm.model, "options": options}
 
 
-def check_connection(config):
+def check_connection(config, *, timeout=5):
     provider = config.llm.provider
     if provider == "disabled":
         return {"status": "disabled", "message": "尚未启用 Agent。"}
+    if provider == "codex":
+        from trade_compass_agent.llm.native import executable
+        from trade_compass_agent.runtime.exceptions import AgentUnavailableError
+
+        try:
+            binary = executable(provider, config.llm.cli_path)
+        except AgentUnavailableError as exc:
+            return {"status": "missing", "message": str(exc)}
+        try:
+            runtime = prepare_native_runtime(config.data_dir)
+        except AgentUnavailableError as exc:
+            return {"status": "unsupported", "message": str(exc)}
+        try:
+            args = [binary, "login", "status"]
+            result = subprocess.run(args, capture_output=True, timeout=timeout, env=native_runtime_environment(runtime))
+        except (OSError, subprocess.TimeoutExpired):
+            return {"status": "unknown", "message": "暂时无法检查认证状态，请在本机终端检查 Agent。"}
+        if result.returncode != 0:
+            return {"status": "unauthenticated", "message": "未确认有效认证，请在运行交易罗盘的电脑执行 codex login。"}
+        return {"status": "authenticated", "message": "已检测到认证；模型可用性与额度将在执行任务时确认。"}
     if provider not in {option["provider"] for option in CONNECTIONS}:
         return {"status": "unsupported", "message": "当前版本不支持此接入，请在设置中选择可用的模型接入。"}
     if provider in {"ollama", "lmstudio"}:

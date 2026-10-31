@@ -116,7 +116,29 @@ class MemorySearchIndex:
                     "SELECT scope, content, path, 0.0 AS rank FROM chunks_fts "
                     "WHERE instr(lower(content), lower(?)) > 0 ORDER BY rowid DESC LIMIT ?",
                     (q, limit),
-                ).fetchall() if len(q) > 2 and _CJK_RANGE.search(q) else []
+                ).fetchall() if len(q) >= 2 and _CJK_RANGE.search(q) else []
+                # unicode61 stores an unspaced Chinese clause as one token.
+                # Match the user's Chinese terms as substrings as well, using
+                # the same OR semantics as the FTS query. Keep explicit dates.
+                terms = list(dict.fromkeys(t.strip('"') for t in q.split()
+                                           if len(t.strip('"')) >= 2 and _CJK_RANGE.search(t)))
+                partial = []
+                if terms:
+                    dates = []
+                    for value in re.findall(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)", q):
+                        try:
+                            date.fromisoformat(value)
+                        except ValueError:
+                            continue
+                        dates.append(value)
+                    matches = ["instr(lower(content), lower(?)) > 0" for _ in terms]
+                    date_filter = (" AND (" + " OR ".join("instr(content, ?) > 0" for _ in dates) + ")") if dates else ""
+                    partial = conn.execute(
+                        "SELECT scope, content, path, 0.0 AS rank FROM chunks_fts WHERE ("
+                        + " OR ".join(matches) + ")" + date_filter
+                        + " ORDER BY (" + " + ".join(f"({match})" for match in matches) + ") DESC, rowid DESC LIMIT ?",
+                        (*terms, *dates, *terms, limit),
+                    ).fetchall()
                 rows = conn.execute(
                     """
                     SELECT scope, content, path, rank
@@ -127,9 +149,14 @@ class MemorySearchIndex:
                     """,
                     (fts_q, limit + len(exact) if limit >= 0 else limit),
                 ).fetchall()
-                if exact:
-                    exact_paths = {row["path"] for row in exact}
-                    rows = exact + [row for row in rows if row["path"] not in exact_paths]
+                if exact or partial:
+                    seen = set()
+                    combined = []
+                    for row in [*exact, *partial, *rows]:
+                        if row["path"] not in seen:
+                            seen.add(row["path"])
+                            combined.append(row)
+                    rows = combined
                     if limit >= 0:
                         rows = rows[:limit]
         except sqlite3.OperationalError:

@@ -25,6 +25,13 @@ class LLMIncompleteResponseError(AgentTurnError):
     """A completed generation contained no final answer or executable tool call."""
 
 
+class AttachmentInputError(AgentTurnError):
+    """An attachment cannot be supplied as actual model evidence."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, status_code=422)
+
+
 class LLMContextBudgetError(AgentTurnError):
     """The request cannot fit the loaded model without losing supplied evidence."""
 

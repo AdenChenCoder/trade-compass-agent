@@ -107,6 +107,10 @@ export function useAgentSSE(config?: SSEConfig) {
     };
 
     const handleRaw = (eventType: string, raw: MessageEvent) => {
+      if (closedRef.current || sourceRef.current !== source) return;
+      // EventSource also dispatches a data-less `error` for connection loss.
+      // Its retry policy belongs to onerror, not the agent's failure handler.
+      if (typeof raw.data !== "string") return;
       if (raw.lastEventId) lastEventIdRef.current = raw.lastEventId;
       if (raw.lastEventId && trackEventId(raw.lastEventId)) return;
 
@@ -119,6 +123,12 @@ export function useAgentSSE(config?: SSEConfig) {
 
       const handler = handlersRef.current[eventType] ?? handlersRef.current.message;
       handler?.(parsed);
+      if (["done", "interrupted", "error"].includes(eventType)) {
+        closedRef.current = true;
+        source.close();
+        sourceRef.current = null;
+        setStatus("disconnected");
+      }
     };
 
     for (const eventType of AGENT_SSE_EVENTS) {

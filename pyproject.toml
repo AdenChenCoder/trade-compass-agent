@@ -40,6 +40,7 @@ dependencies = [
   "lmstudio>=1.5,<2",
   "mplfinance>=0.12.10b0,<0.13",
   "matplotlib>=3.8",
+  "pillow>=13,<14",
   "pywebpush>=2.0,<3",
 ]
 
@@ -124,6 +125,7 @@ exclude = [
   "/apps/web/*.tsbuildinfo",
   "/data",
   "/memory_vault",
+  "/output",
   "/temp",
   "/docs/*-20??-??-??.*",
   "/apps/mobile/dist",

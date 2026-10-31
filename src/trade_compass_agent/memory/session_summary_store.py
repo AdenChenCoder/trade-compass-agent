@@ -79,13 +79,19 @@ class SessionSummaryStore:
         self._db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
-        self._init_schema()
+        from trade_compass_agent.concurrency import file_transaction
+        with file_transaction(db_path.with_suffix(".init.lock")):
+            self._init_schema()
 
     def _get_conn(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn"):
-            self._local.conn = sqlite3.connect(str(self._db_path), timeout=10)
-            self._local.conn.execute("PRAGMA journal_mode=WAL")
-            self._local.conn.execute("PRAGMA synchronous=NORMAL")
+            from trade_compass_agent.concurrency import file_transaction
+            with file_transaction(self._db_path.with_suffix(".init.lock")):
+                conn = sqlite3.connect(str(self._db_path), timeout=10)
+                if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
+                    conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
+                self._local.conn = conn
         return self._local.conn
 
     def _init_schema(self) -> None:

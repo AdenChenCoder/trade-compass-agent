@@ -143,10 +143,16 @@ class LLMConfig:
     api_key_env: str = "DEEPSEEK_API_KEY"
     timeout: float = 900.0
     max_retries: int = 2
+    cli_path: str = ""  # optional native Codex executable
     agent_timeout: float = 3600.0
+    native_max_tool_calls: int = 30
     vision_model: str = ""  # fallback model for vision tasks (e.g. gpt-4o-mini)
     vision_provider: str = ""  # provider for vision_model (defaults to main provider)
     vision_api_key_env: str = ""  # API key env for vision provider (defaults to main)
+
+    def __post_init__(self) -> None:
+        if type(self.native_max_tool_calls) is not int or self.native_max_tool_calls < 1:
+            raise ValueError("llm.native_max_tool_calls must be an integer >= 1")
 
 
 @dataclass(frozen=True)
@@ -409,7 +415,9 @@ def load_app_config(path: Path | None = None) -> AppConfig:
             api_key_env=str(llm_raw.get("api_key_env", "DEEPSEEK_API_KEY")),
             timeout=float(llm_raw.get("timeout", 900.0)),
             max_retries=int(llm_raw.get("max_retries", 2)),
+            cli_path=str(llm_raw.get("cli_path", "")),
             agent_timeout=float(llm_raw.get("agent_timeout", 3600.0)),
+            native_max_tool_calls=llm_raw.get("native_max_tool_calls", 30),
             vision_model=str(llm_raw.get("vision_model", "")),
             vision_provider=str(llm_raw.get("vision_provider", "")),
             vision_api_key_env=str(llm_raw.get("vision_api_key_env", "")),
@@ -598,7 +606,7 @@ def update_llm_connection(provider: str, model: str) -> AppConfig:
     from trade_compass_agent.concurrency import atomic_write, get_path_lock
     from trade_compass_agent.llm.providers import _PROVIDER_KEY_ENVS
 
-    supported = {"disabled", "ollama", "lmstudio", *_PROVIDER_KEY_ENVS}
+    supported = {"disabled", "ollama", "lmstudio", "codex", *_PROVIDER_KEY_ENVS}
     if provider not in supported:
         raise ValueError("Unsupported model connection")
     config_path = resolve_config_path()
@@ -609,12 +617,13 @@ def update_llm_connection(provider: str, model: str) -> AppConfig:
         raw = yaml.safe_load(original) or {}
         llm = dict(raw.get("llm") or {})
         connections = dict(raw.get("llm_connections") or {})
-        fields = ("model", "api_key_env")
+        fields = ("model", "api_key_env", "cli_path")
         previous = str(llm.get("provider", "disabled"))
         if previous in supported:
             connections[previous] = {key: llm.get(key, "") for key in fields}
         if provider != llm.get("provider"):
             llm["api_key_env"] = _PROVIDER_KEY_ENVS.get(provider, "")
+            llm["cli_path"] = ""
             saved = connections.get(provider) or {}
             llm.update({key: saved[key] for key in fields if key in saved})
         llm.update(provider=provider, model=model.strip())

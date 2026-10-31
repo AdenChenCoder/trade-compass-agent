@@ -90,3 +90,29 @@ def test_control_without_active_turn_returns_404(client: TestClient) -> None:
         json={"session_id": session_id, "action": "interrupt"},
     )
     assert response.status_code == 404
+
+
+def test_model_deadline_reaches_http_and_stream_terminal_state(client, monkeypatch):
+    from types import SimpleNamespace
+    from trade_compass_agent.llm.providers import LLMExecutionCancelled
+    from trade_compass_agent.web import agent_api
+
+    def expired(*a, **kw):
+        raise LLMExecutionCancelled("Workflow model deadline reached")
+
+    monkeypatch.setattr("trade_compass_agent.runtime.loop.create_chat_client",
+                        lambda _: SimpleNamespace(stream_complete=expired))
+    events = []
+    publish = agent_api._publish_stream
+
+    def observe(session_id, event):
+        events.append(event)
+        publish(session_id, event)
+
+    monkeypatch.setattr(agent_api, "_publish_stream", observe)
+    response = client.post("/api/agent/turn", json={"session_id": "expired-http", "message": "核对。"})
+    assert response.status_code == 504
+    assert "已有记录已保留" in response.json()["detail"]
+    assert events[-1].event == "error" and events[-1].data["ok"] is False
+    assert not any(event.event == "done" for event in events)
+    assert client.post("/api/agent/control", json={"session_id": "expired-http", "action": "interrupt"}).status_code == 404

@@ -256,17 +256,29 @@ def _source_files(layout: RecoveryLayout) -> list[tuple[str, Path]]:
         if not root.exists():
             continue
         for source in sorted(root.rglob("*")):
+            relative = source.relative_to(root).as_posix()
+            if _native_runtime_exclusion(PurePosixPath(root_name, relative)):
+                continue
             if source.is_symlink():
                 raise RecoveryError(f"Refusing to back up symlink: {source}")
             if not source.is_file() or _is_sqlite_sidecar(source):
                 continue
-            relative = source.relative_to(root).as_posix()
             result.append((f"{root_name}/{relative}", source))
 
     archive_paths = [item[0] for item in result]
     if len(archive_paths) != len(set(archive_paths)):
         raise RecoveryError("Backup layout contains duplicate logical paths")
     return sorted(result)
+
+
+def _native_runtime_exclusion(path: PurePosixPath) -> str | None:
+    if path.parts[:3] != ("data", "native_agents", "codex-runtime") or len(path.parts) < 4:
+        return None
+    if path.parts[3] == "tmp":
+        return "temporary native process files"
+    if len(path.parts) == 4 and (path.name in {"auth.json", "config.toml"} or path.name.endswith(".config.toml")):
+        return "external Codex login or configuration reference"
+    return None
 
 
 def _snapshot_file(source: Path, destination: Path) -> None:

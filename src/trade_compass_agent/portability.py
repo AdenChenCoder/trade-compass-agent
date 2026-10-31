@@ -27,6 +27,7 @@ from trade_compass_agent.recovery import (
     _atomic_replace_from,
     _ensure_destination_within_layout,
     _is_sqlite_sidecar,
+    _native_runtime_exclusion,
     _reject_destination_inside_state,
     _restore_destination,
     _sha256,
@@ -232,12 +233,17 @@ def _portable_source_files(
         if not root.exists():
             continue
         for source in sorted(root.rglob("*")):
+            relative = source.relative_to(root).as_posix()
+            archive_path = f"{root_name}/{relative}"
+            native_reason = _native_runtime_exclusion(PurePosixPath(archive_path))
+            if native_reason:
+                if source.is_symlink() or source.is_file():
+                    excluded.append({"archive_path": archive_path, "reason": native_reason})
+                continue
             if source.is_symlink():
                 raise RecoveryError(f"Refusing to export symlink: {source}")
             if not source.is_file() or _is_sqlite_sidecar(source):
                 continue
-            relative = source.relative_to(root).as_posix()
-            archive_path = f"{root_name}/{relative}"
             reason = _portable_exclusion_reason(PurePosixPath(archive_path))
             if reason:
                 excluded.append({"archive_path": archive_path, "reason": reason})
@@ -355,6 +361,8 @@ def _has_value(value: Any) -> bool:
 
 
 def _portable_exclusion_reason(path: PurePosixPath) -> str | None:
+    if native_reason := _native_runtime_exclusion(path):
+        return native_reason
     name = path.name.lower()
     if name in _SENSITIVE_NAMES or name.startswith(".env."):
         return "known credential file"

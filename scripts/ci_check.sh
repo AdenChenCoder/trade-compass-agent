@@ -14,6 +14,32 @@ fi
   scripts/check_assets.py \
   scripts/check_dist.py \
   scripts/mobile_probe.py \
+  src/trade_compass_agent/llm/native.py \
+  src/trade_compass_agent/llm/codex_transport.py \
+  src/trade_compass_agent/llm/native_environment.py \
+  src/trade_compass_agent/llm/native_runtime.py \
+  src/trade_compass_agent/llm/native_session.py \
+  src/trade_compass_agent/llm/connection.py \
+  tests/test_native_agents.py \
+  tests/test_native_runtime.py \
+  tests/test_native_budgets.py \
+  tests/test_native_usage.py \
+  tests/test_native_budget_config.py \
+  tests/test_native_specialist_recovery.py \
+  tests/test_specialist_dispatch_termination.py \
+  tests/test_specialist_failure_states.py \
+  tests/test_session_cold_start.py \
+  tests/test_agent_simulation_flow.py \
+  tests/test_report_tool_citations.py \
+  tests/test_tool_evidence_boundaries.py \
+  tests/test_learning_archive.py \
+  tests/test_review_nudge_persistence.py \
+  tests/test_native_vision_boundary.py \
+  tests/test_native_image_input.py \
+  src/trade_compass_agent/llm/native_images.py \
+  tests/test_debate_research_termination.py \
+  tests/test_debate_incomplete_consumers.py \
+  tests/test_memory_write_recovery.py \
   tests/test_mobile_access.py \
   tests/test_mobile_pwa.py \
   tests/test_mobile_peer.py \
