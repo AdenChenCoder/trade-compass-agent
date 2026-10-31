@@ -1168,6 +1168,9 @@ import re
 _DIRECTIONAL_PATTERN = re.compile(
     r"(买入|卖出|加仓|减仓|建仓|清仓|做多|做空|追涨|抄底|建议介入|可以买|适合买|建议卖)",
 )
+_ADVICE_CONTEXT_PATTERN = re.compile(
+    r"建议|应该|应当|可以|适合|计划|待执行|待成交|尚未成交|若|如果|后续|下一步|接下来|明日|明天|将|考虑|拟",
+)
 _SYMBOL_PATTERN = re.compile(r"(?<![A-Za-z0-9_.])(\d{6})(?![A-Za-z0-9_]|\.\d)")
 
 
@@ -1189,9 +1192,68 @@ def build_report_evidence(analysis_text: str, tool_calls_log: list[tuple[str, st
             _check_data_gap(analysis_text, tool_calls_log), _build_provenance_footer(tool_calls_log)) if part]
 
 
+def _has_directional_advice(text: str) -> bool:
+    """Exclude explicit execution facts, without exempting nearby new advice."""
+    receipt_id_column = None
+    fact_columns = []
+    section_context = ""
+    was_table = False
+    for line in text.splitlines():
+        plain = re.sub(r"[*`]", "", line)
+        if plain.strip().startswith("|"):
+            was_table = True
+            cells = [cell.strip() for cell in plain.strip().strip("|").split("|")]
+            for index, cell in enumerate(cells):
+                if re.fullmatch(r"成交\s*(?:ID|编号)", cell, re.IGNORECASE):
+                    receipt_id_column = index
+                    fact_columns = [i for i, label in enumerate(cells)
+                                    if ("成交" in label or label == "方向")
+                                    and not re.search(r"计划|建议|预计|目标|下一步", label)]
+            if receipt_id_column is not None and receipt_id_column < len(cells):
+                identity = cells[receipt_id_column]
+                planned = _ADVICE_CONTEXT_PATTERN.search(section_context)
+                if not planned and re.fullmatch(r"(?:[0-9a-f]{16}|legacy-[\w-]+)", identity):
+                    # Receipt cells may combine direction, quantity and price.
+                    # Keep any additional prose or advice, including other cells.
+                    for index in fact_columns:
+                        if index < len(cells) and re.fullmatch(r"(?:买入|卖出)[\d\s,.，元股份手/@￥¥×+−-]*", cells[index]):
+                            cells[index] = ""
+                    plain = "|".join(cells)
+        else:
+            receipt_id_column = None
+            if plain.strip():
+                if was_table or re.match(r"^\s*#{1,6}\s", plain):
+                    section_context = ""
+                section_context += "\n" + re.sub(
+                    r"(?:不|未|没有)(?:提供|给出|包含|作出|作)?(?:任何)?(?:买卖|投资|交易)?建议", "", plain,
+                )
+                was_table = False
+        # A completed submission can follow its sole order description rather
+        # than precede it. Future advice still wins over this factual predicate.
+        if (len(_DIRECTIONAL_PATTERN.findall(plain)) == 1
+                and re.search(r"已(?:按原参数)?提交(?:一次)?", plain)
+                and not _ADVICE_CONTEXT_PATTERN.search(plain)
+                and not _ADVICE_CONTEXT_PATTERN.search(section_context)):
+            continue
+        for clause in re.split(r"[。；;，,]", plain):
+            for match in _DIRECTIONAL_PATTERN.finditer(clause):
+                if _ADVICE_CONTEXT_PATTERN.search(clause):
+                    return True
+                if re.match(r"(?:手续费|费用|成本|数量超过持仓)", clause[match.end():]):
+                    continue
+                prefix = clause[:match.start()]
+                if re.search(r"(?:已(?:经)?(?:成功)?(?:执行)?|实际|未(?:曾|先行|先|再|执行)?|没有|不曾)\s*$", prefix):
+                    continue
+                if (not _DIRECTIONAL_PATTERN.search(prefix)
+                        and re.search(r"(?:尝试同步|已(?:按原参数)?提交(?:一次)?)[^。；;，,]{0,80}$", prefix)):
+                    continue
+                return True
+    return False
+
+
 def _check_data_gap(final_text: str, tool_calls_log: list[tuple[str, str]]) -> str | None:
     """If directional advice is given without supporting get_bars data, return a warning."""
-    if not _DIRECTIONAL_PATTERN.search(final_text):
+    if not _has_directional_advice(final_text):
         return None
     symbols_mentioned = _instrument_mentions(final_text)
     if not symbols_mentioned:

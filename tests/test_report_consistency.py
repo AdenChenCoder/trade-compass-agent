@@ -129,7 +129,7 @@ def test_next_agent_reads_execution_quantity_and_persists_receipt_table(valued_s
                 assert any('"quantity": 1500' in receipt for _, receipt in result["tool_results"])
                 return ChatCompletion(content='{"valid":true,"issues":[]}', model="test", provider="test")
             assert result["recent_trades"][0]["quantity"] == 1500
-            return ChatCompletion(content="持仓分析：已核对历史流水，实际卖出 1500 股。当前持仓继续观察。", model="test", provider="test")
+            return ChatCompletion(content="持仓分析：已核对515220历史流水，实际卖出 1500 股。当前持仓继续观察。", model="test", provider="test")
     model = Client()
     monkeypatch.setattr("trade_compass_agent.runtime.loop.create_chat_client", lambda config: model)
     monkeypatch.setattr(AgentLoop, "_update_session_summary", lambda *a, **k: None)
@@ -152,6 +152,57 @@ def test_next_agent_reads_execution_quantity_and_persists_receipt_table(valued_s
     assert any(r.get("role") == "assistant" and "| 1500 | 1.283 | trade-2 |" in (r.get("content") or "") for r in saved)
     if scheduled:
         assert any("继续核查来源与信号" in (r.get("content") or "") for r in saved)
+
+
+@pytest.mark.parametrize("receipt", [
+    "511880 已买入100份，已卖出100份。",
+    "按原参数尝试同步：etf_rotation 卖出 511880 100份，虚构价格102元。\n"
+    "拒绝理由（原文）：卖出数量超过持仓（当前 0）。",
+    "第三笔已按原参数提交一次：etf_rotation 卖出511880 100份，虚构成交价102元。\n"
+    "卖出数量超过持仓（当前0）。本轮未先买入、未重试。",
+    "etf_rotation账户卖出511880 100份、102元/份，已按原参数提交一次。\n"
+    "拒绝理由：卖出数量超过持仓（当前0）。未改数量、未先行买入、未重复尝试。",
+    "账户 etf_rotation；标的511880。两笔已记录。\n"
+    "| 方向 | 数量 | 虚构成交价 | 成交ID |\n|---|---:|---:|---|\n"
+    "| 买入 | 100份 | 100元 | c7e5992151a648e3 |\n"
+    "| 卖出 | 100份 | 101元 | 2f823d93990f4f8f |",
+    "账户etf_rotation，标的511880。两笔均已记录。\n"
+    "| 顺序 | 虚构成交 | 记录状态 | 成交 ID | 持仓变化 |\n|---|---|---|---|---|\n"
+    "|1|买入 100 份，100 元/份|executed|2f7dedbb09644841|+100份|\n"
+    "|2|卖出 100 份，101 元/份|executed|aee6b8ad4e5549e8|−100份|",
+    "511880的买入手续费与卖出手续费已扣除。",
+    "511880的成交回执，仅核对事实，不提供买卖建议。\n"
+    "| 方向 | 成交ID |\n|---|---|\n|买入|c7e5992151a648e3|",
+])
+def test_receipt_prose_and_tables_are_not_directional_advice(receipt):
+    assert _check_data_gap(receipt, []) is None
+    # A receipt must never exempt a new recommendation, even for the same code.
+    for recommendation in ["建议继续买入511880。", "若回调可加仓511880。", "买入511880。"]:
+        assert "511880" in _check_data_gap(receipt + "\n" + recommendation, [])
+
+
+@pytest.mark.parametrize("text", [
+    "511880已买入100份，建议继续加仓。",
+    "511880已买入100份后应该卖出。",
+    "计划尝试同步：卖出511880 100份。",
+    "已确定计划：买入511880。",
+    "| 标的 | 计划 |\n|---|---|\n|511880|买入|",
+    "| 标的 | 方向 | 成交ID | 备注 |\n|---|---|---|---|\n"
+    "|511880|买入|c7e5992151a648e3|建议继续加仓|",
+    "| 标的 | 方向 | 成交ID | 下一步 |\n|---|---|---|---|\n"
+    "|511880|买入|c7e5992151a648e3|卖出|",
+    "| 标的 | 计划方向 | 成交ID |\n|---|---|---|\n|511880|买入|c7e5992151a648e3|",
+    "| 标的 | 方向 | 成交ID |\n|---|---|---|\n|511880|买入|待成交|",
+    "| 标的 | 虚构成交 | 成交ID |\n|---|---|---|\n"
+    "|511880|买入100份后建议加仓|c7e5992151a648e3|",
+    "明日计划：511880\n| 方向 | 数量 | 成交ID |\n|---|---:|---|\n"
+    "| 买入 | 100份 | c7e5992151a648e3 |",
+    "511880 待执行订单（尚未成交）：\n| 方向 | 数量 | 成交ID |\n|---|---:|---|\n"
+    "| 买入 | 100份 | c7e5992151a648e3 |",
+    "## 明日计划\n标的511880。\n\n|方向|成交ID|\n|---|---|\n|买入|c7e5992151a648e3|",
+])
+def test_receipt_wording_cannot_hide_new_directional_advice(text):
+    assert "511880" in _check_data_gap(text, [])
 
 
 @pytest.mark.parametrize("tool", ["analyze_portfolio", "batch_paper_trades", "place_paper_trade"])
