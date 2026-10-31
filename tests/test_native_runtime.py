@@ -167,6 +167,26 @@ def test_legacy_thread_from_another_application_session_is_not_imported(tmp_path
     assert not list((tmp_path / "data/native_agents/codex-runtime/sessions").glob("**/*.jsonl"))
 
 
+def test_lost_private_rollout_does_not_reimport_stale_host_history(tmp_path):
+    source = native_runtime.host_codex_home()
+    conversation = NativeConversation(tmp_path / "data", "business-session", [])
+    thread_id = str(uuid.uuid4())
+    conversation.record = {"thread_id": thread_id, "status": "ready"}
+    legacy = source / "sessions" / f"rollout-2026-10-31-{thread_id}.jsonl"
+    legacy.parent.mkdir(parents=True)
+    original = json.dumps({"payload": {"id": thread_id, "cwd": str(conversation.cwd)}})
+    legacy.write_text(original)
+    runtime = prepare_native_runtime(tmp_path / "data", conversation)
+    copied = next((runtime / "sessions").rglob("*.jsonl"))
+    conversation.begin(thread_id, "profile")
+    conversation.commit([])
+    copied.unlink()
+    reopened = NativeConversation(tmp_path / "data", "business-session", [])
+    prepare_native_runtime(tmp_path / "data", reopened)
+    assert reopened.record["runtime_isolated"] is True
+    assert not copied.exists() and legacy.read_text() == original
+
+
 @pytest.mark.parametrize("store", ["keyring", "auto", "ephemeral"])
 def test_non_file_auth_policy_is_reported_without_silent_downgrade(tmp_path, store):
     source = native_runtime.host_codex_home()

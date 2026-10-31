@@ -81,7 +81,8 @@ class NativeConversation:
     def begin(self, thread_id, profile):
         # Persist before turn/start: a crash or uncertain external outcome must
         # never turn the next user request into an automatic replay of this turn.
-        self.pending = {"thread_id": thread_id, "profile": profile, "status": "pending"}
+        self.pending = {"thread_id": thread_id, "profile": profile, "status": "pending",
+                        "runtime_isolated": True}
         atomic_write(self.path, json.dumps(self.pending))
 
     def commit(self, history, *, context=None):

@@ -187,6 +187,8 @@ the data root. Codex stores its native thread history and databases under
 Only the child process receives this runtime location. Existing native records
 are copied on first continuation after checking their thread ID and application
 workspace; the original record remains available for recovery.
+After a thread has continued privately, a missing native cache rebuilds from
+the application transcript instead of importing the older host copy again.
 
 The isolated adapter currently supports Codex's default `file` credential store.
 It references the existing user configuration and `auth.json` without copying

@@ -59,6 +59,11 @@ def prepare_native_runtime(data_dir: Path, conversation=None, *, check=None) -> 
 
 
 def _import_legacy_thread(source: Path, runtime: Path, conversation, check) -> None:
+    # Once this cursor has run privately, the host rollout is an older snapshot.
+    # A lost private runtime must rebuild from the application transcript, not
+    # silently resume the pre-migration copy under the same thread ID.
+    if conversation.record.get("runtime_isolated"):
+        return
     thread_id = conversation.record.get("thread_id", "")
     try:
         uuid.UUID(thread_id)
