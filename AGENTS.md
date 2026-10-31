@@ -190,10 +190,12 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
   cached modules or replay missed autonomous trades to validate a restart.
 - Native Agent adapters preserve application-owned history and business-tool
   authorization. Native resume handles are derived state: bind them to the
-  published transcript and runtime/tool profile, serialize same-session writers,
+  published transcript, application context checkpoint and runtime/tool profile, serialize same-session writers,
   and never replay a submitted turn to recover a missing or uncertain handle.
   Verify real thread reuse across process restart separately from text recall.
-  Keep application context compaction enabled, and bound
+  Keep application context compaction enabled. A rewritten checkpoint must reach
+  the native model; a stopped or expired preflight summary must retain the submitted
+  question and a visible terminal state without starting the business turn. Bound
   subprocess request writes as well as response reads by cancellation/deadlines.
 - SSE transport failures belong to reconnect handling, not agent failure
   messages. Close streams on completed, interrupted, or failed terminal events;

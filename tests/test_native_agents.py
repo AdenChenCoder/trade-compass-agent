@@ -203,6 +203,142 @@ def test_native_long_history_compacts_context_but_keeps_visible_history(native_c
     assert not list((config.data_dir / "native_agents").glob("turn-*"))
 
 
+def test_compaction_replaces_stale_native_context_without_losing_history(native_config, monkeypatch):
+    from trade_compass_agent.config import CompressionConfig
+    from trade_compass_agent.runtime.compression.summarizer import latest_persisted_summary
+    from trade_compass_agent.runtime.session import SessionMessageRecord
+
+    protocol = native_config.data_dir.parent / "compaction-protocol.jsonl"
+    monkeypatch.setenv("FAKE_PROTOCOL", str(protocol))
+    monkeypatch.setattr(AgentLoop, "_maybe_background_review", lambda *a, **kw: None)
+    uncompressed = replace(native_config, context_compression=CompressionConfig(enabled=False))
+    loop = AgentLoop.from_config(uncompressed)
+    session = loop.session_store.create()
+    for index in range(14):
+        loop.session_store.append(session, SessionMessageRecord(
+            role="user" if index % 2 == 0 else "assistant",
+            content=f"历史-{index}: " + "已完成的合成研究，不是新授权。" * 200,
+        ))
+    loop.run_turn("仅查询一次样例行情", session_id=session.session_id)
+    before = loop.session_store.load_display_page(session.session_id, limit=100).messages
+    compressed = replace(native_config, context_compression=CompressionConfig(
+        context_budget=5000, protect_recent_count=2, protect_recent_tokens=0))
+    reopened = AgentLoop.from_config(compressed)
+    reopened.run_turn("只解释，不重复之前的操作", session_id=session.session_id)
+    frames = [json.loads(line) for line in protocol.read_text().splitlines()]
+    turns = [f["params"] for f in frames if f.get("method") == "turn/start"]
+    assert len(turns) == 3  # first business turn, summary, next business turn
+    assert turns[0]["threadId"] != turns[-1]["threadId"]
+    assert "上下文压缩" in turns[-1]["input"][0]["text"]
+    saved = reopened.session_store.load(session.session_id)
+    assert latest_persisted_summary([m.to_chat_message() for m in reopened.session_store.load_context(saved)])
+    after = reopened.session_store.load_display_page(session.session_id, limit=100).messages
+    assert after[:len(before)] == before
+
+
+def test_stop_during_native_compaction_is_prompt_and_keeps_request(native_config, monkeypatch):
+    import time
+
+    from trade_compass_agent.config import CompressionConfig
+    from trade_compass_agent.runtime.session import SessionMessageRecord
+
+    protocol = native_config.data_dir.parent / "stop-summary.jsonl"
+    monkeypatch.setenv("FAKE_PROTOCOL", str(protocol))
+    monkeypatch.setenv("FAKE_STALL", "1")
+    config = replace(native_config,
+        llm=replace(native_config.llm, timeout=2, agent_timeout=6),
+        context_compression=CompressionConfig(
+            context_budget=5000, protect_recent_count=2, protect_recent_tokens=0))
+    events = []
+    loop = AgentLoop.from_config(config, on_event=events.append)
+    session = loop.session_store.create()
+    for index in range(14):
+        loop.session_store.append(session, SessionMessageRecord(
+            role="user" if index % 2 == 0 else "assistant",
+            content=f"历史-{index}: " + "仅为已处理的合成参考材料。" * 200,
+        ))
+    before = loop.session_store.load_display_page(session.session_id, limit=100).messages
+    cancelled_at = []
+    cancel = threading.Event()
+
+    def stop_after_summary_started():
+        until = time.monotonic() + 5
+        while time.monotonic() < until:
+            if protocol.exists() and any(json.loads(line).get("method") == "turn/start"
+                                         for line in protocol.read_text().splitlines()):
+                cancelled_at.append(time.monotonic())
+                cancel.set()
+                return
+            time.sleep(.01)
+
+    watcher = threading.Thread(target=stop_after_summary_started, daemon=True)
+    watcher.start()
+    result = loop.run_turn("停止时也应保留的本轮问题", session_id=session.session_id, is_cancelled=cancel.is_set)
+    watcher.join(timeout=1)
+    assert cancelled_at and time.monotonic() - cancelled_at[0] < 1
+    assert result.interrupted and events[-1].event == "interrupted"
+    after = loop.session_store.load_display_page(session.session_id, limit=100).messages
+    assert after[:len(before)] == before
+    assert [m.content for m in after[len(before):]] == ["停止时也应保留的本轮问题", "[已停止]"]
+    frames = [json.loads(line) for line in protocol.read_text().splitlines()]
+    assert sum(f.get("method") == "turn/start" for f in frames) == 1
+
+
+def test_compaction_deadline_has_terminal_http_and_preserves_history(native_config, monkeypatch, client):
+    from trade_compass_agent.config import CompressionConfig
+    from trade_compass_agent.runtime.session import SessionMessageRecord
+    from trade_compass_agent.web import agent_api
+
+    protocol = native_config.data_dir.parent / "deadline-summary.jsonl"
+    monkeypatch.setenv("FAKE_PROTOCOL", str(protocol))
+    monkeypatch.setenv("FAKE_STALL", "1")
+    config = replace(native_config,
+        llm=replace(native_config.llm, timeout=5, agent_timeout=1),
+        context_compression=CompressionConfig(
+            context_budget=5000, protect_recent_count=2, protect_recent_tokens=0))
+    monkeypatch.setattr(agent_api, "load_app_config", lambda: config)
+    loop = AgentLoop.from_config(config)
+    session = loop.session_store.create()
+    for index in range(14):
+        loop.session_store.append(session, SessionMessageRecord(
+            role="user" if index % 2 == 0 else "assistant",
+            content=f"历史-{index}: " + "仅为已处理的合成参考材料。" * 200,
+        ))
+    before = client.get(f"/api/agent/sessions/{session.session_id}/messages").json()
+    response = client.post("/api/agent/turn", json={
+        "session_id": session.session_id, "message": "预算到限也应保留的本轮问题"})
+    assert response.status_code == 504 and "超时" in response.json()["detail"]
+    after = client.get(f"/api/agent/sessions/{session.session_id}/messages").json()
+    assert after["messages"][:len(before["messages"])] == before["messages"]
+    assert after["messages"][-2]["content"] == "预算到限也应保留的本轮问题"
+    assert "超时" in after["messages"][-1]["content"] and not after["has_active_turn"]
+    with client.stream("GET", f"/api/agent/stream?session_id={session.session_id}") as stream:
+        events = [line for line in stream.iter_lines() if line.startswith("event:")]
+    assert events[-1] == "event: error" and "event: done" not in events
+    frames = [json.loads(line) for line in protocol.read_text().splitlines()]
+    assert sum(f.get("method") == "turn/start" for f in frames) == 1
+
+
+def test_legacy_ready_cursor_still_resumes_matching_application_context(native_config, monkeypatch):
+    from trade_compass_agent.llm.native_session import NativeConversation
+
+    protocol = native_config.data_dir.parent / "legacy-context.jsonl"
+    monkeypatch.setenv("FAKE_PROTOCOL", str(protocol))
+    monkeypatch.setattr(AgentLoop, "_maybe_background_review", lambda *a, **kw: None)
+    loop = AgentLoop.from_config(native_config)
+    first = loop.run_turn("查询样例行情")
+    session = loop.session_store.load(first.session_id)
+    cursor = NativeConversation(native_config.data_dir, first.session_id, session.messages)
+    record = json.loads(cursor.path.read_text())
+    record.pop("context")
+    cursor.path.write_text(json.dumps(record))
+    AgentLoop.from_config(native_config).run_turn("继续解释", session_id=first.session_id)
+    frames = [json.loads(line) for line in protocol.read_text().splitlines()]
+    turns = [f["params"] for f in frames if f.get("method") == "turn/start"]
+    assert len(turns) == 2 and turns[0]["threadId"] == turns[1]["threadId"]
+    assert json.loads(cursor.path.read_text())["context"]
+
+
 def test_codex_cancellation_during_blocked_request_write(tmp_path):
     import time
     from trade_compass_agent.llm.codex_transport import CodexTransport

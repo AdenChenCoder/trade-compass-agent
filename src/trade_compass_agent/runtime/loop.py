@@ -12,7 +12,7 @@ from trade_compass_agent.runtime.activity_events import (
     build_tool_end_payload,
     build_tool_start_payload,
 )
-from trade_compass_agent.llm.providers import ChatMessage, create_chat_client, is_lmstudio_qwen
+from trade_compass_agent.llm.providers import ChatMessage, LLMExecutionCancelled, create_chat_client, is_lmstudio_qwen
 from trade_compass_agent.llm.usage import llm_usage_context
 from trade_compass_agent.runtime.context import ContextBuilder, _sanitize_tool_calls
 from trade_compass_agent.runtime.compression.budget import TokenBudget
@@ -387,7 +387,8 @@ class AgentLoop:
         resolved_session = self.session_store.get_or_create(session_id)
         guard = (native_session_guard(self.config.data_dir, resolved_session.session_id)
                  if self.config.llm.provider == "codex" else nullcontext())
-        budget_guard = (llm_request_deadline(time.monotonic() + self.config.llm.agent_timeout)
+        budget_guard = (llm_request_deadline(time.monotonic() + self.config.llm.agent_timeout,
+                                             is_cancelled=is_cancelled)
                         if self.config.llm.provider == "codex" else nullcontext())
         with guard, budget_guard, llm_usage_context(session_id=resolved_session.session_id):
             self._nudge.bind_session(self.config.data_dir, resolved_session.session_id)
@@ -437,8 +438,7 @@ class AgentLoop:
         )
         session = self.session_store.get_or_create(session_id)
         from trade_compass_agent.llm.native_session import NativeConversation
-        native_conversation = (NativeConversation(self.config.data_dir, session.session_id, session.messages)
-                               if isinstance(client, NativeAgentClient) else None)
+        native_conversation = None
         publish_after_verification = session.session_id.startswith("scheduler-")
         if turn_id:
             self._emit(
@@ -548,20 +548,6 @@ class AgentLoop:
         user_record = SessionMessageRecord(role="user", content=enriched, timestamp=datetime.now(),
                                            autonomous_trading_enabled=autonomous_trading_enabled)
 
-        compact_context(in_turn=False, request_tools=None if self.config.agent.max_tool_rounds == 1 else self._tools.schemas)
-
-        self.session_store.append(session, user_record)
-        if not session.title:
-            user_count = sum(1 for item in session.messages if item.role == "user")
-            if user_count == 1:
-                if self.config.agent.llm_session_titles:
-                    self.session_store.set_title(
-                        session,
-                        suggest_session_title(message, self.config),
-                    )
-                else:
-                    self.session_store.maybe_set_title_from_first_message(session, message)
-
         sections: list[TurnSection] = []
         final_text = ""
         published_response = None
@@ -639,6 +625,26 @@ class AgentLoop:
 
         try:
             native = isinstance(client, NativeAgentClient)
+            try:
+                compact_context(in_turn=False, request_tools=None if self.config.agent.max_tool_rounds == 1 else self._tools.schemas)
+                if native:
+                    # A rewritten application checkpoint must reach the next
+                    # native turn instead of retaining stale vendor history.
+                    native_conversation = NativeConversation(
+                        self.config.data_dir, session.session_id, session.messages,
+                        context=self.session_store.load_context(session),
+                    )
+            finally:
+                # Stopping preflight work must not discard the submitted question.
+                self.session_store.append(session, user_record)
+            _check_cancelled()
+            if not session.title:
+                user_count = sum(1 for item in session.messages if item.role == "user")
+                if user_count == 1:
+                    if self.config.agent.llm_session_titles:
+                        self.session_store.set_title(session, suggest_session_title(message, self.config))
+                    else:
+                        self.session_store.maybe_set_title_from_first_message(session, message)
             if native:
                 self._emit("status", {"text": "思考中…"})
                 completion = client.run_agent(
@@ -936,9 +942,9 @@ class AgentLoop:
             )
             published_response = response
             if native_conversation:
-                native_conversation.commit(session.messages)
+                native_conversation.commit(session.messages, context=self.session_store.load_context(session))
             if not quality.degraded:
-                from trade_compass_agent.llm.providers import LLMExecutionCancelled, llm_request_deadline
+                from trade_compass_agent.llm.providers import llm_request_deadline
                 try:
                     with llm_request_deadline(time.monotonic() + self.config.llm.timeout,
                                               is_cancelled=is_cancelled):
@@ -969,7 +975,12 @@ class AgentLoop:
                 },
             )
             return response
-        except TurnInterruptedError as exc:
+        except (TurnInterruptedError, LLMExecutionCancelled) as exc:
+            if isinstance(exc, LLMExecutionCancelled) and not (is_cancelled and is_cancelled()):
+                if published_response is None:
+                    self.session_store.append(session, SessionMessageRecord(
+                        role="assistant", content="任务已超时或停止，已有记录已保留。", timestamp=datetime.now()))
+                raise
             section_payload = [_section_to_dict(s) for s in sections]
             if published_response is not None:
                 # The main answer already exists in history and its native cursor.
@@ -977,7 +988,7 @@ class AgentLoop:
                 response = replace(published_response, interrupted=True)
                 self._update_session_summary(session, tool_calls_log, final_text)
             else:
-                summary = _interrupt_summary(exc.partial or final_text)
+                summary = _interrupt_summary(getattr(exc, "partial", "") or final_text)
                 self.session_store.append(
                     session,
                     SessionMessageRecord(

@@ -45,12 +45,13 @@ def native_session_guard(data_dir, session_id):
 
 
 class NativeConversation:
-    def __init__(self, data_dir, session_id, history):
+    def __init__(self, data_dir, session_id, history, *, context=None):
         self.root = _root(data_dir, session_id)
         self.cwd = self.root / "workspace"
         self.cwd.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "cursor.json"
         self.history_digest = fingerprint([asdict(m) for m in history])
+        self.context_digest = fingerprint([asdict(m) for m in (history if context is None else context)])
         try:
             self.record = json.loads(self.path.read_text(encoding="utf-8"))
         except (FileNotFoundError, ValueError):
@@ -62,6 +63,7 @@ class NativeConversation:
     def resume_id(self, profile):
         if (self.record.get("status") == "ready"
                 and self.record.get("history") == self.history_digest
+                and self.record.get("context", self.record.get("history")) == self.context_digest
                 and self.record.get("profile") == profile):
             value = self.record.get("thread_id")
             return value if isinstance(value, str) and value else None
@@ -73,12 +75,13 @@ class NativeConversation:
         self.pending = {"thread_id": thread_id, "profile": profile, "status": "pending"}
         atomic_write(self.path, json.dumps(self.pending))
 
-    def commit(self, history):
+    def commit(self, history, *, context=None):
         # Only the caller that published the final application record may make
         # this cursor reusable. Failure/cancellation leaves it non-reusable.
         if self.pending is not None:
             atomic_write(self.path, json.dumps({**self.pending, "status": "ready",
-                         "history": fingerprint([asdict(m) for m in history])}))
+                         "history": fingerprint([asdict(m) for m in history]),
+                         "context": fingerprint([asdict(m) for m in (history if context is None else context)])}))
 
     def set_usage_total(self, total):
         # Publish the next accounting baseline only with the completed transcript.
