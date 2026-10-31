@@ -197,6 +197,8 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
   Check both the application history and host chat list after real calls and restart.
   Preserve credentials and legacy thread ownership when isolating runtime storage;
   never silently downgrade credential storage policies or discard resumable history.
+  Runtime credential references must not break backup/export or copy host secrets;
+  preserve application and native session records through preview and restore.
   Keep application context compaction enabled. A rewritten checkpoint must reach
   the native model; a stopped or expired preflight summary must retain the submitted
   question and a visible terminal state without starting the business turn. Bound

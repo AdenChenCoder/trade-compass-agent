@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import uuid
+import zipfile
 
 import pytest
 
@@ -18,6 +19,8 @@ from trade_compass_agent.llm.native_session import NativeConversation, fingerpri
 from trade_compass_agent.llm.providers import ChatMessage
 from trade_compass_agent.runtime.exceptions import AgentUnavailableError
 from trade_compass_agent.runtime.loop import AgentLoop
+from trade_compass_agent.portability import create_portable_export, import_portable_export
+from trade_compass_agent.recovery import RecoveryLayout, create_backup, restore_backup
 from test_native_agents import FAKE_CODEX
 
 
@@ -174,3 +177,36 @@ def test_non_file_auth_policy_is_reported_without_silent_downgrade(tmp_path, sto
     status = check_connection(config)
     assert status["status"] == "unsupported" and "凭据存储" in status["message"]
     assert not (source / "auth.json").exists()
+
+
+@pytest.mark.parametrize("portable", [False, True])
+def test_archive_roundtrip_keeps_native_history_without_external_auth_references(tmp_path, portable):
+    source = native_runtime.host_codex_home()
+    source.mkdir()
+    (source / "auth.json").write_text("credential-fixture-never-export")
+    config = tmp_path / "config.yaml"
+    config.write_text("profile: local\n")
+    layout = RecoveryLayout(config_path=config, env_path=tmp_path / ".env", mcp_path=tmp_path / "mcp.json",
+                            data_dir=tmp_path / "data", memory_dir=tmp_path / "memory", backup_dir=tmp_path / "backups")
+    runtime = prepare_native_runtime(layout.data_dir)
+    history = runtime / "sessions/rollout.jsonl"
+    history.parent.mkdir()
+    history.write_text("original native history")
+    (layout.data_dir / "agent_sessions.jsonl").write_text("application history")
+    temp = runtime / "tmp/worker"
+    temp.mkdir(parents=True)
+    (temp / "helper").symlink_to(tmp_path / "missing-cli")
+    create, restore = (create_portable_export, import_portable_export) if portable else (create_backup, restore_backup)
+    saved = create(layout=layout)
+    with zipfile.ZipFile(saved.path) as archive:
+        names = archive.namelist()
+        assert "data/native_agents/codex-runtime/sessions/rollout.jsonl" in names
+        assert "data/agent_sessions.jsonl" in names
+        assert not any(name.endswith(("auth.json", "config.toml", "tmp/worker/helper")) for name in names)
+    history.write_text("new native history")
+    preview = restore(saved.path, layout=layout)
+    assert preview.recovery_backup is None and history.read_text() == "new native history"
+    restored = restore(saved.path, layout=layout, force=True)
+    assert history.read_text() == "original native history" and restored.recovery_backup
+    assert (runtime / "auth.json").is_symlink()
+    assert (source / "auth.json").read_text() == "credential-fixture-never-export"

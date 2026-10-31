@@ -195,6 +195,10 @@ Explicit `keyring`, `auto`, and `ephemeral` credential policies fail visibly bef
 starting a task; they are not silently converted to file storage. The connection
 check uses the same isolated runtime as actual tasks. Native database/log path
 overrides and desktop parent-thread identity are not inherited into this runtime.
+Backup and portable export retain application and native session history, while
+excluding the external login/configuration references and native process temporary
+files. The adapter recreates references to the current user's Codex installation
+on first use after restore; these archives do not carry the desktop login.
 The latest published reply is supplied on continuation so application corrections
 and caveats take precedence over the original model draft.
 
