@@ -256,6 +256,9 @@ workers in cleanup before removing model mocks.
   wheel there, then resolve dependencies from production PyPI.
 - A successful upload is not release acceptance. Install the published version
   and exercise its entry point and packaged assets.
+- Build and publish tools must support the metadata emitted by the build backend.
+  Validate both archives with the publisher's Twine version before uploading;
+  keep TestPyPI and production publishers on the same reviewed action revision.
 
 ## 1. Think Before Coding
 
