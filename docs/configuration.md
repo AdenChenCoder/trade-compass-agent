@@ -97,9 +97,10 @@ reuse them. Secret values continue to live in the existing credential stores.
 
 ### Native Codex agent
 
-This adapter is development work and is not included in the stable 0.3.0
-package. Validate it with isolated development configuration, data and memory
-before a future release; do not replace the stable installation with this checkout.
+The Codex adapter is included from version 0.4.0. Install the published package
+for stable use; source checkouts and local candidate wheels remain for isolated
+development and validation. The existing API and local-model connections remain
+available, and an upgrade does not change the selected provider.
 
 Select **Codex** in Settings → Agent connection, or run
 `trade-compass setup`. API providers and local models remain available.
@@ -117,7 +118,7 @@ and configure:
 ```yaml
 llm:
   provider: codex
-  model: ""  # use the agent's configured default model
+  model: "gpt-6.1-sol"  # empty uses the agent's configured default model
   cli_path: ""  # resolve codex from the service's PATH, or set an absolute path
   agent_timeout: 600
   native_max_tool_calls: 30
@@ -143,7 +144,7 @@ to finish within the remaining budget. Switching connections preserves these
 budget settings.
 
 Codex uses the official app-server stdio protocol and its experimental dynamic
-tool interface. Codex CLI 0.165.0 is the validated runtime for this adapter;
+tool interface. Codex CLI 0.165.0 with `gpt-6.1-sol` is the validated runtime for this adapter;
 other versions need the same installed-package acceptance checks. Unsupported versions fail visibly without
 switching to another provider or replaying a task. A background service must
 have access to the same executable and credential store as the signed-in user.

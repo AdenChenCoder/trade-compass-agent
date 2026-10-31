@@ -4,6 +4,44 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+
+## [0.4.0] - 2026-11-01
+
+### Added
+
+- Optional native Codex connection for conversations, business tools, specialists
+  and model-backed tasks. Application history and authorization remain in the
+  workbench; native threads use a separate runtime directory. Validated with
+  Codex CLI 0.165.0, file-based login and `gpt-6.1-sol`.
+- PNG, JPEG and WebP inputs for Codex, retaining original images across process
+  restart, application context compaction and native-thread reconstruction.
+- Separate native tool-call and total-time budgets, with visible unfinished work
+  and retained receipts when a task reaches its budget.
+
+### Fixed
+
+- Preserve application history while resuming native sessions, and avoid
+  importing stale host history after an isolated native cache is lost.
+- Keep failed or cancelled research incomplete through specialist dispatch and
+  learning; retain committed operations without automatically replaying them.
+- Persist background review counters per conversation across Web turns and
+  restart, and index completed learning archives for subsequent searches.
+- Distinguish completed fills, fees and order rejections from new investment
+  advice while retaining evidence checks for recommendations and future plans.
+- Preserve fetched versus returned data coverage, unknown volume units and
+  partial failures when composing research evidence.
+- Keep the active page, text and attachments when another page's resources fail
+  to load. Recovery does not automatically refresh or resend a task.
+- Exclude development dependencies from source distributions and keep the
+  one-command installer pinned to the matching release version.
+
+### Compatibility
+
+- Existing API and local-model selections are retained on upgrade. Selecting
+  Codex is explicit; its tool-call budget is distinct from API model rounds.
+- Native support does not include Claude Code in this release. Bounded Sol
+  checks do not establish identical model answers or long-term investment results.
+
 ## [0.3.0] - 2026-10-29
 
 ### Added

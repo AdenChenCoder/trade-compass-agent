@@ -32,8 +32,8 @@ Run the `TestPyPI Publish` workflow manually. It:
 Create and push a tag that exactly matches the package version:
 
 ```bash
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
 The release workflow verifies the tag, builds once, installs the wheel in an
@@ -78,7 +78,7 @@ is published, and the published version passes installed-package acceptance
 outside the repository. Pin the version and preserve the extras already in use:
 
 ```bash
-uv tool install --python 3.12 'trade-compass-agent==0.3.0'
+uv tool install --python 3.12 'trade-compass-agent==0.4.0'
 ```
 
 For an existing tool installation use `--force`; append the existing optional
