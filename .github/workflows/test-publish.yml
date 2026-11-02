@@ -28,7 +28,7 @@ jobs:
       - name: Install workspace and project dependencies
         run: |
           pnpm install --frozen-lockfile
-          python -m pip install "uv==0.11.32"
+          python -m pip install "uv==0.11.32" "twine==7.0.0"
           uv sync --locked --extra dev
       - name: Prepare and test mobile UI
         run: |
@@ -52,6 +52,7 @@ jobs:
         run: |
           uv build --no-sources
           python scripts/check_dist.py
+          python -m twine check --strict dist/*
       - name: Verify the exact wheel as an installed consumer
         run: |
           python -m venv "$RUNNER_TEMP/release-smoke"
@@ -79,7 +80,7 @@ jobs:
         with:
           name: test-python-distributions
           path: dist
-      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           repository-url: https://test.pypi.org/legacy/
 

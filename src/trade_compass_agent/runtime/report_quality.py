@@ -332,6 +332,14 @@ def _instrument_name_claims(line, symbol, tool_names, verified_names=(), *, iden
                           r"(?=\s*(?:[|/—–（(]|$))", line)
     explicit_heading = re.match(r"\s*#{1,6}\s.*(?:候选|持仓|标的|股票)", line)
     adjacent = [value for value in adjacent if value in verified_names or explicit_heading or identity_cell]
+    if explicit_heading:
+        # Descriptive heading suffixes are not part of the issuer identity.
+        # Keep the full verified name (including ST/N/C prefixes); never accept
+        # an arbitrary company name merely because it starts with a known name.
+        suffix = r"(?:持仓|详细|技术|基本面|行情)?(?:表现|分析|复核|复盘)"
+        adjacent = [next((name for name in sorted(verified_names, key=len, reverse=True)
+                          if value.startswith(name) and re.fullmatch(suffix, value[len(name):])), value)
+                    for value in adjacent]
     for claimed in direct + reverse + adjacent:
         named_fields = re.findall(r"(?:^|[,，])\s*(?:公司名称|股票名称|名称|简称|name)\s*[:：=]\s*([^,，]+)", claimed)
         yield from (value.strip().rstrip("*") for value in named_fields)
@@ -397,16 +405,17 @@ def _fund_flow_issues(text, tool_results, reference_date):
         else:
             for match in re.finditer(r"(?<![\w])([\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z0-9]*?)\s*"
                                      r"(?:净?流入|净?流出)?\s*[（(]?\s*" + amount + r"\s*(亿|万|元)", line):
-                label = re.sub(r"(?:净?流入|净?流出|约)$", "", match[1])
+                label = re.sub(r"(?:净?流入|净?流出|约|以)$", "", match[1])
                 if label and not re.search(r"合计|总计|总额|超|至少|上限|均|与|资金|净流|单日|主力", label):
                     claims.append((label, match[2], match[3], "净流出" in match[0] or "净流出" in section))
         for label, raw, unit, outflow in claims:
             label = re.sub(r"\s*[（(]\d{6}[）)]$", "", label)
-            # Reports may append a classification ("固态电池概念") or shorten
+            # Reports may append a classification ("固态电池概念板块") or shorten
             # it ("金融"). Only unambiguous aliases can be checked numerically.
             matches = [(key, name, value) for key, rows in snapshots.items() for name, value in rows.items()
-                       if name == label or re.sub(r"(?:行业|概念)$", "", label) == name
-                       or re.sub(r"(?:行业|概念)$", "", name) == label]
+                       if name == label or (key != "main_force_top" and
+                           {label, re.sub(r"(?:行业|概念)?板块$|(?:行业|概念)$", "", label)}
+                           & {name, re.sub(r"(?:行业|概念)?板块$|(?:行业|概念)$", "", name)})]
             if not matches:
                 matches = [(key, name, value) for key, rows in snapshots.items() for name, value in rows.items()
                            if len(label) >= 2 and name.startswith(label)]
@@ -507,6 +516,11 @@ def _relative_date_issues(text, reference_date):
     stamp = r"(?:(?:\d{4})-)?\d{1,2}[-/]\d{1,2}"
     patterns = [rf"(?P<date>{stamp})\s*[（(]\s*(?P<label>今日|明日|昨日)\s*[）)]",
                 rf"(?P<label>今日|明日|昨日)\s*[（(]\s*(?P<date>{stamp})\s*[）)]"]
+    weekdays = "一二三四五六日"
+    weekday_patterns = [
+        rf"(?<![\d/-])(?P<date>{stamp})\s*[（(]?\s*(?:周|星期)(?P<weekday>[一二三四五六日天])",
+        rf"(?:周|星期)(?P<weekday>[一二三四五六日天])\s*[（(]\s*(?P<date>{stamp})(?![\d/-])",
+    ]
     issues = []
     for line in text.splitlines():
         if re.search(r"原文|旧文|原记录|历史记录|此前记录|曾写|新闻标题", line):
@@ -522,6 +536,18 @@ def _relative_date_issues(text, reference_date):
                     continue
                 if actual != expected:
                     issues.append(f"相对日期与报告日期{reference}不一致：{match[0]}，{match['label']}应为{expected}")
+        for pattern in weekday_patterns:
+            for match in re.finditer(pattern, line):
+                context = reference
+                # Relative headings can cross a calendar-year boundary.
+                relative = re.search(r"(今日|明日|昨日)\s*[（(]?\s*$", line[:match.start()])
+                if relative:
+                    context += timedelta(days={"昨日": -1, "今日": 0, "明日": 1}[relative[1]])
+                observed = _report_date_context(match["date"], context.isoformat())
+                if observed:
+                    expected_weekday = weekdays[date.fromisoformat(observed).weekday()]
+                    if expected_weekday != match["weekday"].replace("天", "日"):
+                        issues.append(f"日期星期不一致：{observed}标注为周{match['weekday']}，应为周{expected_weekday}")
     return issues
 
 

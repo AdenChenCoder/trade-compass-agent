@@ -73,7 +73,14 @@ def test_serve_rejects_remote_bind_before_start(capsys: pytest.CaptureFixture[st
     mock_run.assert_not_called()
 
 
-def test_serve_dev_skips_preflight(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_serve_dev_skips_preflight(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path,
+) -> None:
+    from trade_compass_agent.config import AppConfig, SchedulerConfig
+
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory",
+                       scheduler=SchedulerConfig(enabled=True))
+    monkeypatch.setattr("trade_compass_agent.cli.load_app_config", lambda: config)
     monkeypatch.delenv("TRADE_COMPASS_DEV_CORS", raising=False)
     monkeypatch.delenv("TRADE_COMPASS_NO_SCHEDULER", raising=False)
 

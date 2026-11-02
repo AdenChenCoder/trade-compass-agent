@@ -105,6 +105,11 @@ unit tests explicitly: clearing API keys does not disable a local LLM service.
 
 ## Known pitfalls
 
+- Report verification separates heading descriptions from verified issuer names,
+  preserves exchange prefixes, and accepts unambiguous 行业/概念/板块 suffixes
+  without changing amount, sign, category or observation freshness. Pair accepted
+  forms with wrong-name and wrong-amount rejection checks. Validate explicit
+  date/weekdays before model correction; do not guess trading-day counts.
 - Report and memory checks must preserve flow signs, rounding, units, category
   scope, explicit historical references, and mixed stock/sector prose. Pair each
   new rejection with valid-output checks; indicator labels are not company names.

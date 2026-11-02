@@ -4,6 +4,19 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-03
+
+### Fixed
+
+- Avoid rejecting scheduled reports when a verified company name is followed by
+  a holding-analysis heading, or a fund-flow sector uses a classification suffix.
+  Wrong company names, amounts, signs and category scopes remain rejected.
+- Check explicit calendar dates against weekday labels before report correction,
+  and clarify that turnover rates cannot substitute for volume ratios and that
+  trading-day counts require calendar evidence.
+- Backport release-tool compatibility and exclude workspace dependencies from
+  source distributions.
+
 ## [0.3.0] - 2026-10-29
 
 ### Added
