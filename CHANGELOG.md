@@ -5,6 +5,38 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 ## [Unreleased]
 
 
+## [0.5.0] - 2026-11-04
+
+### Added
+
+- Four selectable color palettes shared by the Web workbench and phone UI,
+  including a dark appearance, matching logo colors and a browser-local preference.
+- A responsive workspace shell, clearer module navigation and focused reading
+  layouts for skills, audit events, settings, rules, memory and scheduled jobs.
+- A full-width phone conversation view, bottom navigation, connection overview,
+  palette previews and question suggestions that fill the composer without sending.
+- Keyboard-operable tabs, channel popovers, exact skill-source reading and short
+  interaction transitions that respect reduced-motion preferences.
+
+### Fixed
+
+- Preserve drafts when switching settings panels or choosing appearance; avoid
+  replacing existing message text or attachments with a welcome suggestion.
+- Distinguish initial loading, failed reads and confirmed empty phone collections,
+  retaining cached history during connection recovery.
+- Keep older Web preview chunks available across rebuilds so open tabs can still
+  navigate; retain mainline route-load recovery without automatic reloads.
+- Carry forward the published 0.3.1 report-validation fixes for verified issuer
+  headings, sector labels and date/weekday consistency. Existing report evidence
+  requirements and investment execution rules remain in force.
+
+### Compatibility
+
+- Existing strategy hypothesis and backtest controls remain available. This release
+  does not include the separate in-progress continuous-research workflow.
+- Appearance is stored per browser origin, independently of account data and phone
+  pairing. Restoring the default does not modify sessions or investment records.
+
 ## [0.4.0] - 2026-11-01
 
 ### Added
