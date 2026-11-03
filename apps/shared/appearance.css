@@ -1,0 +1,204 @@
+/* OKLCH channels shared by the workbench and mobile companion. */
+:root, [data-theme="classic"] {
+  --background: 0.975 0.006 265;
+  --foreground: 0.25 0.035 265;
+  --card: 0.998 0.002 265;
+  --card-foreground: 0.25 0.035 265;
+  --popover: 0.998 0.002 265;
+  --popover-foreground: 0.25 0.035 265;
+  --primary: 0.52 0.235 265;
+  --primary-foreground: 0.995 0.002 265;
+  --secondary: 0.94 0.021 265;
+  --secondary-foreground: 0.36 0.09 265;
+  --muted: 0.95 0.009 265;
+  --muted-foreground: 0.49 0.025 265;
+  --accent: 0.94 0.026 265;
+  --accent-foreground: 0.43 0.17 265;
+  --destructive: 0.55 0.2 25;
+  --destructive-foreground: 0.995 0.002 265;
+  --border: 0.90 0.013 265;
+  --input: 0.86 0.02 265;
+  --ring: 0.52 0.235 265;
+  --rail-background: 0.23 0.038 265;
+  --rail-foreground: 0.97 0.007 265;
+  --nav-foreground: 0.81 0.019 265;
+  --nav-muted: 0.75 0.026 265;
+  --nav-hover: 0.30 0.043 265;
+  --nav-selected: 0.52 0.235 265;
+  --nav-selected-foreground: 0.995 0.002 265;
+  --nav-ring: 0.87 0.08 265;
+  --logo-background: 0.98 0.005 265;
+  --logo-foreground: 0 0 0;
+  --session-background: 0.965 0.01 265;
+  --hero-background: 0.998 0.002 265;
+  --hero-foreground: 0.25 0.035 265;
+  --hero-emphasis: 0.52 0.235 265;
+  --hero-muted: 0.49 0.025 265;
+  --hero-border: 0.998 0.002 265;
+  color-scheme: light;
+}
+
+/* 暖白 × 朱砂橙 */
+[data-theme="ember"] {
+  --background: 0.97679 0.00857 84.573;
+  --foreground: 0.28121 0.01626 50.771;
+  --card: 0.99447 0.00569 84.566;
+  --card-foreground: 0.28121 0.01626 50.771;
+  --popover: 0.99447 0.00569 84.566;
+  --popover-foreground: 0.28121 0.01626 50.771;
+  --primary: 0.54008 0.16036 34.126;
+  --primary-foreground: 0.98757 0.00852 67.727;
+  --secondary: 0.92538 0.02385 59.379;
+  --secondary-foreground: 0.28121 0.01626 50.771;
+  --muted: 0.94254 0.01251 75.365;
+  --muted-foreground: 0.50052 0.02489 55.747;
+  --accent: 0.92538 0.02385 59.379;
+  --accent-foreground: 0.28121 0.01626 50.771;
+  --border: 0.88776 0.02028 69.973;
+  --input: 0.78330 0.02857 63.846;
+  --ring: 0.54008 0.16036 34.126;
+  --rail-background: 0.93676 0.01537 77.069;
+  --rail-foreground: 0.38341 0.02454 54.552;
+  --nav-foreground: 0.38341 0.02454 54.552;
+  --nav-muted: 0.50349 0.02681 60.807;
+  --nav-hover: 0.89611 0.01958 72.559;
+  --nav-selected: 0.28121 0.01626 50.771;
+  --nav-selected-foreground: 0.98757 0.00852 67.727;
+  --logo-background: 0.54008 0.16036 34.126;
+  --session-background: 0.95459 0.01247 75.366;
+  --hero-background: 0.90297 0.04203 59.081;
+  --hero-foreground: 0.27453 0.02989 46.208;
+  --hero-emphasis: 0.49219 0.15074 33.771;
+  --hero-muted: 0.47013 0.05866 49.236;
+  --hero-border: 0.90297 0.04203 59.081;
+  --logo-foreground: 0.98757 0.00852 67.727;
+  --nav-ring: 0.54008 0.16036 34.126;
+  --destructive: 0.55 0.2 25;
+  --destructive-foreground: 0.995 0.002 265;
+  color-scheme: light;
+}
+
+/* 深墨 × 冰川青 */
+[data-theme="glacier"] {
+  --background: 0.22890 0.02160 222.467;
+  --foreground: 0.94844 0.01378 196.924;
+  --card: 0.27215 0.02614 221.003;
+  --card-foreground: 0.94844 0.01378 196.924;
+  --popover: 0.27215 0.02614 221.003;
+  --popover-foreground: 0.94844 0.01378 196.924;
+  --primary: 0.84717 0.08105 193.769;
+  --primary-foreground: 0.25900 0.03039 206.130;
+  --secondary: 0.36292 0.03833 216.779;
+  --secondary-foreground: 0.94844 0.01378 196.924;
+  --muted: 0.31438 0.02950 220.941;
+  --muted-foreground: 0.76925 0.02561 206.168;
+  --accent: 0.36292 0.03833 216.779;
+  --accent-foreground: 0.94844 0.01378 196.924;
+  --border: 0.41271 0.03673 220.039;
+  --input: 0.53326 0.03974 214.384;
+  --ring: 0.84717 0.08105 193.769;
+  --rail-background: 0.20024 0.01982 226.179;
+  --rail-foreground: 0.88697 0.01506 196.885;
+  --nav-foreground: 0.88697 0.01506 196.885;
+  --nav-muted: 0.74482 0.03050 210.061;
+  --nav-hover: 0.32476 0.03136 219.113;
+  --nav-selected: 0.88458 0.06664 181.820;
+  --nav-selected-foreground: 0.26510 0.03191 198.747;
+  --logo-background: 0.88458 0.06664 181.820;
+  --session-background: 0.26743 0.02718 220.023;
+  --hero-background: 0.34361 0.03781 214.498;
+  --hero-foreground: 0.96092 0.01276 190.959;
+  --hero-emphasis: 0.88458 0.06664 181.820;
+  --hero-muted: 0.83001 0.02696 199.590;
+  --hero-border: 0.34361 0.03781 214.498;
+  --logo-foreground: 0.32545 0.04147 210.228;
+  --nav-ring: 0.88458 0.06664 181.820;
+  --destructive: 0.75 0.16 25;
+  --destructive-foreground: 0.20 0.04 25;
+  --hero-border: 0.47432 0.04085 216.705;
+  color-scheme: dark;
+}
+
+/* 雾白 × 莓果红 */
+[data-theme="berry"] {
+  --background: 0.97013 0.00793 357.797;
+  --foreground: 0.31057 0.04470 346.518;
+  --card: 0.98921 0.00548 3.334;
+  --card-foreground: 0.31057 0.04470 346.518;
+  --popover: 0.98921 0.00548 3.334;
+  --popover-foreground: 0.31057 0.04470 346.518;
+  --primary: 0.45815 0.15024 3.220;
+  --primary-foreground: 0.98123 0.01093 348.422;
+  --secondary: 0.91186 0.02690 350.916;
+  --secondary-foreground: 0.31057 0.04470 346.518;
+  --muted: 0.93663 0.01554 351.985;
+  --muted-foreground: 0.50217 0.04725 349.186;
+  --accent: 0.91186 0.02690 350.916;
+  --accent-foreground: 0.31057 0.04470 346.518;
+  --border: 0.87435 0.02619 349.816;
+  --input: 0.75125 0.04568 350.623;
+  --ring: 0.45815 0.15024 3.220;
+  --rail-background: 0.34905 0.09953 355.878;
+  --rail-foreground: 0.93168 0.02126 347.300;
+  --nav-foreground: 0.93168 0.02126 347.300;
+  --nav-muted: 0.83738 0.03868 348.113;
+  --nav-hover: 0.42547 0.10271 357.278;
+  --nav-selected: 0.85969 0.06828 353.840;
+  --nav-selected-foreground: 0.30355 0.08842 356.096;
+  --logo-background: 0.85969 0.06828 353.840;
+  --session-background: 0.92370 0.01875 347.448;
+  --hero-background: 0.87355 0.04803 353.028;
+  --hero-foreground: 0.31931 0.08427 354.703;
+  --hero-emphasis: 0.45815 0.15024 3.220;
+  --hero-muted: 0.46763 0.08133 353.070;
+  --hero-border: 0.87355 0.04803 353.028;
+  --logo-foreground: 0.34905 0.09953 355.878;
+  --nav-ring: 0.85969 0.06828 353.840;
+  --destructive: 0.55 0.2 25;
+  --destructive-foreground: 0.995 0.002 265;
+  color-scheme: light;
+}
+
+/* 银灰 × 电光蓝 */
+[data-theme="volt"] {
+  --background: 0.96320 0.00343 247.859;
+  --foreground: 0.28536 0.03005 254.712;
+  --card: 0.99385 0.00285 264.542;
+  --card-foreground: 0.28536 0.03005 254.712;
+  --popover: 0.99385 0.00285 264.542;
+  --popover-foreground: 0.28536 0.03005 254.712;
+  --primary: 0.50832 0.24252 265.875;
+  --primary-foreground: 0.98770 0.00572 264.533;
+  --secondary: 0.93095 0.02847 268.362;
+  --secondary-foreground: 0.28536 0.03005 254.712;
+  --muted: 0.93875 0.00917 258.336;
+  --muted-foreground: 0.52313 0.03121 255.198;
+  --accent: 0.93095 0.02847 268.362;
+  --accent-foreground: 0.28536 0.03005 254.712;
+  --border: 0.88828 0.01625 253.911;
+  --input: 0.77824 0.02947 256.505;
+  --ring: 0.50832 0.24252 265.875;
+  --rail-background: 0.93195 0.00974 252.814;
+  --rail-foreground: 0.39591 0.03829 253.050;
+  --nav-foreground: 0.39591 0.03829 253.050;
+  --nav-muted: 0.50767 0.03606 252.905;
+  --nav-hover: 0.89195 0.01860 258.355;
+  --nav-selected: 0.50832 0.24252 265.875;
+  --nav-selected-foreground: 0.98770 0.00572 264.533;
+  --logo-background: 0.50832 0.24252 265.875;
+  --session-background: 0.95291 0.01254 255.506;
+  --hero-background: 0.50832 0.24252 265.875;
+  --hero-foreground: 0.98770 0.00572 264.533;
+  --hero-emphasis: 0.88889 0.05770 246.097;
+  --hero-muted: 0.89996 0.04820 271.236;
+  --hero-border: 0.50832 0.24252 265.875;
+  --logo-foreground: 0.98770 0.00572 264.533;
+  --nav-ring: 0.50832 0.24252 265.875;
+  --destructive: 0.55 0.2 25;
+  --destructive-foreground: 0.995 0.002 265;
+  color-scheme: light;
+}
+
+/* The original coin geometry is a mask; its tile and ink follow the palette. */
+.brand-mark { display: inline-block; position: relative; flex-shrink: 0; width: 38px; height: 38px; border-radius: 12px; background: oklch(var(--logo-background)); }
+.brand-mark::before { content: ""; position: absolute; inset: 4px; background: oklch(var(--logo-foreground)); mask: url("./brand/coin-logo.svg") center / contain no-repeat; }

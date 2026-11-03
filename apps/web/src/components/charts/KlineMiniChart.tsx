@@ -13,6 +13,7 @@ import { Loader2 } from "lucide-react";
 import { fetchBars } from "@/lib/workbench-api";
 import type { ForecastOverlay } from "@/lib/forecast";
 import type { Bar } from "@/lib/types";
+import { useAppearance } from "@/lib/appearance";
 
 echarts.use([
   BarChart,
@@ -83,6 +84,7 @@ export function KlineMiniChart({
   showBollinger = false,
   forecast,
 }: KlineMiniChartProps) {
+  const appearance = useAppearance();
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ECharts | null>(null);
   const visibilityRef = useRef<HTMLDivElement>(null);
@@ -137,6 +139,9 @@ export function KlineMiniChart({
       chartRef.current = echarts.init(container, undefined, { renderer: "canvas" });
     }
     const chart = chartRef.current;
+    const palette = getComputedStyle(container);
+    const textColor = palette.color;
+    const lineColor = palette.borderTopColor;
     const categories = bars.map((bar: Bar) => formatDate(bar.timestamp));
     const values = bars.map((bar: Bar) => [bar.open, bar.close, bar.low, bar.high]);
     const volumes = bars.map((bar: Bar) => ({
@@ -281,6 +286,9 @@ export function KlineMiniChart({
       axisPointer: { link: [{ xAxisIndex: [0, 1] }] },
       tooltip: {
         trigger: "axis",
+        backgroundColor: palette.backgroundColor,
+        borderColor: lineColor,
+        textStyle: { color: textColor },
         axisPointer: { type: "cross" },
       },
       xAxis: [
@@ -288,7 +296,7 @@ export function KlineMiniChart({
           type: "category",
           data: categories,
           boundaryGap: true,
-          axisLine: { onZero: false },
+          axisLine: { onZero: false, lineStyle: { color: lineColor } },
           splitLine: { show: false },
           axisLabel: { show: false },
         },
@@ -297,7 +305,7 @@ export function KlineMiniChart({
           gridIndex: 1,
           data: categories,
           boundaryGap: true,
-          axisLine: { onZero: false },
+          axisLine: { onZero: false, lineStyle: { color: lineColor } },
           axisTick: { show: false },
           splitLine: { show: false },
           axisLabel: { show: false },
@@ -307,7 +315,8 @@ export function KlineMiniChart({
         {
           scale: true,
           splitArea: { show: false },
-          axisLabel: { fontSize: 10 },
+          axisLabel: { fontSize: 10, color: textColor },
+          splitLine: { lineStyle: { color: lineColor } },
         },
         {
           scale: true,
@@ -327,7 +336,7 @@ export function KlineMiniChart({
     return () => {
       window.removeEventListener("resize", onResize);
     };
-  }, [bars, overlays, symbol, showMA, showBollinger, forecast, shouldLoad]);
+  }, [bars, overlays, symbol, showMA, showBollinger, forecast, shouldLoad, appearance]);
 
   useEffect(() => {
     return () => {
@@ -392,7 +401,7 @@ export function KlineMiniChart({
         ) : null}
         {barsQuery.data?.provider_name ? ` · ${barsQuery.data.provider_name}` : ""}
       </div>
-      <div ref={containerRef} style={{ width: "100%", height }} />
+      <div ref={containerRef} className="kline-canvas" style={{ width: "100%", height }} />
     </div>
   );
 }

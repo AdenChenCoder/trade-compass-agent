@@ -1,3 +1,5 @@
+import { EmptyState } from "@/components/layout/WorkspaceState";
+import { PageHeading } from "@/components/layout/PageHeading";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Briefcase, Loader2, Pencil, PlusCircle, Trash2, X } from "lucide-react";
@@ -66,7 +68,7 @@ function formatTime(iso: string): string {
 }
 
 function pnlClass(value: number): string {
-  if (value > 0) return "text-red-600 dark:text-red-500";
+  if (value > 0) return "text-red-600 dark:text-red-400";
   if (value < 0) return "text-emerald-600 dark:text-emerald-400";
   return "text-muted-foreground";
 }
@@ -215,18 +217,9 @@ export function PortfolioPage() {
     : allPositions;
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-6">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">模拟持仓</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              账户管理、持仓与已实现交易
-              {isMarketHours() && (
-                <span className="ml-2 text-emerald-600">● 盘中自动刷新</span>
-              )}
-            </p>
-          </div>
+    <div className="workspace-page portfolio-page">
+      <div className="page-container">
+        <PageHeading icon={Briefcase} title="模拟持仓" description={<>{isMarketHours() && <span className="ml-2 text-emerald-600 dark:text-emerald-400">● 盘中自动刷新</span>}</>} actions={
           <Button size="sm" variant="outline"
             disabled={accountsQuery.isLoading || !!accountsQuery.error || availableAccountKinds.length === 0}
             onClick={() => {
@@ -237,7 +230,7 @@ export function PortfolioPage() {
             {availableAccountKinds.length === 0 && !accountsQuery.isLoading && !accountsQuery.error
               ? "账户类型已用完" : "新建账户"}
           </Button>
-        </div>
+        } />
 
         <AutonomousTradingControl />
 
@@ -264,16 +257,16 @@ export function PortfolioPage() {
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">新建账户</CardTitle>
-                <Button size="icon" variant="ghost" onClick={() => setShowCreateForm(false)}>
+                <Button size="icon" variant="ghost" onClick={() => setShowCreateForm(false)} aria-label="关闭新建账户">
                   <X className="h-4 w-4" />
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleCreateSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <form onSubmit={handleCreateSubmit} className="account-form grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">类型</label>
-                  <select
+                  <label htmlFor="create-account-kind" className="text-xs font-medium text-muted-foreground">类型</label>
+                  <select id="create-account-kind"
                     className={selectClassName}
                     value={createKind ?? ""}
                     onChange={(e) => setNewAccount({ ...newAccount, kind: e.target.value as AccountKind })}
@@ -282,16 +275,16 @@ export function PortfolioPage() {
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">名称</label>
-                  <Input placeholder="我的账户" value={newAccount.name} onChange={(e) => setNewAccount({ ...newAccount, name: e.target.value })} />
+                  <label htmlFor="create-account-name" className="text-xs font-medium text-muted-foreground">名称</label>
+                  <Input id="create-account-name" placeholder="我的账户" value={newAccount.name} onChange={(e) => setNewAccount({ ...newAccount, name: e.target.value })} />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">描述</label>
-                  <Input placeholder="可选" value={newAccount.description} onChange={(e) => setNewAccount({ ...newAccount, description: e.target.value })} />
+                  <label htmlFor="create-account-description" className="text-xs font-medium text-muted-foreground">描述</label>
+                  <Input id="create-account-description" placeholder="可选" value={newAccount.description} onChange={(e) => setNewAccount({ ...newAccount, description: e.target.value })} />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">资金</label>
-                  <Input type="number" min={0} step={10000} placeholder="300000" value={newAccount.capital} onChange={(e) => setNewAccount({ ...newAccount, capital: e.target.value })} />
+                  <label htmlFor="create-account-capital" className="text-xs font-medium text-muted-foreground">资金</label>
+                  <Input id="create-account-capital" type="number" min={0} step={10000} placeholder="300000" value={newAccount.capital} onChange={(e) => setNewAccount({ ...newAccount, capital: e.target.value })} />
                 </div>
                 <div className="flex items-end">
                   <Button type="submit" className="w-full" disabled={createMutation.isPending || !createKind}>
@@ -309,24 +302,24 @@ export function PortfolioPage() {
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">编辑账户: {editingAccount.name}</CardTitle>
-                <Button size="icon" variant="ghost" onClick={() => setEditingAccount(null)}>
+                <Button size="icon" variant="ghost" onClick={() => setEditingAccount(null)} aria-label="关闭编辑账户">
                   <X className="h-4 w-4" />
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleEditSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <form onSubmit={handleEditSubmit} className="account-form grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">名称</label>
-                  <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+                  <label htmlFor="edit-account-name" className="text-xs font-medium text-muted-foreground">名称</label>
+                  <Input id="edit-account-name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">描述</label>
-                  <Input value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
+                  <label htmlFor="edit-account-description" className="text-xs font-medium text-muted-foreground">描述</label>
+                  <Input id="edit-account-description" value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">资金</label>
-                  <Input type="number" min={0} step={10000} value={editForm.capital} onChange={(e) => setEditForm({ ...editForm, capital: e.target.value })} />
+                  <label htmlFor="edit-account-capital" className="text-xs font-medium text-muted-foreground">资金</label>
+                  <Input id="edit-account-capital" type="number" min={0} step={10000} value={editForm.capital} onChange={(e) => setEditForm({ ...editForm, capital: e.target.value })} />
                 </div>
                 <div className="flex items-end">
                   <Button type="submit" className="w-full" disabled={updateMutation.isPending}>
@@ -340,18 +333,19 @@ export function PortfolioPage() {
 
         {data && (
           <>
-            {/* Account cards */}
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="account-filter-heading"><h2>投资账户</h2>{selectedAccountId ? <Button variant="outline" size="sm" onClick={() => setSelectedAccountId(null)}>查看全部账户</Button> : <span className="text-xs text-muted-foreground">选择账户查看持仓</span>}</div>
+            <div className="account-grid grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {accounts.map((acct) => {
                 const summary = data.accounts.find((s) => s.account === acct.kind);
                 const isSelected = selectedAccountId === acct.id;
                 return (
                   <Card
                     key={acct.id}
-                    className={`cursor-pointer transition-colors ${isSelected ? "ring-2 ring-primary" : "hover:bg-muted/50"}`}
-                    onClick={() => setSelectedAccountId(isSelected ? null : acct.id)}
+                    className="account-card"
+                    data-selected={isSelected}
                   >
-                    <CardHeader className="pb-2">
+                    <CardHeader className="account-select-area pb-2">
+                      <button type="button" className="account-card-button" aria-label={`筛选账户：${acct.name}`} aria-pressed={isSelected} onClick={() => setSelectedAccountId(isSelected ? null : acct.id)} />
                       <div className="flex items-start justify-between">
                         <div>
                           <CardTitle className="flex items-center gap-2 text-base">
@@ -359,15 +353,11 @@ export function PortfolioPage() {
                             <NewBadge createdAt={acct.created_at} />
                           </CardTitle>
                           <CardDescription className="font-mono text-xs">
-                            {acct.kind} · 资金 {formatMoney(acct.capital)}
+                            {acct.kind}
                           </CardDescription>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {typeof acct.available_cash === "number"
-                              ? `可用资金 ${formatMoney(acct.available_cash)}`
-                              : acct.cash_error ?? "可用资金暂不可用"}
-                          </p>
+
                         </div>
-                        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                        <div className="account-card-controls flex gap-1">
                           <Button
                             size="icon"
                             variant="ghost"
@@ -377,7 +367,7 @@ export function PortfolioPage() {
                               setEditForm({ name: acct.name, description: acct.description, capital: String(acct.capital) });
                             }}
                           >
-                            <Pencil className="h-3 w-3" />
+                            <Pencil className="h-3 w-3" /><span className="sr-only">编辑账户 {acct.name}</span>
                           </Button>
                           <Button
                             size="icon"
@@ -389,15 +379,16 @@ export function PortfolioPage() {
                               }
                             }}
                           >
-                            <Trash2 className="h-3 w-3" />
+                            <Trash2 className="h-3 w-3" /><span className="sr-only">删除账户 {acct.name}</span>
                           </Button>
                         </div>
                       </div>
                       {acct.description && (
                         <p className="text-xs text-muted-foreground mt-1">{acct.description}</p>
                       )}
+                      <div className="account-balance"><span>可用资金</span>{typeof acct.available_cash === "number" ? <strong>{formatMoney(acct.available_cash)}</strong> : <p className="text-sm text-muted-foreground">{acct.cash_error ?? "可用资金暂不可用"}</p>}<small>账户资金 {formatMoney(acct.capital)}</small></div>
                     </CardHeader>
-                    <CardContent className="space-y-2 text-sm">
+                    <details className="account-detail account-card-controls"><summary><span>持仓 {summary?.position_count ?? 0} · 市值 {formatMoney(summary?.market_value ?? 0)}</span><span>明细</span></summary><CardContent className="account-stat-list text-sm">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">持仓数</span>
                         <span>{summary?.position_count ?? 0}</span>
@@ -451,7 +442,7 @@ export function PortfolioPage() {
                         <span>胜率 {formatPct(summary?.win_rate ?? 0)}</span>
                         <span>手续费 {formatMoney(summary?.fees ?? 0)}</span>
                       </div>
-                    </CardContent>
+                    </CardContent></details>
                   </Card>
                 );
               })}
@@ -472,7 +463,7 @@ export function PortfolioPage() {
               </CardHeader>
               <CardContent>
                 {filteredPositions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">暂无持仓。</p>
+                  <EmptyState icon={Briefcase} title="暂无持仓" description={selectedAccountId ? "此账户目前没有持仓，可切换账户查看。" : "持仓会在交易成交后显示在这里。"} />
                 ) : (
                   <div className="-mx-6 overflow-x-auto px-6">
                     <Table>
@@ -521,7 +512,7 @@ export function PortfolioPage() {
                                   <Button
                                     size="sm"
                                     variant="ghost"
-                                    className="h-6 px-2 text-xs text-emerald-600 hover:text-emerald-700"
+                                    className="h-6 px-2 text-xs text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
                                     onClick={() => {
                                       setSymbol(pos.symbol);
                                       setAccount(pos.account);
@@ -536,7 +527,7 @@ export function PortfolioPage() {
                                   <Button
                                     size="sm"
                                     variant="ghost"
-                                    className="h-6 px-2 text-xs text-red-600 hover:text-red-700"
+                                    className="h-6 px-2 text-xs text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
                                     onClick={() => {
                                       setSymbol(pos.symbol);
                                       setAccount(pos.account);
@@ -568,7 +559,7 @@ export function PortfolioPage() {
               </CardHeader>
               <CardContent>
                 {data.realized_trades.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">暂无已实现交易。</p>
+                  <EmptyState icon={Briefcase} title="暂无已实现交易" description="平仓后可在这里查看收益与费用。" />
                 ) : (
                   <div className="-mx-6 overflow-x-auto px-6">
                     <Table>

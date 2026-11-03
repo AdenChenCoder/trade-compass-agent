@@ -1,5 +1,5 @@
 import { Loader2, MessageSquarePlus, PanelLeftClose, Pencil, Trash2 } from "lucide-react";
-import { useCallback, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NewBadge } from "@/components/ui/new-badge";
@@ -104,6 +104,26 @@ export function SessionSidebar({
   onDeleteSession,
   onRenameSession,
 }: SessionSidebarProps) {
+  const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const panel = panelRef.current;
+    const controls = () => Array.from(panel?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]') ?? []).filter(el => el.getClientRects().length > 0);
+    controls()[0]?.focus();
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); onMobileClose(); }
+      if (event.key !== "Tab") return;
+      const items = controls();
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    panel?.addEventListener("keydown", onKeyDown);
+    return () => { panel?.removeEventListener("keydown", onKeyDown); previous?.focus(); };
+  }, [mobileOpen, onMobileClose]);
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [savingTitle, setSavingTitle] = useState(false);
@@ -154,15 +174,20 @@ export function SessionSidebar({
 
   const panel = (
     <aside
+      ref={panelRef}
+      aria-label="对话历史"
       className={cn(
-        "flex min-h-0 w-[260px] shrink-0 flex-col border-r bg-muted/20",
+        "agent-session-sidebar flex min-h-0 w-[240px] shrink-0 flex-col border-r",
         "md:relative md:h-full md:translate-x-0",
         mobileOpen
-          ? "fixed bottom-0 left-0 top-14 z-40 translate-x-0 shadow-lg"
-          : "fixed bottom-0 left-0 top-14 z-40 -translate-x-full md:static md:z-auto md:h-full",
+          ? "fixed bottom-0 left-0 top-0 z-40 translate-x-0 shadow-lg"
+          : "fixed bottom-0 left-0 top-0 z-40 invisible -translate-x-full md:visible md:static md:z-auto md:h-full",
       )}
     >
-      <div className="flex items-center justify-between gap-2 border-b px-3 py-3">
+      <div className="session-sidebar-heading"><h2>对话历史</h2>
+        <Button type="button" variant="ghost" size="icon" className="md:hidden" onClick={onMobileClose} aria-label="关闭历史"><PanelLeftClose className="h-4 w-4" /></Button>
+      </div>
+      <div className="session-new-chat">
         <Button
           type="button"
           variant="default"
@@ -173,23 +198,15 @@ export function SessionSidebar({
           <MessageSquarePlus className="mr-1.5 h-4 w-4" />
           新对话
         </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="shrink-0 md:hidden"
-          onClick={onMobileClose}
-          aria-label="关闭历史"
-        >
-          <PanelLeftClose className="h-4 w-4" />
-        </Button>
+
       </div>
 
       {sessions.length > 0 ? (
-        <div className="border-b px-3 py-2">
+        <div className="session-search">
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            aria-label="搜索对话"
             placeholder="搜索对话…"
             className="h-8 text-sm"
             disabled={loading}
@@ -197,7 +214,7 @@ export function SessionSidebar({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      <div className="session-list min-h-0 flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -222,16 +239,10 @@ export function SessionSidebar({
                       <li key={session.session_id}>
                         <div
                           className={cn(
-                            "relative flex items-start gap-2 rounded-lg px-2 py-2 transition-colors [&:focus-within_.session-action]:opacity-100 [&:hover_.session-action]:opacity-100",
-                            active ? "bg-muted" : "hover:bg-muted/60",
+                            "session-row relative flex items-start gap-2 rounded-lg transition-colors [&:focus-within_.session-action]:opacity-100 [&:hover_.session-action]:opacity-100",
+                            active ? "bg-primary/10 text-primary" : "hover:bg-muted/80",
                           )}
                         >
-                          {active ? (
-                            <span
-                              className="absolute bottom-2 left-0 top-2 w-0.5 rounded-full bg-primary"
-                              aria-hidden
-                            />
-                          ) : null}
                           {editing ? (
                             <div className="min-w-0 flex-1 pl-1">
                               <Input
@@ -250,6 +261,7 @@ export function SessionSidebar({
                             <button
                               type="button"
                               className="min-w-0 flex-1 pl-1 text-left"
+                              aria-pressed={active}
                               onClick={() => onSelectSession(session.session_id)}
                             >
                               <p className="flex items-center gap-1.5 text-sm font-medium leading-snug">

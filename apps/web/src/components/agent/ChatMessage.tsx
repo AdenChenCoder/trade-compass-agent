@@ -97,9 +97,9 @@ export function ChatMessage({
     >
       <div
         className={cn(
-          "max-w-[85%] rounded-xl px-4 py-3 text-sm leading-relaxed",
-          isUser && "bg-primary text-primary-foreground",
-          !isUser && !isError && "border bg-card",
+          "chat-bubble max-w-[90%] text-sm leading-relaxed",
+          isUser && "chat-bubble-user bg-primary text-primary-foreground",
+          !isUser && !isError && "chat-bubble-assistant border bg-card",
           isError && "border border-destructive/40 bg-destructive/10 text-destructive",
         )}
       >

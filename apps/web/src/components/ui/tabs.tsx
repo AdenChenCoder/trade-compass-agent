@@ -1,80 +1,53 @@
 import * as React from "react";
+import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
 
 interface TabsContextValue {
   value: string;
   onValueChange: (value: string) => void;
+  id: string;
 }
-
 const TabsContext = React.createContext<TabsContextValue | null>(null);
-
 function useTabs() {
   const ctx = React.useContext(TabsContext);
   if (!ctx) throw new Error("Tabs components must be used within <Tabs>");
   return ctx;
 }
 
-interface TabsProps {
-  defaultValue: string;
-  children: React.ReactNode;
-  className?: string;
-}
-
-export function Tabs({ defaultValue, children, className }: TabsProps) {
-  const [value, setValue] = React.useState(defaultValue);
-  return (
-    <TabsContext.Provider value={{ value, onValueChange: setValue }}>
-      <div className={className}>{children}</div>
-    </TabsContext.Provider>
-  );
+export function Tabs({ defaultValue, value: controlledValue, onValueChange, children, className }: { defaultValue: string; value?: string; onValueChange?: (value: string) => void; children: React.ReactNode; className?: string }) {
+  const [localValue, setValue] = React.useState(defaultValue);
+  const value = controlledValue ?? localValue;
+  const id = React.useId();
+  return <TabsContext.Provider value={{ value, onValueChange: onValueChange ?? setValue, id }}><div className={className}>{children}</div></TabsContext.Provider>;
 }
 
 export function TabsList({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div
-      className={cn(
-        "inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground",
-        className,
-      )}
-    >
-      {children}
-    </div>
-  );
+  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    const current = tabs.indexOf(document.activeElement as HTMLButtonElement);
+    if (current < 0) return;
+    event.preventDefault();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    tabs[next]?.focus();
+    tabs[next]?.click();
+  }
+  return <div role="tablist" onKeyDown={handleKeyDown} className={cn("ui-tabs text-muted-foreground", className)}>{children}</div>;
 }
 
-interface TabsTriggerProps {
-  value: string;
-  children: React.ReactNode;
-  className?: string;
-}
-
-export function TabsTrigger({ value, children, className }: TabsTriggerProps) {
-  const { value: selected, onValueChange } = useTabs();
+export function TabsTrigger({ value, children, className }: { value: string; children: React.ReactNode; className?: string }) {
+  const { value: selected, onValueChange, id } = useTabs();
   return (
-    <button
-      type="button"
-      className={cn(
-        "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-        selected === value
-          ? "bg-background text-foreground shadow"
-          : "hover:bg-background/50",
-        className,
-      )}
-      onClick={() => onValueChange(value)}
-    >
-      {children}
+    <button type="button" role="tab" id={`${id}-tab-${value}`} aria-controls={`${id}-panel-${value}`} aria-selected={selected === value} tabIndex={selected === value ? 0 : -1}
+      className={cn("ui-tab inline-flex items-center justify-center whitespace-nowrap font-medium hover:text-foreground", className)} onClick={() => onValueChange(value)}>
+      {selected === value ? <motion.span className="tab-selection" layoutId={`${id}-selection`} aria-hidden="true" transition={{ duration: .28, ease: [.22, 1, .36, 1] }} /> : null}
+      <span className="tab-label">{children}</span>
     </button>
   );
 }
 
-interface TabsContentProps {
-  value: string;
-  children: React.ReactNode;
-  className?: string;
-}
-
-export function TabsContent({ value, children, className }: TabsContentProps) {
-  const { value: selected } = useTabs();
-  if (selected !== value) return null;
-  return <div className={className}>{children}</div>;
+export function TabsContent({ value, children, className, forceMount = false }: { value: string; children: React.ReactNode; className?: string; forceMount?: boolean }) {
+  const { value: selected, id } = useTabs();
+  if (selected !== value && !forceMount) return null;
+  return <motion.div initial={false} animate={selected === value ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }} transition={{ duration: .22, ease: [.22, 1, .36, 1] }} hidden={selected !== value} role="tabpanel" tabIndex={0} id={`${id}-panel-${value}`} aria-labelledby={`${id}-tab-${value}`} className={cn("ui-tab-panel", className)}>{children}</motion.div>;
 }

@@ -1,199 +1,94 @@
-import { useState } from "react";
+import { motion } from "motion/react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Pin, PinOff, Sparkles } from "lucide-react";
+import { ArrowUpRight, ChevronDown, FileCode2, FileText, Pin, PinOff, Search, Sparkles } from "lucide-react";
 import { toast } from "sonner";
+import { PageHeading } from "@/components/layout/PageHeading";
+import { EmptyState, QueryNotice } from "@/components/layout/WorkspaceState";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 import { NewBadge } from "@/components/ui/new-badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { fetchSkillDetail, fetchSkills, pinSkill } from "@/lib/workbench-api";
-import type { Skill, SkillDetail } from "@/lib/types";
-import { cn } from "@/lib/utils";
 
-const STATE_LABELS: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
-  active: { label: "活跃", variant: "default" },
-  stale: { label: "闲置", variant: "secondary" },
-  archived: { label: "已归档", variant: "outline" },
-};
-
-function stateDisplay(state: string) {
-  const info = STATE_LABELS[state] ?? { label: state, variant: "secondary" as const };
-  return <Badge variant={info.variant}>{info.label}</Badge>;
-}
-
-function SkillContent({ detail }: { detail: SkillDetail }) {
-  return (
-    <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-muted/50 p-3 text-xs leading-relaxed">
-      {detail.content}
-    </pre>
-  );
-}
+const states: Record<string, string> = { active: "活跃", stale: "闲置", archived: "已归档" };
 
 export function SkillsPage() {
   const queryClient = useQueryClient();
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
-
-  const skillsQuery = useQuery({
-    queryKey: ["skills"],
-    queryFn: () => fetchSkills(true),
-  });
-
-  const detailQuery = useQuery({
-    queryKey: ["skill-detail", selectedSkill],
-    queryFn: () => fetchSkillDetail(selectedSkill!),
-    enabled: !!selectedSkill,
-  });
-
+  const [search, setSearch] = useState("");
+  const detailRef = useRef<HTMLElement>(null);
+  const libraryRef = useRef<HTMLElement>(null);
+  const skillsQuery = useQuery({ queryKey: ["skills"], queryFn: () => fetchSkills(true) });
+  const detailQuery = useQuery({ queryKey: ["skill-detail", selectedSkill], queryFn: () => fetchSkillDetail(selectedSkill!), enabled: !!selectedSkill });
   const pinMutation = useMutation({
     mutationFn: ({ name, pinned }: { name: string; pinned: boolean }) => pinSkill(name, pinned),
     onSuccess: () => {
       toast.success("已更新固定状态");
       void queryClient.invalidateQueries({ queryKey: ["skills"] });
     },
-    onError: (err: unknown) => {
-      toast.error(err instanceof Error ? err.message : "操作失败");
-    },
+    onError: (error: unknown) => toast.error(error instanceof Error ? error.message : "操作失败"),
   });
+  const skills = skillsQuery.data?.skills ?? [];
+  const term = search.trim().toLowerCase();
+  const filtered = skills.filter(skill => `${skill.name} ${skill.description ?? ""} ${skill.category}`.toLowerCase().includes(term));
+  const detail = detailQuery.data;
 
-  const skills: Skill[] = skillsQuery.data?.skills ?? [];
-  const detail = detailQuery.data ?? null;
+  useEffect(() => {
+    if (selectedSkill && window.innerWidth < 1024) {
+      detailRef.current?.focus({ preventScroll: true });
+      detailRef.current?.scrollIntoView({ block: "start" });
+    }
+  }, [selectedSkill, detailQuery.isPending]);
 
-  return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-6">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">技能</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Agent 自主进化的技能。技能由 Agent 在交互中自动创建和改进，无需人工审批。
-          </p>
+  return <div className="workspace-page skills-page"><div className="page-container">
+    <PageHeading title="技能" icon={Sparkles} />
+    <div className="collection-workspace">
+      <section ref={libraryRef} tabIndex={-1} className="collection-library" aria-label="技能列表">
+        <div className="collection-toolbar">
+          <div><h2><Sparkles size={17} aria-hidden="true" />交易技能</h2><p>{skillsQuery.isSuccess ? `${skills.length} 个技能` : "技能目录"}</p></div>
+          <label className="workspace-search"><Search size={16} aria-hidden="true" /><Input aria-label="搜索技能" placeholder="搜索名称、类别或内容说明" value={search} onChange={event => setSearch(event.target.value)} /></label>
         </div>
-
-        {skillsQuery.isLoading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            加载中…
-          </div>
-        ) : null}
-
-        <div className="grid gap-6 lg:grid-cols-5">
-          <Card className="lg:col-span-3">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Sparkles className="h-4 w-4" />
-                交易技能
-              </CardTitle>
-              <CardDescription>{skills.length} 个技能</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {skills.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  暂无技能。Agent 会在交互中自动创建。
-                </p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>名称</TableHead>
-                        <TableHead>类别</TableHead>
-                        <TableHead>状态</TableHead>
-                        <TableHead className="text-right">使用</TableHead>
-                        <TableHead />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {skills.map((skill) => (
-                        <TableRow
-                          key={skill.name}
-                          className={cn(
-                            "cursor-pointer",
-                            selectedSkill === skill.name && "bg-muted/60",
-                          )}
-                          onClick={() => setSelectedSkill(skill.name)}
-                        >
-                          <TableCell className="max-w-[180px] truncate font-medium">
-                            {skill.pinned && <Pin className="mr-1 inline h-3 w-3 text-primary" />}
-                            {skill.name}
-                            <NewBadge createdAt={skill.created_at} className="ml-2 align-middle" />
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="secondary">{skill.category}</Badge>
-                          </TableCell>
-                          <TableCell>{stateDisplay(skill.state)}</TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {skill.use_count}
-                          </TableCell>
-                          <TableCell className="w-8">
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-7 w-7"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                pinMutation.mutate({ name: skill.name, pinned: !skill.pinned });
-                              }}
-                              title={skill.pinned ? "取消固定" : "固定"}
-                            >
-                              {skill.pinned ? (
-                                <PinOff className="h-3.5 w-3.5" />
-                              ) : (
-                                <Pin className="h-3.5 w-3.5" />
-                              )}
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle className="text-base">技能详情</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {detail ? (
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-sm font-medium">{detail.name}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{detail.description}</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                    {detail.created_by && <span>创建者: {detail.created_by}</span>}
-                    {detail.patch_count > 0 && <span>· 修改 {detail.patch_count} 次</span>}
-                    {detail.last_used_at && (
-                      <span>· 最近使用: {new Date(detail.last_used_at).toLocaleDateString()}</span>
-                    )}
-                  </div>
-                  <SkillContent detail={detail} />
-                </div>
-              ) : detailQuery.isLoading ? (
-                <Skeleton className="h-32 w-full" />
-              ) : (
-                <p className="text-sm text-muted-foreground">选择一个技能查看详情。</p>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+        {skillsQuery.isPending ? <div className="collection-loading"><Skeleton className="h-20" /><Skeleton className="h-20" /><Skeleton className="h-20" /></div>
+          : skillsQuery.error ? <QueryNotice title="无法加载技能" error={skillsQuery.error} retry={() => void skillsQuery.refetch()} />
+          : !skills.length ? <EmptyState icon={Sparkles} title="还没有交易技能" description="研究中积累的技能会出现在这里。" />
+          : !filtered.length ? <EmptyState icon={Search} title="没有匹配的技能" description="试试其他关键词，或清除搜索查看全部技能。" action={<Button variant="outline" size="sm" onClick={() => setSearch("")}>清除搜索</Button>} />
+          : <ul className="skill-library-list">{filtered.map(skill => <li key={skill.name} data-selected={selectedSkill === skill.name}>
+            <button className="skill-open" aria-controls="skill-detail" aria-pressed={selectedSkill === skill.name} onClick={() => setSelectedSkill(skill.name)}>
+              <span className="skill-row-title">{skill.pinned ? <Pin size={14} aria-label="已固定" /> : <FileText size={16} aria-hidden="true" />}<strong>{skill.name}</strong><NewBadge createdAt={skill.created_at} /><ArrowUpRight size={15} aria-hidden="true" /></span>
+              <span className="skill-row-description">{skill.description || "暂无说明"}</span>
+              <span className="skill-row-meta"><Badge variant="secondary">{skill.category}</Badge><span>{states[skill.state] ?? skill.state}</span><span>使用 {skill.use_count} 次</span></span>
+            </button>
+            <Button size="icon" variant="ghost" className="skill-pin" disabled={pinMutation.isPending} aria-label={`${skill.pinned ? "取消固定" : "固定"} ${skill.name}`} onClick={() => pinMutation.mutate({ name: skill.name, pinned: !skill.pinned })}>{skill.pinned ? <PinOff size={16} /> : <Pin size={16} />}</Button>
+          </li>)}</ul>}
+        {term && skillsQuery.isSuccess ? <p className="collection-footnote" role="status">显示 {filtered.length} / {skills.length} 个技能</p> : null}
+      </section>
+      <section tabIndex={-1} id="skill-detail" ref={detailRef} className="detail-pane" aria-label="技能详情">
+        <div className="detail-pane-heading"><FileText size={17} aria-hidden="true" /><h2>技能详情</h2>{selectedSkill ? <Button size="sm" variant="ghost" className="lg:hidden" onClick={() => { libraryRef.current?.focus({ preventScroll: true }); libraryRef.current?.scrollIntoView({ block: "start" }); }}>返回列表</Button> : null}</div>
+        {!selectedSkill ? <EmptyState icon={FileText} title="选择一个技能" description="从列表中打开，开始阅读。" />
+          : detailQuery.isPending ? <div className="collection-loading"><Skeleton className="h-8" /><Skeleton className="h-64" /></div>
+          : detailQuery.error ? <QueryNotice title="无法读取技能" error={detailQuery.error} retry={() => void detailQuery.refetch()} />
+          : detail ? <motion.div key={selectedSkill} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: .24 }} className="detail-pane-body">
+            <h3 className="detail-title">{detail.name}</h3><p className="detail-description">{detail.description}</p>
+            <dl className="record-facts">
+              {detail.created_by ? <div><dt>创建者</dt><dd>{detail.created_by}</dd></div> : null}
+              <div><dt>修改次数</dt><dd>{detail.patch_count}</dd></div>
+              {detail.last_used_at ? <div><dt>最近使用</dt><dd>{new Date(detail.last_used_at).toLocaleDateString("zh-CN")}</dd></div> : null}
+            </dl>
+            <div className="skill-document prose prose-sm max-w-none dark:prose-invert"><MarkdownRenderer>{detail.content}</MarkdownRenderer></div>
+            <details className="document-source">
+              <summary>
+                <FileCode2 size={16} className="document-source-icon" aria-hidden="true" />
+                <span className="document-source-show">查看原文</span><span className="document-source-hide">收起原文</span>
+                <span className="document-source-format" aria-hidden="true">Markdown</span>
+                <ChevronDown size={15} className="document-source-chevron" aria-hidden="true" />
+              </summary>
+              <div className="document-source-content"><pre className="document-reader" tabIndex={0} aria-label={`${detail.name} 原文`}><code>{detail.content}</code></pre></div>
+            </details>
+          </motion.div> : null}
+      </section>
     </div>
-  );
+  </div></div>;
 }

@@ -1,6 +1,8 @@
+import { EmptyState, QueryNotice } from "@/components/layout/WorkspaceState";
+import { PageHeading } from "@/components/layout/PageHeading";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Brain, Database, FileText, TrendingUp, TrendingDown, Clock, Target, Search, Sparkles } from "lucide-react";
+import { Database, FileText, TrendingUp, TrendingDown, Clock, Target, Search, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,7 +27,7 @@ function CapacityBar({ used, limit }: { used: number; limit: number }) {
       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
         <div
           className={cn(
-            "h-full rounded-full transition-all",
+            "h-full rounded-full",
             pct > 95 ? "bg-destructive" : pct > 80 ? "bg-orange-500" : "bg-primary",
           )}
           style={{ width: `${pct}%` }}
@@ -59,7 +61,7 @@ function MemoryChangeDetails({ entry }: { entry: MemoryEntry }) {
   return (
     <details className="pt-1 text-xs">
       <summary className="cursor-pointer text-primary">{summary}</summary>
-      <div className="mt-2 space-y-3 border-l-2 pl-3">
+      <div className="memory-lineage mt-3 space-y-3">
         <p className="text-muted-foreground">
           {deduplicated ? "完全重复的副本去重，未调用 AI 重写正文。" : entry.review_method === "ai"
             ? "修订方案经过 AI 审查后保存。" : "历史记录未注明是否经过 AI 审查。"}
@@ -84,7 +86,7 @@ function MemoryChangeDetails({ entry }: { entry: MemoryEntry }) {
 }
 
 function MemoryEntries({ target }: { target: "memory" | "user" }) {
-  const { data, isLoading, error } = useQuery<MemoryResponse>({
+  const { data, isLoading, error, refetch } = useQuery<MemoryResponse>({
     queryKey: ["memory", target],
     queryFn: () => fetchMemory(target),
   });
@@ -92,12 +94,10 @@ function MemoryEntries({ target }: { target: "memory" | "user" }) {
   const [memoryStatus, setMemoryStatus] = useState("active");
 
   if (isLoading) return <Skeleton className="h-40 w-full" />;
-  if (error) return <p role="alert" className="py-4 text-sm text-destructive">记忆读取失败：{error.message}</p>;
+  if (error) return <QueryNotice title="记忆读取失败" error={error} retry={() => void refetch()} />;
   if (!data || data.entries.length === 0) {
     return (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        暂无记录。Agent 运行中会自动积累。
-      </p>
+      <EmptyState icon={target === "memory" ? Database : Target} title="还没有记忆记录" description="研究与对话会逐步积累记忆。" />
     );
   }
 
@@ -114,11 +114,11 @@ function MemoryEntries({ target }: { target: "memory" | "user" }) {
 
   return (
     <div className="space-y-4">
-      <div className="space-y-2">
+      <div className="memory-capacity">
         <p className="text-xs text-muted-foreground">有效记忆 · 候选和历史不占额度</p>
         <CapacityBar used={data.chars_used} limit={data.char_limit} />
       </div>
-      <div className="flex flex-wrap gap-2" aria-label="记忆状态">
+      <div className="memory-filters flex flex-wrap gap-2" aria-label="记忆状态">
         {Object.entries(stateLabels).map(([status, label]) => (
           <Button key={status} size="sm" variant={memoryStatus === status ? "default" : "outline"}
             aria-pressed={memoryStatus === status} onClick={() => setMemoryStatus(status)}>
@@ -129,7 +129,8 @@ function MemoryEntries({ target }: { target: "memory" | "user" }) {
       <div className="relative">
         <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
         <Input
-          placeholder="搜索记忆..."
+          placeholder="搜索记忆内容"
+          aria-label="搜索记忆"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           className="h-8 pl-8 text-xs"
@@ -139,7 +140,7 @@ function MemoryEntries({ target }: { target: "memory" | "user" }) {
         {filtered.map((entry) => (
           <div
             key={`${entry.entry_id}:${entry.version}:${entry.index}`}
-            className="group rounded-md border bg-muted/30 px-3 py-2.5 text-sm transition-colors hover:bg-muted/60"
+            className="memory-entry group"
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1 space-y-1">
@@ -157,7 +158,7 @@ function MemoryEntries({ target }: { target: "memory" | "user" }) {
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {entry.status !== "archived" && <NewBadge createdAt={entry.created_at} />}
-                <div className="flex items-center gap-2 opacity-60 transition-opacity group-hover:opacity-100">
+                <div className="flex items-center gap-2">
                   <span
                     className={cn(
                       "rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums",
@@ -190,39 +191,39 @@ function MemoryEntries({ target }: { target: "memory" | "user" }) {
 
 function StatsCards({ stats }: { stats: DecisionStats }) {
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-      <div className="rounded-lg border bg-muted/30 p-3">
+    <div className="decision-stats">
+      <div className="decision-stat">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">总决策</p>
         <p className="mt-1 text-2xl font-bold tabular-nums">{stats.total}</p>
       </div>
-      <div className="rounded-lg border bg-muted/30 p-3">
+      <div className="decision-stat">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">待结算</p>
-        <p className="mt-1 text-2xl font-bold tabular-nums text-yellow-600">
+        <p className="mt-1 text-2xl font-bold tabular-nums text-yellow-600 dark:text-yellow-400">
           {stats.pending}
           {(stats.partial ?? 0) > 0 && (
             <span className="ml-1 text-xs font-medium">+{stats.partial} 部分</span>
           )}
         </p>
       </div>
-      <div className="rounded-lg border bg-muted/30 p-3">
+      <div className="decision-stat">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">待复盘</p>
-        <p className="mt-1 text-2xl font-bold tabular-nums text-blue-600">{stats.awaiting_reflection ?? 0}</p>
+        <p className="mt-1 text-2xl font-bold tabular-nums text-blue-600 dark:text-blue-400">{stats.awaiting_reflection ?? 0}</p>
       </div>
-      <div className="rounded-lg border bg-muted/30 p-3">
+      <div className="decision-stat">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">已复盘</p>
-        <p className="mt-1 text-2xl font-bold tabular-nums text-green-600">{stats.reflected ?? 0}</p>
+        <p className="mt-1 text-2xl font-bold tabular-nums text-green-600 dark:text-green-400">{stats.reflected ?? 0}</p>
       </div>
-      <div className="rounded-lg border bg-muted/30 p-3">
+      <div className="decision-stat">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">胜率</p>
         <p className="mt-1 text-2xl font-bold tabular-nums">
           {stats.win_rate != null ? `${stats.win_rate}%` : "—"}
         </p>
       </div>
-      <div className="rounded-lg border bg-muted/30 p-3">
+      <div className="decision-stat">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">均盈亏</p>
         <p className={cn(
           "mt-1 text-2xl font-bold tabular-nums",
-          (stats.avg_pnl ?? 0) >= 0 ? "text-green-600" : "text-red-600",
+          (stats.avg_pnl ?? 0) >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400",
         )}>
           {stats.avg_pnl != null ? `${stats.avg_pnl > 0 ? "+" : ""}${stats.avg_pnl}%` : "—"}
         </p>
@@ -233,7 +234,7 @@ function StatsCards({ stats }: { stats: DecisionStats }) {
 
 function DecisionList() {
   const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["decisions"],
     queryFn: () => fetchDecisions({ limit: 50 }),
   });
@@ -252,7 +253,8 @@ function DecisionList() {
   });
 
   if (isLoading) return <Skeleton className="h-40 w-full" />;
-  if (!data) return <p className="text-sm text-muted-foreground">无数据</p>;
+  if (error) return <QueryNotice title="无法加载决策记录" error={error} retry={() => void refetch()} />;
+  if (!data) return null;
 
   const statusLabels: Record<string, string> = {
     all: "全部",
@@ -330,7 +332,7 @@ function DecisionList() {
                 {d.outcome_pnl_pct != null && (
                   <span className={cn(
                     "text-sm font-semibold tabular-nums",
-                    d.outcome_pnl_pct >= 0 ? "text-green-600" : "text-red-600",
+                    d.outcome_pnl_pct >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400",
                   )}>
                     {d.outcome_pnl_pct > 0 ? "+" : ""}{d.outcome_pnl_pct}%
                   </span>
@@ -395,12 +397,12 @@ function DecisionList() {
 }
 
 function InstrumentsList() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["instruments"],
     queryFn: fetchInstruments,
   });
   const [selected, setSelected] = useState<string | null>(null);
-  const { data: page, isLoading: pageLoading } = useQuery({
+  const { data: page, isLoading: pageLoading, error: pageError, refetch: refetchPage } = useQuery({
     queryKey: ["instrument", selected],
     queryFn: () => fetchInstrumentPage(selected!),
     enabled: !!selected,
@@ -408,11 +410,10 @@ function InstrumentsList() {
 
   if (isLoading) return <Skeleton className="h-40 w-full" />;
 
+  if (error) return <QueryNotice title="无法加载个股档案" error={error} retry={() => void refetch()} />;
   if (!data?.instruments.length) {
     return (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        暂无个股档案。Agent 交易已追踪的标的后，会自动创建。
-      </p>
+      <EmptyState icon={FileText} title="还没有个股档案" description="交易已追踪的标的后，可以在这里查看相关记录。" />
     );
   }
 
@@ -422,13 +423,15 @@ function InstrumentsList() {
       <div className="flex flex-wrap gap-2">
         {data.instruments.map((sym) => (
           <div key={sym} className="flex items-center gap-1.5">
-            <Badge
+            <Button
+              size="sm"
+              aria-pressed={selected === sym}
               variant={selected === sym ? "default" : "outline"}
               className="cursor-pointer font-mono transition-colors"
               onClick={() => setSelected(sym === selected ? null : sym)}
             >
               {sym}
-            </Badge>
+            </Button>
             <NewBadge createdAt={data.created_at?.[sym]} />
           </div>
         ))}
@@ -444,7 +447,7 @@ function InstrumentsList() {
           <CardContent>
             {pageLoading ? (
               <Skeleton className="h-20 w-full" />
-            ) : page ? (
+            ) : pageError ? <QueryNotice title="无法读取档案" error={pageError} retry={() => void refetchPage()} /> : page ? (
               <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-muted/50 p-3 text-xs leading-relaxed">
                 {page.content}
               </pre>
@@ -458,20 +461,12 @@ function InstrumentsList() {
 
 export function MemoryPage() {
   return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-6">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <div>
-          <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
-            <Brain className="h-5 w-5" />
-            记忆系统
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Agent 的长期记忆。知识和用户画像由 Agent 自动提炼积累，决策日志追踪每笔交易的推理与复盘。
-          </p>
-        </div>
+    <div className="workspace-page memory-page">
+      <div className="page-container">
+        <PageHeading title="记忆系统" icon={Database} />
 
         <Tabs defaultValue="knowledge">
-          <TabsList>
+          <TabsList className="module-tabs">
             <TabsTrigger value="knowledge" className="gap-1.5">
               <Database className="h-3.5 w-3.5" />
               知识库
@@ -491,10 +486,10 @@ export function MemoryPage() {
           </TabsList>
 
           <TabsContent value="knowledge" className="mt-4">
-            <Card>
+            <Card className="memory-surface">
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">KNOWLEDGE.md</CardTitle>
-                <CardDescription>持久知识 — 经验规律、系统约束、验证过的教训</CardDescription>
+                <CardTitle className="text-base">研究知识</CardTitle>
+                <CardDescription>经验规律、系统约束与验证过的教训</CardDescription>
               </CardHeader>
               <CardContent>
                 <MemoryEntries target="memory" />
@@ -503,10 +498,10 @@ export function MemoryPage() {
           </TabsContent>
 
           <TabsContent value="user" className="mt-4">
-            <Card>
+            <Card className="memory-surface">
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">USER.md</CardTitle>
-                <CardDescription>用户画像 — 交易风格、风险偏好、板块偏好</CardDescription>
+                <CardTitle className="text-base">交易偏好</CardTitle>
+                <CardDescription>交易风格、风险偏好与板块偏好</CardDescription>
               </CardHeader>
               <CardContent>
                 <MemoryEntries target="user" />
@@ -515,9 +510,9 @@ export function MemoryPage() {
           </TabsContent>
 
           <TabsContent value="decisions" className="mt-4">
-            <Card>
+            <Card className="memory-surface">
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">Decision Journal</CardTitle>
+                <CardTitle className="text-base">决策与复盘</CardTitle>
                 <CardDescription>
                   交易决策全生命周期追踪: 待结算 → 待复盘 → 已复盘
                 </CardDescription>
@@ -529,10 +524,10 @@ export function MemoryPage() {
           </TabsContent>
 
           <TabsContent value="instruments" className="mt-4">
-            <Card>
+            <Card className="memory-surface">
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">Instrument Pages</CardTitle>
-                <CardDescription>个股档案 — 关注理由、关键价位、交易历史、笔记</CardDescription>
+                <CardTitle className="text-base">个股研究档案</CardTitle>
+                <CardDescription>关注理由、关键价位、交易历史与笔记</CardDescription>
               </CardHeader>
               <CardContent>
                 <InstrumentsList />

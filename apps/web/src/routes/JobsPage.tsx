@@ -1,8 +1,14 @@
+import { EmptyState, QueryNotice } from "@/components/layout/WorkspaceState";
+import { JobDeliveryChannels } from "@/components/JobDeliveryChannels";
+import { PageHeading } from "@/components/layout/PageHeading";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Clock, Loader2, Pause, Play, Plus, Save, Settings2, Trash2 } from "lucide-react";
+import { CalendarDays, ChevronDown, ChevronRight, Clock, History, ListChecks, Moon, Sunrise, Sunset, Sun, Loader2, Pause, Play, Plus, Save, Settings2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { motion } from "motion/react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -21,7 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { CustomJob, JobRun, SchedulerConfig, StepRun } from "@/lib/types";
+import type { CustomJob, JobRun, ScheduledJob, SchedulerConfig, StepRun } from "@/lib/types";
 import { DELIVERY_CHANNEL_OPTIONS } from "@/lib/types";
 import {
   createCustomJob,
@@ -53,14 +59,32 @@ const TIME_FIELDS: Array<{ key: keyof SchedulerConfig; label: string }> = [
   { key: "weekly_time", label: "周度回顾" },
 ];
 
+
+const DAY_STATIONS = [
+  { key: "premarket_time", label: "盘前检查", icon: Sunrise },
+  { key: "morning_plan_time", label: "晨间计划", icon: Sun },
+  { key: "close_time", label: "收盘检查", icon: Sunset },
+  { key: "eod_review_time", label: "盘后复盘", icon: Moon },
+  { key: "postmarket_time", label: "盘后归档", icon: CalendarDays },
+] as const;
+const JOB_ICONS = { premarket: Sunrise, morning_plan: Sun, close: Sunset, eod_review: Moon, postmarket: CalendarDays, weekly: CalendarDays, autonomous_trading: Clock };
+function cadenceLabel(cadence: string) {
+  if (cadence === "trading_session 30m") return "交易日盘中 · 8 轮";
+  const daily = /^trading_day (\d{2}:\d{2})$/.exec(cadence);
+  if (daily) return `交易日 · ${daily[1]}`;
+  const weekly = /^(mon|tue|wed|thu|fri|sat|sun) (\d{2}:\d{2})$/.exec(cadence);
+  if (weekly) return `每周${({mon:"一",tue:"二",wed:"三",thu:"四",fri:"五",sat:"六",sun:"日"} as Record<string,string>)[weekly[1]]} · ${weekly[2]}`;
+  return cadence;
+}
+
 function RunStatusBadge({ status }: { status: string }) {
   switch (status) {
     case "completed":
       return <Badge variant="outline">成功</Badge>;
     case "degraded":
-      return <Badge className="border-amber-300 bg-amber-500/15 text-amber-700">降级</Badge>;
+      return <Badge className="border-amber-300 bg-amber-500/15 text-amber-700 dark:text-amber-300">降级</Badge>;
     case "running":
-      return <Badge className="animate-pulse bg-blue-500/15 text-blue-600 border-blue-300">运行中</Badge>;
+      return <Badge className="animate-pulse bg-blue-500/15 text-blue-600 dark:text-blue-300 border-blue-300">运行中</Badge>;
     case "queued":
       return <Badge variant="secondary">排队中</Badge>;
     case "skipped":
@@ -146,8 +170,8 @@ function StepRunCard({ step }: { step: StepRun }) {
 
   return (
     <div className="rounded border bg-background text-xs">
-      <div
-        className={`flex items-center gap-3 px-3 py-2 ${hasContent ? "cursor-pointer hover:bg-muted/40" : ""}`}
+      <button type="button" disabled={!hasContent} aria-expanded={showData} aria-label={`步骤 ${step.step_id}`}
+        className={`job-step-trigger flex w-full items-center gap-3 px-3 py-2 ${hasContent ? "cursor-pointer hover:bg-muted/40" : ""}`}
         onClick={() => hasContent && setShowData(!showData)}
       >
         <span className="inline-flex items-center gap-1.5 min-w-[100px]">
@@ -161,7 +185,7 @@ function StepRunCard({ step }: { step: StepRun }) {
             ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
             : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
         )}
-      </div>
+      </button>
       {showData && hasContent && (
         <div className="border-t px-3 py-2 space-y-2">
           {step.error && (
@@ -187,20 +211,16 @@ function formatJobLabel(jobId: string, customJobs: CustomJob[]): string {
   return job ? `${job.name} (自建)` : `custom:${customId.slice(0, 8)}…`;
 }
 
-function ChannelBadges({ channels }: { channels: string[] }) {
-  if (!channels.length) return <span className="text-xs text-muted-foreground">—</span>;
-  return (
-    <div className="flex flex-wrap gap-1">
-      {channels.map((ch) => {
-        const label = DELIVERY_CHANNEL_OPTIONS.find((o) => o.id === ch)?.label ?? ch;
-        return (
-          <Badge key={ch} variant="outline" className="text-[10px] font-normal">
-            {label}
-          </Badge>
-        );
-      })}
-    </div>
-  );
+function JobCadence({ cadence }: { cadence: string }) {
+  const daily = /^trading_day (\d{2}:\d{2})$/.exec(cadence);
+  const weekly = /^(mon|tue|wed|thu|fri|sat|sun) (\d{2}:\d{2})$/.exec(cadence);
+  const time = daily?.[1] ?? weekly?.[2];
+  const period = daily ? "交易日" : weekly ? cadenceLabel(cadence).split(" · ")[0] : "";
+  return <div className="job-cadence">{time ? <><strong>{time}</strong><span>{period}</span></> : cadence === "trading_session 30m" ? <><strong>盘中 8 轮</strong><span>交易日</span></> : <span>{cadenceLabel(cadence)}</span>}</div>;
+}
+
+function JobEnabled({ enabled, inactive = "停用" }: { enabled: boolean; inactive?: string }) {
+  return <span className="job-enabled" data-enabled={enabled}><i aria-hidden="true" />{enabled ? "启用" : inactive}</span>;
 }
 
 function RunRow({
@@ -231,11 +251,11 @@ function RunRow({
         onClick={handleToggle}
       >
         <TableCell className="w-8 pr-0">
-          {expanded ? (
+          <button type="button" className="run-disclosure" aria-label={`${expanded ? "收起" : "展开"} ${jobLabel} ${formatTime(currentRun.started_at)}`} aria-expanded={expanded} onClick={event => { event.stopPropagation(); handleToggle(); }}>{expanded ? (
             <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
           ) : (
             <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-          )}
+          )}</button>
         </TableCell>
         <TableCell className="font-mono text-xs">{jobLabel}</TableCell>
         <TableCell className="whitespace-nowrap text-xs">
@@ -311,6 +331,7 @@ function RunRow({
                   加载步骤详情…
                 </div>
               )}
+              {detailQuery.error ? <QueryNotice title="无法加载运行详情" error={detailQuery.error} retry={() => void detailQuery.refetch()} /> : null}
               {detail && detail.step_runs.length > 0 && (
                 <div className="text-xs space-y-2">
                   <p className="font-medium text-muted-foreground">步骤详情</p>
@@ -331,6 +352,12 @@ export function JobsPage() {
   const queryClient = useQueryClient();
   const [schedulerDraft, setSchedulerDraft] = useState<SchedulerConfig | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [view, setView] = useState(() => window.location.hash === "#scheduler" ? "schedule" : window.location.hash === "#recent-runs" ? "history" : "tasks");
+  const [scheduleFocus, setScheduleFocus] = useState<string | null>(null);
+  useEffect(() => {
+    if (view === "schedule" && scheduleFocus) document.getElementById(scheduleFocus)?.focus();
+    if (view === "tasks" && showAddForm) document.getElementById("custom-job-name")?.focus();
+  }, [view, scheduleFocus, showAddForm]);
   const [runFilter, setRunFilter] = useState<string>("all");
   const [newJob, setNewJob] = useState({
     name: "",
@@ -456,16 +483,19 @@ export function JobsPage() {
   const channelsMutation = useMutation({
     mutationFn: ({ id, delivery_channels }: { id: string; delivery_channels: string[] }) =>
       updateCustomJob(id, { delivery_channels }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["custom-jobs"] });
+    onSuccess: (result) => {
+      queryClient.setQueryData<CustomJob[]>(["custom-jobs"], jobs => jobs?.map(job => job.id === result.id ? { ...job, delivery_channels: result.delivery_channels } : job));
+      return queryClient.invalidateQueries({ queryKey: ["custom-jobs"] });
     },
+    onError: (err: unknown) => toast.error(err instanceof Error ? err.message : "更新推送渠道失败"),
   });
 
   const builtinChannelsMutation = useMutation({
     mutationFn: ({ id, delivery_channels }: { id: string; delivery_channels: string[] }) =>
       updateBuiltinJob(id, { delivery_channels }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    onSuccess: (result) => {
+      queryClient.setQueryData<ScheduledJob[]>(["jobs"], jobs => jobs?.map(job => job.id === result.id ? { ...job, delivery_channels: result.delivery_channels } : job));
+      return queryClient.invalidateQueries({ queryKey: ["jobs"] });
     },
     onError: (err: unknown) => {
       toast.error(err instanceof Error ? err.message : "更新推送渠道失败");
@@ -496,126 +526,35 @@ export function JobsPage() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-6">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">定时任务</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            查看调度配置与最近运行记录；可编辑 cron 时间并手动触发任意已启用任务。
-          </p>
-        </div>
-
-        {(jobsQuery.isLoading || runsQuery.isLoading || schedulerQuery.isLoading) && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            加载中…
-          </div>
-        )}
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Settings2 className="h-4 w-4" />
-              调度配置
-            </CardTitle>
-            <CardDescription>
-              写入 config YAML；若 serve 进程内 scheduler 在运行，保存后会热重载
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {schedulerDraft ? (
-              <>
-                <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
-                  <div>
-                    <p className="text-sm font-medium">启用调度器</p>
-                    <p className="text-xs text-muted-foreground">
-                      时区 {schedulerDraft.timezone}
-                    </p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={schedulerDraft.enabled}
-                    className="h-4 w-4 accent-primary"
-                    onChange={(e) =>
-                      setSchedulerDraft({ ...schedulerDraft, enabled: e.target.checked })
-                    }
-                  />
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {TIME_FIELDS.map(({ key, label }) => (
-                    <div key={key} className="space-y-1.5">
-                      <label htmlFor={key} className="text-sm font-medium">
-                        {label}
-                      </label>
-                      <Input
-                        id={key}
-                        type="time"
-                        value={String(schedulerDraft[key])}
-                        onChange={(e) =>
-                          setSchedulerDraft({ ...schedulerDraft, [key]: e.target.value })
-                        }
-                      />
-                    </div>
-                  ))}
-                  <div className="space-y-1.5">
-                    <label htmlFor="weekly_day" className="text-sm font-medium">
-                      周度回顾（星期）
-                    </label>
-                    <Input
-                      id="weekly_day"
-                      value={schedulerDraft.weekly_day}
-                      placeholder="sat"
-                      onChange={(e) =>
-                        setSchedulerDraft({
-                          ...schedulerDraft,
-                          weekly_day: e.target.value.toLowerCase(),
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-end">
-                  <Button
-                    type="button"
-                    disabled={!schedulerDirty || saveSchedulerMutation.isPending}
-                    onClick={handleSaveScheduler}
-                  >
-                    {saveSchedulerMutation.isPending ? (
-                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Save className="mr-1 h-4 w-4" />
-                    )}
-                    保存配置
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">无法加载调度配置。</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
+    <div className="workspace-page jobs-page">
+      <div className="page-container">
+        <PageHeading icon={Clock} title="定时任务" actions={<Button onClick={() => { setView("tasks"); setShowAddForm(true); }}><Plus size={16} className="mr-2" />新建任务</Button>} />
+        {schedulerQuery.isPending ? <Skeleton className="h-52 w-full" /> : schedulerQuery.error ? <QueryNotice title="无法读取日程" error={schedulerQuery.error} retry={() => void schedulerQuery.refetch()} /> : schedulerQuery.data ? <section className="schedule-board" aria-label="已保存的交易日日程">
+          <div className="schedule-board-heading"><div><span className="schedule-eyebrow"><CalendarDays size={14} />已保存日程</span><h2>交易日节奏</h2></div><span className="schedule-status"><i aria-hidden="true" />{schedulerQuery.data.enabled ? "自动调度开启" : "自动调度关闭"}</span></div>
+          <div className="schedule-track">{[...DAY_STATIONS].sort((a, b) => schedulerQuery.data![a.key].localeCompare(schedulerQuery.data![b.key])).map(({key,label,icon:Icon}) => <motion.button key={key} type="button" className="schedule-station" whileHover={{ y: -5 }} whileTap={{ scale: .97 }} aria-label={`修改${label}时间 ${schedulerQuery.data![key]}`} onClick={() => { setView("schedule"); setScheduleFocus(key); if (view === "schedule") document.getElementById(key)?.focus(); }}><span className="station-time">{schedulerQuery.data![key]}</span><span className="station-node"><Icon size={20} strokeWidth={1.6} aria-hidden="true" /></span><span className="station-name">{label}</span></motion.button>)}</div>
+          <div className="schedule-board-footer"><span>{schedulerQuery.data.timezone}</span><span>周度回顾 · {cadenceLabel(`${schedulerQuery.data.weekly_day} ${schedulerQuery.data.weekly_time}`)}</span></div>
+        </section> : null}
+        <Tabs defaultValue="tasks" value={view} onValueChange={(value) => { setView(value); setScheduleFocus(null); }} className="jobs-views">
+          <TabsList><TabsTrigger value="tasks"><ListChecks size={16} />任务</TabsTrigger><TabsTrigger value="history"><History size={16} />运行记录</TabsTrigger><TabsTrigger value="schedule"><Settings2 size={16} />日程设置{schedulerDirty ? <span className="unsaved-dot" aria-label="有未保存的更改" /> : null}</TabsTrigger></TabsList>
+          <TabsContent value="tasks" forceMount>
+        <Card id="builtin-jobs" className="jobs-library">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Clock className="h-4 w-4" />
-              已注册任务
+              内置任务
             </CardTitle>
-            <CardDescription>{jobs.length} 个内置任务；盘中自主交易由持仓页开关控制，其余按上方时间运行。</CardDescription>
+            <CardDescription>盘中自主交易由持仓页开关控制。</CardDescription>
           </CardHeader>
           <CardContent>
-            {jobs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无任务。</p>
+            {jobsQuery.error ? <QueryNotice title="无法加载内置任务" error={jobsQuery.error} retry={() => void jobsQuery.refetch()} /> : jobsQuery.isPending ? <div role="status" aria-label="正在加载任务"><Skeleton className="h-40 w-full" /></div> : jobs.length === 0 ? (
+              <EmptyState icon={Clock} title="暂无内置任务" description="已注册的定时任务会显示在这里。" />
             ) : (
               <div className="overflow-x-auto">
-                <Table>
+                <Table className="jobs-task-table">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>名称</TableHead>
-                      <TableHead>ID</TableHead>
-                      <TableHead>周期</TableHead>
+                      <TableHead>任务名称</TableHead>
+                      <TableHead>执行时间</TableHead>
                       <TableHead>推送渠道</TableHead>
                       <TableHead>状态</TableHead>
                       <TableHead className="text-right">操作</TableHead>
@@ -623,55 +562,23 @@ export function JobsPage() {
                   </TableHeader>
                   <TableBody>
                     {jobs.map((job) => (
-                      <TableRow key={job.id}>
-                        <TableCell className="font-medium">{job.name}</TableCell>
-                        <TableCell className="font-mono text-xs">{job.id}</TableCell>
-                        <TableCell>{job.cadence === "trading_session 30m" ? "交易日盘中 8 轮" : job.cadence}</TableCell>
+                      <TableRow key={job.id} data-disabled={!job.enabled}>
+                        <TableCell><div className="job-identity"><span className="task-symbol">{(() => { const Icon = JOB_ICONS[job.id as keyof typeof JOB_ICONS] ?? Clock; return <Icon size={20} strokeWidth={1.6} aria-hidden="true" />; })()}</span><strong className="job-name">{job.name}</strong></div></TableCell>
+                        <TableCell><JobCadence cadence={job.cadence} /></TableCell>
                         <TableCell>
-                          <div className="space-y-2">
-                            <ChannelBadges channels={job.delivery_channels ?? []} />
-                            <div className="flex flex-wrap gap-2">
-                              {DELIVERY_CHANNEL_OPTIONS.map((opt) => {
-                                const channels = job.delivery_channels ?? [];
-                                const checked = channels.includes(opt.id);
-                                return (
-                                  <label key={opt.id} className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                                    <input
-                                      type="checkbox"
-                                      className="h-3 w-3 accent-primary"
-                                      checked={checked}
-                                      disabled={builtinChannelsMutation.isPending}
-                                      onChange={() => {
-                                        const next = checked
-                                          ? channels.filter((ch) => ch !== opt.id)
-                                          : [...channels, opt.id];
-                                        if (next.length === 0) {
-                                          toast.error("至少保留一个推送渠道");
-                                          return;
-                                        }
-                                        builtinChannelsMutation.mutate({ id: job.id, delivery_channels: next });
-                                      }}
-                                    />
-                                    {opt.label}
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </div>
+                          <JobDeliveryChannels name={job.name} channels={job.delivery_channels ?? []} disabled={builtinChannelsMutation.isPending} onChange={delivery_channels => builtinChannelsMutation.mutateAsync({ id: job.id, delivery_channels })} />
                         </TableCell>
                         <TableCell>
-                          {job.enabled ? (
-                            <Badge variant="outline">启用</Badge>
-                          ) : (
-                            <Badge variant="secondary">停用</Badge>
-                          )}
+                          <JobEnabled enabled={job.enabled} />
                         </TableCell>
                         <TableCell className="text-right">
                           <Button
                             type="button"
                             size="sm"
-                            variant="secondary"
+                            variant="outline"
+                            className="job-run-button"
                             disabled={!job.enabled || runMutation.isPending}
+                            aria-label={`运行 ${job.name}`}
                             onClick={() => runMutation.mutate(job.id)}
                           >
                             {runMutation.isPending ? (
@@ -691,15 +598,16 @@ export function JobsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card id="custom-jobs" className="jobs-library">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Plus className="h-4 w-4" />
               自建任务
             </CardTitle>
-            <CardDescription>用户创建的 Prompt Job，由 AgentLoop 定时执行</CardDescription>
+
           </CardHeader>
           <CardContent className="space-y-4">
+            {customJobsQuery.isPending ? <div role="status" aria-label="正在加载自建任务"><Skeleton className="h-24 w-full" /></div> : null}
             {customJobsQuery.isError && (
               <p className="text-sm text-destructive">
                 加载自建任务失败：{customJobsQuery.error instanceof Error ? customJobsQuery.error.message : "未知错误"}
@@ -733,47 +641,15 @@ export function JobsPage() {
                             </p>
                           </div>
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-sm">{cj.schedule}</TableCell>
+                        <TableCell><JobCadence cadence={cj.schedule} /></TableCell>
                         <TableCell>
-                          <div className="space-y-2">
-                            <ChannelBadges channels={cj.delivery_channels} />
-                            <div className="flex flex-wrap gap-2">
-                              {DELIVERY_CHANNEL_OPTIONS.map((opt) => {
-                                const checked = cj.delivery_channels.includes(opt.id);
-                                return (
-                                  <label key={opt.id} className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                                    <input
-                                      type="checkbox"
-                                      className="h-3 w-3 accent-primary"
-                                      checked={checked}
-                                      disabled={channelsMutation.isPending}
-                                      onChange={() => {
-                                        const next = checked
-                                          ? cj.delivery_channels.filter((ch) => ch !== opt.id)
-                                          : [...cj.delivery_channels, opt.id];
-                                        if (next.length === 0) {
-                                          toast.error("至少保留一个推送渠道");
-                                          return;
-                                        }
-                                        channelsMutation.mutate({ id: cj.id, delivery_channels: next });
-                                      }}
-                                    />
-                                    {opt.label}
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </div>
+                          <JobDeliveryChannels name={cj.name} channels={cj.delivery_channels} disabled={channelsMutation.isPending} onChange={delivery_channels => channelsMutation.mutateAsync({ id: cj.id, delivery_channels })} />
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline">{cj.created_by}</Badge>
                         </TableCell>
                         <TableCell>
-                          {cj.enabled ? (
-                            <Badge variant="outline">启用</Badge>
-                          ) : (
-                            <Badge variant="secondary">暂停</Badge>
-                          )}
+                          <JobEnabled enabled={cj.enabled} inactive="暂停" />
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
@@ -782,6 +658,7 @@ export function JobsPage() {
                               size="sm"
                               variant="ghost"
                               title={cj.enabled ? "暂停" : "恢复"}
+                              aria-label={`${cj.enabled ? "暂停" : "恢复"} ${cj.name}`}
                               onClick={() =>
                                 toggleMutation.mutate({ id: cj.id, enabled: !cj.enabled })
                               }
@@ -793,6 +670,7 @@ export function JobsPage() {
                               size="sm"
                               variant="ghost"
                               disabled={!cj.enabled || runCustomMutation.isPending}
+                              aria-label={`运行 ${cj.name}`}
                               onClick={() => runCustomMutation.mutate(cj.id)}
                             >
                               <Play className="h-3 w-3" />
@@ -802,6 +680,7 @@ export function JobsPage() {
                               size="sm"
                               variant="ghost"
                               className="text-destructive hover:text-destructive"
+                              aria-label={`删除任务 ${cj.name}`}
                               onClick={() => deleteMutation.mutate(cj.id)}
                             >
                               <Trash2 className="h-3 w-3" />
@@ -815,24 +694,26 @@ export function JobsPage() {
               </div>
             )}
 
-            {customJobs.length === 0 && !showAddForm && !customJobsQuery.isLoading && (
-              <p className="text-sm text-muted-foreground">暂无自建任务。</p>
+            {customJobs.length === 0 && !showAddForm && !customJobsQuery.isLoading && !customJobsQuery.error && (
+              <EmptyState icon={Clock} title="还没有自建任务" description="把常用研究交给日程。" />
             )}
 
             {showAddForm ? (
               <div className="space-y-3 rounded-lg border p-4">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <label className="text-sm font-medium">任务名称</label>
+                    <label htmlFor="custom-job-name" className="text-sm font-medium">任务名称</label>
                     <Input
+                      id="custom-job-name"
                       placeholder="盘中技术面检查"
                       value={newJob.name}
                       onChange={(e) => setNewJob({ ...newJob, name: e.target.value })}
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-sm font-medium">调度表达式</label>
+                    <label htmlFor="custom-job-schedule" className="text-sm font-medium">调度表达式</label>
                     <Input
+                      id="custom-job-schedule"
                       placeholder="trading_day 14:30"
                       value={newJob.schedule}
                       onChange={(e) => setNewJob({ ...newJob, schedule: e.target.value })}
@@ -840,9 +721,10 @@ export function JobsPage() {
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">执行指令</label>
+                  <label htmlFor="custom-job-prompt" className="text-sm font-medium">执行指令</label>
                   <textarea
                     className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    id="custom-job-prompt"
                     placeholder="分析 300750 和 600519 的技术面，如有异常信号请提醒"
                     value={newJob.prompt}
                     onChange={(e) => setNewJob({ ...newJob, prompt: e.target.value })}
@@ -918,16 +800,18 @@ export function JobsPage() {
                 onClick={() => setShowAddForm(true)}
               >
                 <Plus className="mr-1 h-4 w-4" />
-                新建任务
+                添加任务
               </Button>
             )}
           </CardContent>
         </Card>
 
-        <Card>
+          </TabsContent>
+          <TabsContent value="history" forceMount>
+        <Card id="recent-runs" className="jobs-history">
           <CardHeader>
             <CardTitle className="text-base">最近运行</CardTitle>
-            <CardDescription>展开行可查看步骤详情或 Agent 完整输出</CardDescription>
+
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -953,8 +837,8 @@ export function JobsPage() {
                 ))}
               </select>
             </div>
-            {runs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">尚无运行记录。</p>
+            {runsQuery.error ? <QueryNotice title="无法加载运行记录" error={runsQuery.error} retry={() => void runsQuery.refetch()} /> : runsQuery.isPending ? <div role="status" aria-label="正在加载运行记录"><Skeleton className="h-40 w-full" /></div> : runs.length === 0 ? (
+              <EmptyState icon={Clock} title="尚无运行记录" description="任务执行后，可在这里查看结果、失败原因和完整输出。" />
             ) : (
               <div className="overflow-x-auto">
                 <Table>
@@ -981,6 +865,92 @@ export function JobsPage() {
             )}
           </CardContent>
         </Card>
+          </TabsContent>
+          <TabsContent value="schedule" forceMount>
+        <Card id="scheduler" className="scheduler-panel">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Settings2 className="h-4 w-4" />
+              调度配置
+            </CardTitle>
+
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {schedulerDraft ? (
+              <>
+                <div className="scheduler-toggle flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium">启用调度器</p>
+                    <p className="text-xs text-muted-foreground">
+                      时区 {schedulerDraft.timezone}
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    aria-label="启用调度器"
+                    checked={schedulerDraft.enabled}
+                    className="h-4 w-4 accent-primary"
+                    onChange={(e) =>
+                      setSchedulerDraft({ ...schedulerDraft, enabled: e.target.checked })
+                    }
+                  />
+                </div>
+
+                <div className="schedule-fields grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {TIME_FIELDS.map(({ key, label }) => (
+                    <div key={key} className="space-y-1.5">
+                      <label htmlFor={key} className="text-sm font-medium">
+                        {label}
+                      </label>
+                      <Input
+                        id={key}
+                        type="time"
+                        value={String(schedulerDraft[key])}
+                        onChange={(e) =>
+                          setSchedulerDraft({ ...schedulerDraft, [key]: e.target.value })
+                        }
+                      />
+                    </div>
+                  ))}
+                  <div className="space-y-1.5">
+                    <label htmlFor="weekly_day" className="text-sm font-medium">
+                      周度回顾（星期）
+                    </label>
+                    <Input
+                      id="weekly_day"
+                      value={schedulerDraft.weekly_day}
+                      placeholder="sat"
+                      onChange={(e) =>
+                        setSchedulerDraft({
+                          ...schedulerDraft,
+                          weekly_day: e.target.value.toLowerCase(),
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="editor-actions justify-between"><span className="text-xs text-muted-foreground" role="status">{schedulerDirty ? "有未保存的更改" : "已保存"}</span>
+                  <Button
+                    type="button"
+                    disabled={!schedulerDirty || saveSchedulerMutation.isPending}
+                    onClick={handleSaveScheduler}
+                  >
+                    {saveSchedulerMutation.isPending ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="mr-1 h-4 w-4" />
+                    )}
+                    保存配置
+                  </Button>
+                </div>
+              </>
+            ) : schedulerQuery.isPending ? <p role="status" className="text-sm text-muted-foreground">正在加载调度配置…</p> : <QueryNotice title="无法加载调度配置" error={schedulerQuery.error} retry={() => void schedulerQuery.refetch()} />}
+          </CardContent>
+        </Card>
+
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

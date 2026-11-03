@@ -396,7 +396,7 @@ export async function createCustomJob(body: {
 export async function updateCustomJob(
   jobId: string,
   patch: Partial<CustomJob>,
-): Promise<{ id: string; name: string; enabled: boolean }> {
+): Promise<Pick<CustomJob, "id" | "name" | "enabled" | "delivery_channels">> {
   const res = await fetch(`/api/jobs/custom/${encodeURIComponent(jobId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },

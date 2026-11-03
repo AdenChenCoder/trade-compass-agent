@@ -1,4 +1,5 @@
 import { Navigate, createBrowserRouter } from "react-router-dom";
+import { WorkspaceError } from "@/components/layout/WorkspaceError";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { AgentPage } from "@/routes/AgentPage";
 import { recoverRoute } from "@/lib/route-recovery";
@@ -15,6 +16,7 @@ function loadPage(path: string, load: Parameters<typeof recoverRoute>[0]) {
 export const router = createBrowserRouter([
   {
     element: <AppLayout />,
+    errorElement: <WorkspaceError />,
     children: [
       { index: true, element: <Navigate to="/agent" replace /> },
       { path: "/agent", element: <AgentPage /> },

@@ -1,3 +1,4 @@
+import { AgentWelcome } from "@/components/agent/AgentWelcome";
 import {
   useCallback,
   useEffect,
@@ -204,6 +205,7 @@ export function AgentPage() {
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
   const [streaming, setStreaming] = useState(false);
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [toolTrace, setToolTrace] = useState<ToolTraceEntry[]>([]);
@@ -1007,14 +1009,14 @@ export function AgentPage() {
   );
 
   return (
-    <div className="flex min-h-0 flex-1 overflow-hidden">
+    <div className="agent-workspace flex min-h-0 flex-1 overflow-hidden">
       <SessionSidebar
         sessions={sessions}
         activeSessionId={sessionId}
         loading={loadingSessions}
         streaming={streaming}
         mobileOpen={sidebarOpen}
-        onMobileClose={() => setSidebarOpen(false)}
+        onMobileClose={closeSidebar}
         onNewChat={() => void handleNewChat()}
         onSelectSession={(id) => void handleSelectSession(id)}
         onDeleteSession={(id) => void handleDeleteSession(id)}
@@ -1026,7 +1028,7 @@ export function AgentPage() {
         ref={listRef}
         data-testid="agent-message-list"
         onScroll={handleMessageScroll}
-        className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6"
+        className="agent-message-scroll min-h-0 flex-1 overflow-y-auto"
       >
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
           <div className="flex justify-end md:hidden">
@@ -1044,12 +1046,7 @@ export function AgentPage() {
           ) : null}
 
           {messages.length === 0 && !streaming && !loadingHistory ? (
-            <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
-              <p className="font-medium text-foreground">Agent 对话</p>
-              <p className="mt-2">
-                例如：「600519 短线怎么看」「今天大盘资金情况」
-              </p>
-            </div>
+            <AgentWelcome showPrompts={!input && attachments.length === 0 && !readingAttachments} onPrompt={(prompt) => { setInput(prompt); textareaRef.current?.focus(); }} />
           ) : null}
 
           {loadingOlder ? (
@@ -1137,13 +1134,12 @@ export function AgentPage() {
 
       <form
         onSubmit={handleSubmit}
-        className="shrink-0 border-t bg-background/90 p-4 backdrop-blur-sm"
+        className="agent-composer shrink-0"
       >
         <div className="mx-auto max-w-3xl">
           <div
             className={cn(
-              "relative rounded-xl border border-input bg-background shadow-sm",
-              "focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background",
+              "composer-surface relative",
             )}
           >
             <SkillSlashMenu
@@ -1181,7 +1177,7 @@ export function AgentPage() {
               </ul>
             ) : null}
 
-            <div className="flex items-end gap-1 p-2">
+            <div className="composer-fields">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1199,12 +1195,12 @@ export function AgentPage() {
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="shrink-0 text-muted-foreground hover:text-foreground"
+                className="composer-attachment shrink-0 text-muted-foreground hover:text-foreground"
                 disabled={streaming || readingAttachments}
                 onClick={() => fileInputRef.current?.click()}
                 title="添加附件"
               >
-                <Paperclip className="h-4 w-4" />
+                <Paperclip className="h-4 w-4" /><span>附件</span>
               </Button>
 
               <textarea
@@ -1221,6 +1217,7 @@ export function AgentPage() {
                     void addFileAttachments(files);
                   }
                 }}
+                aria-label="消息"
                 placeholder={remoteBusy ? "电脑正在回复另一端发起的消息，你可以先写好下一条…" : "输入问题，可粘贴链接或添加附件…"}
                 disabled={streaming}
                 rows={1}
@@ -1234,7 +1231,7 @@ export function AgentPage() {
               <Button
                 type={streaming ? "button" : "submit"}
                 size="icon"
-                className="shrink-0"
+                className="composer-submit shrink-0"
                 disabled={!streaming && (!input.trim() || remoteBusy || readingAttachments)}
                 title={streaming ? "停止" : readingAttachments ? "正在读取附件" : remoteBusy ? "等待本轮回复完成" : "发送"}
                 onClick={streaming ? () => void handleStop() : undefined}
@@ -1247,6 +1244,7 @@ export function AgentPage() {
               </Button>
             </div>
           </div>
+          <p className="composer-hint">Enter 发送 · Shift + Enter 换行 · / 选择技能</p>
         </div>
       </form>
       </div>
