@@ -515,7 +515,7 @@ it.each([0, 1])('keeps the create button with %s existing sessions and creates o
     available = [created, ...available];
     await act(async () => resolve(Response.json({ session_id: created.session_id, updated_at: created.updated_at })));
     await settle();
-    expect(button.disabled).toBe(false);
+    expect(element.querySelector<HTMLButtonElement>('[aria-label="新建会话"]')!.disabled).toBe(false);
     expect(element.textContent).toContain('今天想研究什么？');
     expect(element.querySelector('textarea')!.value).toBe('');
   }
@@ -622,4 +622,63 @@ it('opens the online paired app even when the optional connection cache cannot b
     expect(element.querySelector('.connect-view')).toBeNull();
     expect(posts).toHaveLength(0);
   } finally { spy.mockRestore(); }
+});
+
+it.each(['sessions', 'notices'])('keeps unresolved %s distinct from empty records and retains cached content', async collection => {
+  network = true;
+  const request = vi.mocked(fetch).getMockImplementation()!;
+  const key = prefix + collection;
+  localStorage.removeItem(key);
+  let reply!: (value: Response) => void;
+  const pathMatches = (path: string) => collection === 'sessions' ? path.includes('/sessions?') : path.includes('/notifications?');
+  vi.stubGlobal('fetch', vi.fn((path: string, options: RequestInit) => pathMatches(path)
+    ? new Promise<Response>(resolve => { reply = resolve; }) : request(path, options)));
+  await act(async () => root.render(createElement(App))); await settle();
+  if (collection === 'notices') await click('任务消息');
+  const emptyText = collection === 'sessions' ? '开始你的研究' : '还没有任务消息';
+  const countText = collection === 'sessions' ? '0 段对话' : '0 条消息';
+  expect(element.querySelector('.read-state')?.textContent).toContain('正在读取');
+  expect(element.textContent).not.toContain(emptyText);
+  expect(element.textContent).not.toContain(countText);
+  await act(async () => reply(new Response('unavailable', { status: 502 }))); await settle();
+  expect(element.querySelector('.read-state')?.textContent).toContain('暂不可用');
+  expect(element.textContent).not.toContain(emptyText);
+  expect(element.textContent).not.toContain(countText);
+  await act(async () => window.dispatchEvent(new Event('online'))); await settle();
+  await act(async () => reply(Response.json(collection === 'sessions' ? { sessions: [] } : []))); await settle();
+  expect(element.querySelector('.read-state')).toBeNull();
+  expect(element.textContent).toContain(emptyText);
+  expect(element.textContent).toContain(countText);
+  expect(posts).toHaveLength(0);
+});
+
+it('shows cached tasks while reading and after failure without announcing an empty list', async () => {
+  network = true;
+  localStorage.setItem(prefix + 'notices', JSON.stringify([{ title: '原有任务结果', message: '完整内容保留', severity: 'info' }]));
+  const request = vi.mocked(fetch).getMockImplementation()!;
+  let reply!: (value: Response) => void;
+  vi.stubGlobal('fetch', vi.fn((path: string, options: RequestInit) => path.includes('/notifications?')
+    ? new Promise<Response>(resolve => { reply = resolve; }) : request(path, options)));
+  await act(async () => root.render(createElement(App))); await settle(); await click('任务消息');
+  expect(element.textContent).toContain('原有任务结果');
+  expect(element.querySelector('.read-state')).toBeNull();
+  await act(async () => reply(new Response('unavailable', { status: 502 }))); await settle();
+  expect(element.textContent).toContain('完整内容保留');
+  expect(element.textContent).not.toContain('还没有任务消息');
+});
+
+it('fills a suggested question without sending it and preserves it across navigation', async () => {
+  network = true;
+  transcript = [];
+  await act(async () => root.render(createElement(App))); await settle(); await click('原会话');
+  await click('今天市场有哪些变化？');
+  const input = element.querySelector<HTMLTextAreaElement>('textarea')!;
+  expect(input.value).toBe('今天市场有哪些变化？');
+  expect(document.activeElement).toBe(input);
+  expect(localStorage.getItem(prefix + 'draft.' + session.session_id)).toBe(JSON.stringify(input.value));
+  expect(element.querySelector('.conversation-prompts')).toBeNull();
+  expect(posts).toHaveLength(0);
+  await click('任务消息'); await click('会话');
+  expect(element.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('今天市场有哪些变化？');
+  expect(posts).toHaveLength(0);
 });

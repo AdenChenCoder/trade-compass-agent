@@ -11,7 +11,8 @@ import { PeerSetup } from './PeerSetup';
 import { peerMode } from './peer';
 import { acknowledgeNotificationNavigation, listenForNotificationNavigation } from './notification-navigation';
 import { fillHistoryGap } from '../../shared/session-history';
-import coinLogo from '../../shared/brand/coin-logo.svg';
+import { AppearanceSettings } from './AppearanceSettings';
+import { ReadState } from './ReadState';
 
 interface Session { session_id: string; title?: string; preview?: string; updated_at: string }
 interface SessionList { sessions: Session[]; next_cursor?: string | null }
@@ -33,6 +34,7 @@ export function App() {
   const [notificationClick, setNotificationClick] = useState<string | null>(null);
   const lastNotificationClick = useRef<string | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [collectionsReady, setCollectionsReady] = useState({ sessions: false, notices: false });
   const [sessionPages, setSessionPages] = useState(1);
   const loadedSessionPages = useRef(1);
   const [sessionCursor, setSessionCursor] = useState<string | null>(null);
@@ -70,6 +72,7 @@ export function App() {
   const [refreshResult, setRefreshResult] = useState('');
   const nearBottom = useRef(true);
   const scrollArea = useRef<HTMLElement>(null);
+  const composerInput = useRef<HTMLTextAreaElement>(null);
   const root = `compass.v1.${connection.computer_id ?? 'unpaired'}.`;
   const requestKey = `${root}request.${selected}`;
   const draftKey = `${root}draft.${selected}`;
@@ -164,6 +167,7 @@ export function App() {
   }, [connection.connected, refreshRevision]);
   useEffect(() => {
     setSessions(cached(`${root}sessions`, [])); setNotices(cached(`${root}notices`, []));
+    setCollectionsReady({ sessions: false, notices: false });
     setSessionPages(1); loadedSessionPages.current = 1; setSessionCursor(null); setLoadingSessions(false);
     const resume = restoreUpdateView(connection.computer_id);
     setSelected(resume?.selected ?? null); setPage(null);
@@ -223,6 +227,7 @@ export function App() {
               loadedSessionPages.current = pages;
               setSessionCursor(cursor); setLoadingSessions(false);
               setSessions(listed); save(`${root}sessions`, listed);
+              setCollectionsReady(value => value.sessions ? value : { ...value, sessions: true });
               if (selected && selected !== missingSession && !older) {
                 try {
                   const latest = await api<Page>(`sessions/${encodeURIComponent(selected)}/messages?limit=50`);
@@ -264,6 +269,7 @@ export function App() {
               const value = await api<Notice[]>('notifications?limit=100');
               if (!active) return;
               setNotices(value); save(`${root}notices`, value);
+              setCollectionsReady(current => current.notices ? current : { ...current, notices: true });
             }
           }
           if (active) setError('');
@@ -296,6 +302,11 @@ export function App() {
       window.removeEventListener('offline', offline); document.removeEventListener('visibilitychange', visible); };
   }, [connection, tab, selected, root, requestKey, older, applyReceipt, refreshRevision, sessionPages, missingSession]);
 
+  function updateDraft(value: string) {
+    setDraft(value);
+    try { localStorage.setItem(draftKey, JSON.stringify(value)); setDraftError(''); }
+    catch { setDraftError('草稿暂时无法保存，请先复制内容，或释放存储空间后重试。'); }
+  }
   function persistDraft() {
     if (!selected || (!draft && !cached<string>(draftKey, ''))) return true;
     try { localStorage.setItem(draftKey, JSON.stringify(draft)); setDraftError(''); return true; }
@@ -411,46 +422,36 @@ export function App() {
       }}>重试</button></div>
       : <p role="status">正在打开交易罗盘…</p>}</div>;
   }
-  return <div className={`app-shell ${showNavigation ? 'has-rail' : 'onboarding'}`}>
-    {showNavigation ? <aside className="side-rail">
-      <img className="brand-mark" src={coinLogo} alt="交易罗盘" width={34} height={34} />
-      <nav aria-label="主导航">{([['sessions', '会话'], ['notices', '任务消息'], ['connection', '连接']] as const).map(([value, label]) => <button key={value}
-        className={`rail-item ${value === 'connection' ? 'rail-connection' : ''} ${tab === value ? 'active' : ''}`}
-        aria-current={tab === value ? 'page' : undefined} disabled={busy || older} onClick={() => setTab(value)}>
-        <Icon name={value === 'sessions' ? 'chat' : value === 'notices' ? 'bell' : 'link'} /><span>{label}</span>
-      </button>)}</nav>
-      <div className="rail-device" title={deviceName} aria-label={deviceName}><Icon name="phone" /></div>
-    </aside> : null}
+  return <div className={`app-shell ${showNavigation ? 'has-navigation' : 'onboarding'} ${inConversation ? 'in-conversation' : ''}`}>
     <header className="app-header">
       {inConversation ? <button className="icon-button header-back" aria-label="所有会话" disabled={busy || older} onClick={() => selectSession(null)}><Icon name="back" /></button>
-        : !showNavigation ? <img className="brand-mark" src={coinLogo} alt="交易罗盘" width={34} height={34} /> : null}
-      <div className="header-title"><h1>{title}</h1><p>{connectionView ? '管理设备连接与通知' : tab === 'notices' ? '查看任务结果与提醒' : inConversation ? '交易罗盘' : '个股研究与市场分析'}</p></div>
-      {showNavigation && !connectionView && tab === 'sessions' ? <button className="icon-button new-session-button" aria-label="新建会话" aria-busy={creating}
+        : <span className="brand-mark" role="img" aria-label="交易罗盘" />}
+      <div className="header-title"><h1>{title}</h1>{connection.connected ? <p className={`connection-indicator ${online && approved && !authorizationLost ? 'online' : ''}`} role="status" aria-label={connectionLabel}><i aria-hidden="true" />{connectionLabel}</p> : <p>交易罗盘</p>}</div>
+      {inConversation ? <button className="icon-button new-session-button" aria-label="新建会话" aria-busy={creating}
         title={online ? '新建会话' : '恢复连接后可新建会话'} disabled={!online || !approved || authorizationLost || busy || older}
         onClick={() => void createSession()}><Icon name={creating ? 'more' : 'plus'} /></button> : null}
-      {connection.connected ? <span className={`connection-indicator ${online && approved && !authorizationLost ? 'online' : ''}`} role="status" aria-label={connectionLabel} title={connectionLabel} /> : null}
       <AppUpdate />
     </header>
+    {error || createError || draftError ? <div className="notice error app-feedback" role="alert">{draftError || error || createError}</div> : null}
     <main ref={scrollArea} className={inConversation ? 'chat-main' : ''} onScroll={event => {
       const area = event.currentTarget;
       nearBottom.current = area.scrollHeight - area.clientHeight - area.scrollTop < 180;
     }}>
-      {error || createError || draftError ? <div className="notice error" role="alert">{draftError || error || createError}</div> : null}
       {connectionView ? <section className="connect-view">
         {restoringConnection ? <p className="muted" role="status">正在恢复连接…</p> : connection.connected && approved && !authorizationLost ? <>
           <section className="service-card" aria-label="电脑连接状态">
-            <div className="service-heading"><div><span className="eyebrow">连接状态</span><strong className={`service-status ${online ? 'online' : ''}`}><i />{online ? '已连接' : '正在重连'}</strong></div>
-              <div className="connection-refresh"><button className="primary refresh-button" aria-label="刷新连接状态" disabled={refreshing} aria-busy={refreshing} onClick={() => {
+            <div className="service-heading"><span className="service-device-icon" aria-hidden="true"><Icon name="computer" /></span><div><span className="eyebrow">我的电脑</span><strong className={`service-status ${online ? 'online' : ''}`}><i />{online ? '已连接' : '正在重连'}</strong></div>
+              <div className="connection-refresh"><button className="secondary refresh-button" aria-label="刷新连接状态" disabled={refreshing} aria-busy={refreshing} onClick={() => {
                 const id = refreshRequest.current.id + 1;
                 refreshRequest.current = { id, pending: true }; setRefreshing(true); setRefreshResult(''); setRefreshRevision(id);
               }}><Icon name="refresh" /><span>{refreshing ? '刷新中…' : '刷新'}</span></button>
                 <span className="refresh-result" role="status">{refreshResult}</span></div></div>
-            <dl className="device-facts"><div><dt><Icon name="computer" />电脑</dt><dd>我的电脑</dd></div>
-              <div><dt><Icon name="phone" />当前手机</dt><dd>{deviceName}</dd></div>
+            <dl className="device-facts"><div><dt><Icon name="phone" />当前手机</dt><dd>{deviceName}</dd></div>
               <div><dt><Icon name="lock" />配对状态</dt><dd>已配对</dd></div>
             </dl>
             <details className="connection-details"><summary><Icon name="link" /><span>连接管理</span><Icon name="chevron" /></summary><p className="endpoint">{connection.endpoint}</p><p className="muted">移除连接后，需要重新扫码。电脑中的会话会保留。</p><button className="danger-link" onClick={() => void forget()}>移除连接</button></details>
           </section>
+          <AppearanceSettings />
           {!native ? <PushSettings /> : null}
           {!native ? <InstallGuide /> : null}
           <p className="connection-footnote"><Icon name="lock" />仅你授权的手机可以访问</p>
@@ -485,14 +486,19 @@ export function App() {
             </details>
           </>}
           <p className="connection-footnote"><Icon name="lock" />仅你授权的手机可以访问电脑里的内容</p>
+          <AppearanceSettings />
         </>}
-      </section> : tab === 'notices' ? <TaskMessages key={connection.computer_id} notices={notices} notificationClick={notificationClick} /> : selected ? <section className="conversation" aria-label="会话内容">
+      </section> : tab === 'notices' ? <TaskMessages key={connection.computer_id} notices={notices} notificationClick={notificationClick} readState={collectionsReady.notices ? undefined : error ? 'unavailable' : 'loading'} /> : selected ? <section className="conversation" aria-label="会话内容">
         <div className="transcript">
           {page?.page.next_before != null ? <button className="secondary older" disabled={older} onClick={() => void loadOlder()}>{older ? '正在加载…' : '查看更早消息'}</button> : null}
-          {page && page.messages.length === 0 ? <div className="empty"><Icon name="chat" /><h3>今天想研究什么？</h3><p>分析个股、了解市场，或梳理投资思路。<br />例如：今天大盘资金情况如何？</p></div> : null}
-          {selected === missingSession ? <div className="empty" role="status"><Icon name="chat" /><h3>这段会话已删除</h3><p>可以返回会话列表，或开始新的对话。</p><button className="secondary" disabled={!online || busy} onClick={() => void createSession()}>{draft ? '用草稿新建会话' : '新建会话'}</button></div> : !page ? <div className="empty">正在读取会话…</div> : page.messages.map((message, index) => <article className={`message ${message.role === 'user' ? 'user' : 'assistant'}`} key={page.page.start_index + index}>
+          {page && page.messages.length === 0 ? <div className="empty conversation-welcome"><span className="brand-mark" aria-hidden="true" /><h3>今天想研究什么？</h3><p>分析个股、了解市场，或梳理投资思路。</p>
+            {!draft && !pending && !busy && !page.has_active_turn ? <div className="conversation-prompts" aria-label="问题建议">{['今天市场有哪些变化？', '如何梳理个股研究思路？'].map(question => <button key={question} onClick={() => {
+              updateDraft(question); composerInput.current?.focus();
+            }}><span>{question}</span><Icon name="arrow" /></button>)}</div> : null}
+          </div> : null}
+          {selected === missingSession ? <div className="empty" role="status"><Icon name="chat" /><h3>这段会话已删除</h3><p>可以返回会话列表，或开始新的对话。</p><button className="secondary" disabled={!online || busy} onClick={() => void createSession()}>{draft ? '用草稿新建会话' : '新建会话'}</button></div> : !page ? <ReadState subject="会话内容" state={error ? 'unavailable' : 'loading'} /> : page.messages.map((message, index) => <article className={`message ${message.role === 'user' ? 'user' : 'assistant'}`} key={page.page.start_index + index}>
             <span className="message-avatar" aria-hidden="true">{message.role === 'user'
-              ? <Icon name="person" /> : <img src={coinLogo} alt="" width={26} height={26} />}</span>
+              ? <Icon name="person" /> : <span className="brand-mark" aria-hidden="true" />}</span>
             <div className="message-body"><span className="sr-only">{message.role === 'user' ? '你' : '交易罗盘'}</span><div className="message-bubble"><Markdown text={message.content} />
               {message.sections?.map((section, i) => <div key={i}><h3>{section.title}</h3><Markdown text={section.content} /></div>)}
               {message.tool_calls?.length ? <details className="message-tools"><summary>使用了 {message.tool_calls.length} 个工具</summary><p>{message.tool_calls.map(tool => tool.name).join('、')}</p></details> : null}
@@ -503,22 +509,30 @@ export function App() {
         </div>
         <form className={`composer ${pending ? 'has-pending' : ''}`} onSubmit={e => { e.preventDefault(); void send(); }}>
           {pending ? <p className="pending-status" role="status">这条消息{receipt === 'running' ? '已接收，正在处理' : '的发送结果待确认'}。{receipt === 'unconfirmed' ? '尚无接收记录，可用原请求重试。' : ''}</p> : null}
-          <div className="composer-input"><textarea aria-label="消息" rows={1} placeholder="输入你的问题…" value={draft} maxLength={8000}
-            disabled={busy || !!pending} onChange={e => {
-              setDraft(e.target.value);
-              try { localStorage.setItem(draftKey, JSON.stringify(e.target.value)); setDraftError(''); }
-              catch { setDraftError('草稿暂时无法保存，请先复制内容，或释放存储空间后重试。'); }
-            }} />
+          <div className="composer-input"><textarea ref={composerInput} aria-label="消息" rows={1} placeholder="输入你的问题…" value={draft} maxLength={8000}
+            disabled={busy || !!pending} onChange={e => updateDraft(e.target.value)} />
             <button className="primary send-button" aria-label={busy ? '正在发送…' : pending ? '确认并重试原消息' : '发送'} disabled={selected === missingSession || !online || busy || page?.has_active_turn || (!pending && !draft.trim()) || (!!pending && receipt === 'running')}>
               <Icon name={busy ? 'more' : pending ? 'refresh' : 'send'} />{pending && !busy ? <span>确认并重试原消息</span> : null}</button></div>
         </form>
-      </section> : <section className="sessions-view" aria-label="会话列表"><div className="section-heading"><h2>最近的会话</h2><span>{sessions.length} 段对话</span></div>
-        {sessions.length === 0 ? <div className="empty"><Icon name="chat" /><h3>开始你的研究</h3><p>点击右上角 ＋，开始研究个股或市场。</p></div> : <div className="session-list">{sessions.map(session => <button key={session.session_id} disabled={busy} onClick={() => selectSession(session.session_id)}><span className="session-icon"><Icon name="chat" /></span><div><h3>{session.title || session.preview || '新对话'}</h3><p>{session.preview || '打开会话'}</p><time dateTime={session.updated_at}>{new Date(session.updated_at).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time></div><Icon name="chevron" /></button>)}</div>}
+      </section> : <section className="sessions-view" aria-label="会话列表">
+        <button className="session-create" aria-label="新建会话" aria-busy={creating} disabled={!online || !approved || authorizationLost || busy || older} onClick={() => void createSession()}>
+          <span className="session-create-icon" aria-hidden="true"><Icon name={creating ? 'more' : 'plus'} /></span>
+          <span><strong>{creating ? '正在创建…' : '新建会话'}</strong><small>{online ? '个股研究 · 市场分析' : '恢复连接后可新建'}</small></span><Icon name="arrow" />
+        </button>
+        <div className="section-heading"><h2>最近的会话</h2>{sessions.length > 0 || collectionsReady.sessions ? <span>{sessions.length} 段对话</span> : null}</div>
+        {sessions.length === 0 && !collectionsReady.sessions ? <ReadState subject="会话" state={error ? 'unavailable' : 'loading'} /> : sessions.length === 0 ? <div className="empty"><Icon name="chat" /><h3>开始你的研究</h3><p>点击上方「新建会话」，开始研究个股或市场。</p></div> : <div className="session-list">{sessions.map(session => <button key={session.session_id} disabled={busy} onClick={() => selectSession(session.session_id)}><span className="session-icon"><Icon name="chat" /></span><div><h3>{session.title || session.preview || '新对话'}</h3><p>{session.preview || '打开会话'}</p><time dateTime={session.updated_at}>{new Date(session.updated_at).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time></div><Icon name="chevron" /></button>)}</div>}
         {sessionCursor ? <button className="secondary older" disabled={!online || busy || loadingSessions} onClick={() => {
           setLoadingSessions(true); setSessionPages(count => count + 1);
         }}>{loadingSessions ? '正在加载…' : '查看更早会话'}</button> : null}
       </section>}
     </main>
+    {showNavigation ? <nav className="bottom-nav" aria-label="主导航">
+      {([['sessions', '会话'], ['notices', '任务消息'], ['connection', '连接']] as const).map(([value, label]) => <button key={value}
+        className={`nav-item ${tab === value ? 'active' : ''}`}
+        aria-current={tab === value ? 'page' : undefined} disabled={busy || older} onClick={() => setTab(value)}>
+        <span className="nav-icon"><Icon name={value === 'sessions' ? 'chat' : value === 'notices' ? 'bell' : 'link'} /></span><span>{label}</span>
+      </button>)}
+    </nav> : null}
     {!showNavigation ? <footer>TRADE COMPASS · 交易罗盘</footer> : null}
   </div>;
 }

@@ -52,6 +52,7 @@ test('browser pairs over HTTPS, shares history, receives a test push, survives o
       };
     }, fixture.subscription);
     await page.goto('/settings');
+    await page.getByRole('tab', { name: '手机连接', exact: true }).click();
     await page.getByText('连接遇到问题？', { exact: true }).click();
     const mobileLink = page.getByRole('link', { name: '打开移动端入口' });
     await expect(mobileLink).toHaveAttribute('href', 'https://localhost:19746/mobile/');
@@ -102,7 +103,7 @@ test('browser pairs over HTTPS, shares history, receives a test push, survives o
     }
     await phone.screenshot({ path: testInfo.outputPath('phone-sessions.png'), fullPage: true, animations: 'disabled' });
     await phone.getByRole('button', { name: /消费行业观察/ }).click();
-    // The narrow rail must leave the conversation and composer usable on small screens.
+    // Navigation must leave the conversation and composer usable on small screens.
     for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 420 }, { width: 390, height: 844 }]) {
       await phone.setViewportSize(viewport);
       await phone.getByLabel('消息', { exact: true }).fill('通过 PWA 继续这个会话');

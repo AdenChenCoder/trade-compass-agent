@@ -220,3 +220,26 @@ it('does not restore a sent draft when streaming already confirmed success befor
   expect(rendered()).toEqual([...contents(50), ...extraMessages.map(m => m.content)]);
   expect(element.textContent).not.toContain('迟到的网关错误');
 });
+
+
+it('fills a welcome question without sending and never replaces an existing draft', async () => {
+  await act(async () => [...element.querySelectorAll('button')].find(button => button.textContent?.trim() === '新对话')!.click());
+  const prompt = element.querySelector<HTMLButtonElement>('.welcome-prompts button')!;
+  expect(prompt).not.toBeNull();
+  await act(async () => prompt.click());
+  expect(element.querySelector('textarea')?.value).toBe('今天大盘资金情况');
+  expect(document.activeElement).toBe(element.querySelector('textarea'));
+  expect(element.querySelector('.welcome-prompts')).toBeNull();
+  expect(vi.mocked(fetch).mock.calls.some(([path, init]) => String(path).endsWith('/turn') && init?.method === 'POST')).toBe(false);
+  await draft('保留我的研究草稿');
+  await sync();
+  expect(element.querySelector('textarea')?.value).toBe('保留我的研究草稿');
+  expect(element.querySelector('.welcome-prompts')).toBeNull();
+  await draft('');
+  expect(element.querySelector('.welcome-prompts button')).not.toBeNull();
+  const uploads = controlledFiles();
+  await uploads.select([new File(['a'], 'draft.png', { type: 'image/png' })]);
+  expect(element.querySelector('.welcome-prompts')).toBeNull();
+  await uploads.finish(0, 'data:image/png;base64,FIRST');
+  expect(element.querySelector('.welcome-prompts')).toBeNull();
+});

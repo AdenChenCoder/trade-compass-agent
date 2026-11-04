@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { Markdown } from './Markdown';
+import { ReadState } from './ReadState';
 
 export interface Notice { title: string; message: string; severity: string; task_status?: string | null }
 
@@ -13,7 +14,7 @@ function noticeResult(notice: Notice): { tone: 'error' | 'warning' | ''; label: 
   return { tone: '', label: '任务结果' };
 }
 
-export function TaskMessages({ notices, notificationClick }: { notices: Notice[]; notificationClick: string | null }) {
+export function TaskMessages({ notices, notificationClick, readState }: { notices: Notice[]; notificationClick: string | null; readState?: 'loading' | 'unavailable' }) {
   const [active, setActive] = useState<{ notice: Notice; opener: HTMLButtonElement; entry: string } | null>(null);
   const navigation = useRef<{ entry: string; returning: boolean } | null>(null);
   const returnToList = useCallback(() => {
@@ -35,9 +36,9 @@ export function TaskMessages({ notices, notificationClick }: { notices: Notice[]
     return { notice, key: `${content}:${occurrence}`, result: noticeResult(notice) };
   });
   return <section className="notices-view" aria-label="任务结果">
-    <div className="section-heading"><h2>最近的任务</h2><span>{notices.length} 条消息</span></div>
-    {notices.length === 0 ? <div className="empty"><Icon name="bell" /><h3>还没有任务消息</h3><p>任务结果和提醒会出现在这里。</p></div> : cards.map(({ notice, key, result }) => <article className={`task-card ${result.tone ? `task-${result.tone}` : ''}`} key={key}>
-      <button className="task-card-open" aria-label={`查看任务详情：${notice.title}`} aria-haspopup="dialog"
+    <div className="section-heading"><h2>最近的任务</h2>{notices.length > 0 || !readState ? <span>{notices.length} 条消息</span> : null}</div>
+    {notices.length === 0 && readState ? <ReadState subject="任务消息" state={readState} /> : notices.length === 0 ? <div className="empty"><Icon name="bell" /><h3>还没有任务消息</h3><p>任务结果和提醒会出现在这里。</p></div> : cards.map(({ notice, key, result }) => <article className={`task-card ${result.tone ? `task-${result.tone}` : ''}`} key={key}>
+      <button className="task-card-open" aria-label={`查看任务详情：${notice.title}`} aria-description={result.label} aria-haspopup="dialog"
         onClick={event => {
           const entry = crypto.randomUUID();
           // A user gesture creates one history entry, independent of effect replays.

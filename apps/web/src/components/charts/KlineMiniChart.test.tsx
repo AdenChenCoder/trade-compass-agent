@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KlineMiniChart } from "@/components/charts/KlineMiniChart";
+import { setAppearance } from "../../../../shared/appearance";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -120,7 +121,7 @@ describe("KlineMiniChart forecast quality", () => {
 });
 
 describe("KlineMiniChart virtualized remount", () => {
-  it("renders the cached chart again after its message is unmounted and remounted", async () => {
+  it("keeps cached bars through palette changes and virtualized remounts", async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -147,6 +148,19 @@ describe("KlineMiniChart virtualized remount", () => {
 
     await mountChart();
     expect(fetchBarsMock).toHaveBeenCalledTimes(1);
+
+    const before = chartMock.setOption.mock.calls[chartMock.setOption.mock.calls.length - 1][0];
+    const style = vi.spyOn(window, "getComputedStyle").mockReturnValue({
+      color: "rgb(162, 185, 188)", borderTopColor: "rgb(52, 80, 89)", backgroundColor: "rgb(24, 42, 48)",
+    } as CSSStyleDeclaration);
+    await act(async () => { setAppearance("glacier"); });
+    const after = chartMock.setOption.mock.calls[chartMock.setOption.mock.calls.length - 1][0];
+    expect(after.tooltip.textStyle.color).toBe("rgb(162, 185, 188)");
+    expect(after.yAxis[0].splitLine.lineStyle.color).toBe("rgb(52, 80, 89)");
+    expect(after.series).toEqual(before.series);
+    expect(fetchBarsMock).toHaveBeenCalledTimes(1);
+    style.mockRestore();
+    await act(async () => { setAppearance("classic"); });
 
     await act(async () => root?.unmount());
     container?.remove();

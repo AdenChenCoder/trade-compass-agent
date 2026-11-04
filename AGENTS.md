@@ -192,6 +192,11 @@ workers in cleanup before removing model mocks.
 - Exact Chinese memory phrases must reach the matching record before loose FTS
   matches. Verify the actual tool result after updates and reopen, not only index presence.
 - Editable builds and release builds have different frontend behavior.
+- Long-running source UI previews must serve `temp/web-preview` via
+  `TRADE_COMPASS_WEB_DIST_OVERRIDE` and update through `pnpm --dir apps/web build:preview`.
+  Do not serve the release `web_dist` while rebuilding it: clean builds delete
+  lazy chunks still referenced by open tabs. Verify navigation from a page opened
+  before the update as well as a cold load; never auto-reload drafts or active turns.
   A failed lazy page load must keep the current page, drafts and attachments
   mounted. Do not automatically refresh or replay a task to recover; verify
   retry and abandoned-navigation behavior with an actual built bundle.

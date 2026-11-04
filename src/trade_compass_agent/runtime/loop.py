@@ -888,6 +888,8 @@ class AgentLoop:
                         "新闻中的历史估值与基本面工具的当前估值必须分别表述，不能把工具数值写成新闻曾披露的数值；"
                         "若无法清楚区分来源，删去冲突断言并保留待核实说明。先前指出的问题也不能再次引入。"
                         "历史日期的当日不能改成今日；FIFO净盈亏已扣分配费用，不能用价差乘数量替换。"
+                        "换手率turnover_pct不是量比volume_ratio；没有对应日期的量比回执，不得将换手率改名为量比。"
+                        "交易日天数缺少日历依据时删去天数并保留起止日期，不按自然日或复核意见猜算。"
                         "不写校正过程、行号、审查步骤或开发说明。")),
                         ChatMessage(role="user", content=json.dumps({"report": final_text,
                             "issues": issues, "previous_issues": correction_issues, "facts": report_facts(tool_calls_log),
