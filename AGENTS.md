@@ -208,6 +208,9 @@ workers in cleanup before removing model mocks.
   across the isolated helper boundary without forwarding unrelated credentials
   or disabling TLS/routing-loop protections. Test cold connection and reconnect;
   a listening helper does not prove the original paired phone can reach it.
+  NO_PROXY-only runtime imports can hide macOS system proxies in urllib. Verify
+  discovery after full application startup, actual child environment and explicit
+  empty proxy overrides; a stubbed proxy dictionary cannot establish this path.
 - Native Agent adapters preserve application-owned history and business-tool
   authorization. Native resume handles are derived state: bind them to the
   published transcript, application context checkpoint and runtime/tool profile, serialize same-session writers,

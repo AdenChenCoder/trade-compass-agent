@@ -45,6 +45,7 @@ def managed(tmp_path, monkeypatch):
     monkeypatch.setattr("trade_compass_agent.mobile.reachability.check_public_entry", check_public_entry)
     monkeypatch.setattr("trade_compass_agent.mobile.managed.require_mobile_assets", lambda: None)
     monkeypatch.setattr("trade_compass_agent.mobile.proxy.getproxies", lambda: {})
+    monkeypatch.setattr("urllib.request.getproxies_macosx_sysconf", lambda: {}, raising=False)
 
     config_file = tmp_path / "config.yaml"
     config_file.write_text(
@@ -120,13 +121,22 @@ while True:
 def test_local_onboarding_process_lifecycle_and_original_sessions(managed, monkeypatch, with_local_proxy):
     from trade_compass_agent.web.app import create_app
     from types import SimpleNamespace
+    from urllib import request
+    from trade_compass_agent.data.network import extend_no_proxy_for_eastmoney
 
     monkeypatch.setattr("trade_compass_agent.mobile.proxy.sys", SimpleNamespace(platform="darwin"))
-    proxy_env = {"HTTPS_PROXY": "http://127.0.0.1:7890", "NO_PROXY": "localhost,127.0.0.1"} if with_local_proxy else {}
-    monkeypatch.setattr("trade_compass_agent.mobile.proxy.getproxies",
-                        lambda: {key.lower().removesuffix("_proxy"): value for key, value in proxy_env.items()})
-    monkeypatch.setenv("HTTP_PROXY", "http://unrelated-secret@proxy.example:8080")
-    monkeypatch.setenv("ALL_PROXY", "socks5://unrelated-secret@proxy.example:8080")
+    for key in list(os.environ):
+        if key.lower() in {"http_proxy", "https_proxy", "all_proxy"}:
+            monkeypatch.delenv(key)
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1")
+    monkeypatch.setenv("no_proxy", "localhost,127.0.0.1")
+    # Full runtime startup adds these exclusions before launching the helper.
+    # Use real urllib discovery: mocking getproxies hid this boundary in 0.5.1.
+    extend_no_proxy_for_eastmoney()
+    monkeypatch.setattr("trade_compass_agent.mobile.proxy.getproxies", request.getproxies)
+    system_proxy = {"https": "http://127.0.0.1:7890"} if with_local_proxy else {}
+    monkeypatch.setattr(request, "getproxies_macosx_sysconf", lambda: system_proxy, raising=False)
+    proxy_env = {"HTTPS_PROXY": system_proxy["https"], "NO_PROXY": os.environ["NO_PROXY"]} if with_local_proxy else {}
 
     config, config_file, state, _ = managed
     identity = load_or_create_identity(config.data_dir / "mobile")
