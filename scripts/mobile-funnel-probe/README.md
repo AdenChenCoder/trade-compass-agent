@@ -15,6 +15,21 @@ go test -race ./...
 go build -trimpath -o /absolute/private/path/compass-funnel-probe .
 ```
 
+macOS 托管入口将已配置的本机 HTTPS 代理传入隔离子进程，兼容 TUN 代理的虚拟
+DNS 地址。只接受无凭据的 loopback IP HTTP CONNECT 代理，保留显式 `NO_PROXY` 排除项；
+不调整系统网络设置、TLS 校验或 SDK 的 Tailscale 路由环路保护。Linux 保持原行为。
+在已经启用此类代理、控制服务域名解析到 `198.18.0.0/15` 的 macOS 上，可显式执行：
+
+```sh
+# HTTPS_PROXY 使用该电脑已经配置的代理；不要为测试修改系统代理。
+HTTPS_PROXY=http://127.0.0.1:7890 COMPASS_TEST_MACOS_PROXY_ROUTE=1 \
+  go test -race -run TestMacOSProxyRouteHTTPS -v .
+```
+
+此检查仅向控制服务首页发送 HTTPS HEAD，验证冷连接和网络状态更新后的重连，
+保留系统 CA 校验，不初始化节点、不登录、不申请证书，也不读取业务数据。
+常规测试不访问网络；此检查也不能替代原手机入口的实际公网验收。
+
 只准备状态，不联网：
 
 ```sh

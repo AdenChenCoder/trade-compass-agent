@@ -204,6 +204,10 @@ workers in cleanup before removing model mocks.
   changes, restart through its existing supervisor and verify the new process
   and affected task entry point. Do not mix freshly imported handlers with
   cached modules or replay missed autonomous trades to validate a restart.
+- Mobile transport on macOS must retain supported local system proxy settings
+  across the isolated helper boundary without forwarding unrelated credentials
+  or disabling TLS/routing-loop protections. Test cold connection and reconnect;
+  a listening helper does not prove the original paired phone can reach it.
 - Native Agent adapters preserve application-owned history and business-tool
   authorization. Native resume handles are derived state: bind them to the
   published transcript, application context checkpoint and runtime/tool profile, serialize same-session writers,
