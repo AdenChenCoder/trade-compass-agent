@@ -4,6 +4,19 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-09
+
+### Fixed
+
+- Restore mobile connection startup and reconnection on macOS networks using
+  a local HTTPS proxy, including TUN proxies with synthetic DNS addresses. Pass
+  the configured local proxy to the isolated connection component without
+  forwarding unrelated credentials or changing system network settings.
+
+### Compatibility
+
+- Existing phone addresses, device identities, pairings, history, TLS certificate
+  verification and Tailscale routing-loop protection remain unchanged.
 
 ## [0.5.0] - 2026-11-04
 

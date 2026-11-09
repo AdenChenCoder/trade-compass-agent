@@ -44,6 +44,7 @@ def managed(tmp_path, monkeypatch):
         return {"state": "inconclusive", "checked": 0, "reachable": 0}
     monkeypatch.setattr("trade_compass_agent.mobile.reachability.check_public_entry", check_public_entry)
     monkeypatch.setattr("trade_compass_agent.mobile.managed.require_mobile_assets", lambda: None)
+    monkeypatch.setattr("trade_compass_agent.mobile.proxy.getproxies", lambda: {})
 
     config_file = tmp_path / "config.yaml"
     config_file.write_text(
@@ -94,6 +95,7 @@ for name in ('state-dir','mobile-bridge-config','instance'): p.add_argument('--'
 for name in ('connect','wait-for-mobile','parent-stdin'): p.add_argument('--'+name, action='store_true')
 a=p.parse_args(); state=Path(a.state_dir)
 (state/'env-leaks.json').write_text(json.dumps([k for k in ('DEEPSEEK_API_KEY','TS_AUTHKEY','TRADE_COMPASS_CONFIG') if k in os.environ]))
+(state/'proxy-env.json').write_text(json.dumps({k:os.environ[k] for k in ('HTTPS_PROXY','HTTP_PROXY','ALL_PROXY','NO_PROXY') if k in os.environ}))
 while True:
  if select.select([sys.stdin],[],[],0)[0] and not sys.stdin.buffer.read(1):
   (state/'parent-closed').touch(); break
@@ -114,8 +116,17 @@ while True:
     return config, config_file, state, helper
 
 
-def test_local_onboarding_process_lifecycle_and_original_sessions(managed):
+@pytest.mark.parametrize("with_local_proxy", [False, True])
+def test_local_onboarding_process_lifecycle_and_original_sessions(managed, monkeypatch, with_local_proxy):
     from trade_compass_agent.web.app import create_app
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("trade_compass_agent.mobile.proxy.sys", SimpleNamespace(platform="darwin"))
+    proxy_env = {"HTTPS_PROXY": "http://127.0.0.1:7890", "NO_PROXY": "localhost,127.0.0.1"} if with_local_proxy else {}
+    monkeypatch.setattr("trade_compass_agent.mobile.proxy.getproxies",
+                        lambda: {key.lower().removesuffix("_proxy"): value for key, value in proxy_env.items()})
+    monkeypatch.setenv("HTTP_PROXY", "http://unrelated-secret@proxy.example:8080")
+    monkeypatch.setenv("ALL_PROXY", "socks5://unrelated-secret@proxy.example:8080")
 
     config, config_file, state, _ = managed
     identity = load_or_create_identity(config.data_dir / "mobile")
@@ -144,6 +155,7 @@ def test_local_onboarding_process_lifecycle_and_original_sessions(managed):
         assert client.post("/api/mobile/access", json={"enabled": True}).status_code == 200
         assert controller.managed.process is process
         assert json.loads((state / "env-leaks.json").read_text()) == []
+        assert json.loads((state / "proxy-env.json").read_text()) == proxy_env
         (state / "authorized").touch()
         until(lambda: client.get("/api/mobile/status").json()["enabled"])
         invite = client.post("/api/mobile/pairing/invitations").json()
@@ -193,6 +205,7 @@ def test_local_onboarding_process_lifecycle_and_original_sessions(managed):
             == before
         )
         restarted_process = controller.managed.process
+        assert json.loads((state / "proxy-env.json").read_text()) == proxy_env
     assert restarted_process.returncode is not None
 
 

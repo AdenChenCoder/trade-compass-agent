@@ -16,6 +16,7 @@ from trade_compass_agent.concurrency import atomic_write
 from trade_compass_agent.mobile.helper import helper_binary, private_directory
 from trade_compass_agent.mobile.reachability import PublicReachability
 from trade_compass_agent.mobile.assets import require_mobile_assets
+from trade_compass_agent.mobile.proxy import local_https_proxy_env
 
 STATUS_MAX_AGE = 15
 PREPARATION_NOTICE_AFTER = 30
@@ -82,6 +83,7 @@ class ManagedConnection:
         self.stage = "launch"
         # Provider subprocesses never inherit Agent/model credentials or provider overrides.
         env = {key: os.environ[key] for key in ("HOME", "USER", "LOGNAME", "PATH", "LANG", "TMPDIR") if key in os.environ}
+        env.update(local_https_proxy_env())
         self.process = await asyncio.create_subprocess_exec(str(executable), "--state-dir", str(self.directory),
             "--connect", "--mobile-bridge-config", str(self.bridge), "--wait-for-mobile",
             "--parent-stdin", "--instance", self.instance, stdin=asyncio.subprocess.PIPE,
