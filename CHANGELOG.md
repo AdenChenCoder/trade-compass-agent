@@ -4,6 +4,15 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-09
+
+### Fixed
+
+- Keep the macOS mobile connection proxy available during full application
+  startup, when market-data imports have already set proxy exclusions. Explicit
+  proxy overrides, including empty settings, remain authoritative. This fixes
+  the startup path missed by 0.5.1's isolated proxy checks.
+
 ## [0.5.1] - 2026-11-09
 
 ### Fixed
