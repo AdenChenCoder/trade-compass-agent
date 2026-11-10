@@ -87,7 +87,7 @@ test('phone keeps creating real computer sessions while preserving existing conv
     const composerBottom = await phone.locator('.composer').evaluate(element => element.getBoundingClientRect().bottom);
     expect(composerBottom).toBeGreaterThan(navigationBox!.y - 2);
     expect(composerBottom).toBeLessThanOrEqual(navigationBox!.y + 2);
-    await expect(phone.getByRole('button', { name: '连接', exact: true })).toBeInViewport();
+    await expect(phone.getByRole('button', { name: '设置', exact: true })).toBeInViewport();
     await phone.locator('main').evaluate(element => { element.scrollTop = element.scrollHeight; });
     expect((await navigation.boundingBox())!.y).toBe(navigationBox!.y);
     await phone.screenshot({ path: testInfo.outputPath('keyboard-open.png'), animations: 'disabled' });

@@ -109,7 +109,7 @@ test('browser pairs over HTTPS, shares history, receives a test push, survives o
       await phone.getByLabel('消息', { exact: true }).fill('通过 PWA 继续这个会话');
       await expect(phone.getByRole('button', { name: '发送', exact: true })).toBeInViewport();
       await expect(phone.getByLabel('消息', { exact: true })).toBeInViewport();
-      await expect(phone.getByRole('button', { name: '连接', exact: true })).toBeInViewport();
+      await expect(phone.getByRole('button', { name: '设置', exact: true })).toBeInViewport();
       expect(await phone.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
     await phone.getByRole('button', { name: '发送', exact: true }).click();
@@ -119,7 +119,7 @@ test('browser pairs over HTTPS, shares history, receives a test push, survives o
     const cookie = (await context.cookies()).find(cookie => cookie.name === '__Host-compass-device')!;
     expect(cookie.httpOnly && cookie.secure && cookie.sameSite === 'Strict').toBe(true);
     expect(await phone.evaluate(() => JSON.stringify(localStorage))).not.toContain(cookie.value);
-    await phone.getByRole('button', { name: '连接', exact: true }).click();
+    await phone.getByRole('button', { name: '设置', exact: true }).click();
     const connectionChecks = await phone.evaluate(() => performance.getEntriesByType('resource').filter(entry => entry.name.includes('/pairing/status')).length);
     await phone.getByRole('button', { name: '刷新连接状态', exact: true }).click();
     await expect.poll(() => phone.evaluate(() => performance.getEntriesByType('resource').filter(entry => entry.name.includes('/pairing/status')).length)).toBeGreaterThan(connectionChecks);
@@ -155,7 +155,7 @@ test('browser pairs over HTTPS, shares history, receives a test push, survives o
     await expect(page.getByRole('button', { name: '数字一致，批准' })).toHaveCount(0);
     await phone.getByRole('button', { name: /消费行业观察/ }).click();
     await expect(phone.getByText('已在电脑上的同一个会话收到：通过 PWA 继续这个会话')).toBeVisible();
-    await phone.getByRole('button', { name: '连接', exact: true }).click();
+    await phone.getByRole('button', { name: '设置', exact: true }).click();
     await expect(phone.getByRole('switch', { name: '接收任务提醒' })).not.toBeChecked();
     // Existing test subscriptions stay test-only. A fresh task appears in the queue only after opt-in.
     await page.request.post('/test/task');
@@ -194,7 +194,7 @@ test('browser pairs over HTTPS, shares history, receives a test push, survives o
     await phone.getByRole('button', { name: '任务消息', exact: true }).click();
     await expect(phone.getByText('任务推送验证：手机页面资源检查完成。')).toHaveCount(2);
     await phone.screenshot({ path: testInfo.outputPath('phone-alerts.png'), fullPage: true, animations: 'disabled' });
-    await phone.getByRole('button', { name: '连接', exact: true }).click();
+    await phone.getByRole('button', { name: '设置', exact: true }).click();
     await expect(phone.getByRole('switch', { name: '接收任务提醒' })).toBeChecked();
     await phone.screenshot({ path: testInfo.outputPath('phone-settings.png'), fullPage: true, animations: 'disabled' });
     await phone.setViewportSize({ width: 320, height: 568 });

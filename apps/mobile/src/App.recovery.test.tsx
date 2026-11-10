@@ -160,7 +160,9 @@ it('restores the connection tab without showing pairing while authorization is l
     await act(async () => root.render(createElement(App))); await settle();
     expect(element.textContent).toContain('正在恢复连接');
     await act(async () => reply(Response.json({ status: 'approved' }))); await settle();
-    expect(element.querySelector('.service-card')).not.toBeNull();
+    expect(element.querySelector('[aria-label="电脑连接状态"]')).not.toBeNull();
+    expect(element.querySelector('h1')?.textContent).toBe('设置');
+    expect(element.querySelector('nav [aria-current="page"]')?.textContent).toBe('设置');
     expect(sawPairing).toBe(false);
   } finally { observer.disconnect(); }
 });
@@ -356,7 +358,7 @@ it('stops filling a gap after leaving the conversation and discards late respons
 it('clears the stale notification-status error after connectivity returns', async () => {
   network = true;
   await act(async () => root.render(createElement(App))); await settle();
-  await click('连接');
+  await click('设置');
   network = false;
   await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
   expect(element.textContent).toContain('暂时无法读取通知状态');
@@ -455,7 +457,7 @@ it('keeps explicitly loaded history when the next sync fails and the app reopens
 
 it('refreshes the actual computer status and reports pending, success and failure without changing pairing', async () => {
   network = true;
-  await act(async () => root.render(createElement(App))); await settle(); await click('连接');
+  await act(async () => root.render(createElement(App))); await settle(); await click('设置');
   const originalFetch = fetch;
   let respond!: (value: Response) => void;
   let checks = 0;
@@ -473,7 +475,7 @@ it('refreshes the actual computer status and reports pending, success and failur
   await act(async () => respond(Response.json({ status: 'approved', name: '重命名后的手机' })));
   expect(refreshButton.disabled).toBe(false);
   expect(element.querySelector('.refresh-result')?.textContent).toContain('已刷新');
-  expect(element.querySelector('.device-facts')?.textContent).toContain('重命名后的手机');
+  expect(element.querySelector('[aria-label="电脑连接状态"]')?.textContent).toContain('重命名后的手机');
   await click('刷新连接状态');
   await act(async () => respond(new Response('Unavailable', { status: 502 })));
   expect(refreshButton.disabled).toBe(false);

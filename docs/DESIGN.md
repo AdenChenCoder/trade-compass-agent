@@ -88,7 +88,7 @@ trading workflows. The existing coin mark remains the identity.
 ## Mobile companion
 
 - Phone navigation uses a labelled bottom bar for conversations, task messages and
-  connection settings. It stays outside the scrolling content and respects safe
+  Settings. It stays outside the scrolling content and respects safe
   areas. A compact bar preserves all destinations when the keyboard is open.
 - Conversation lists use a prominent new-conversation action and quiet divided
   rows. Conversation reading uses the full width; assistant prose is unboxed and
@@ -99,11 +99,20 @@ trading workflows. The existing coin mark remains the identity.
 - Connection state is always written alongside its indicator. Failed actions and
   unsaved drafts appear above the scrolling content so they remain visible while
   reading. Pairing, pending requests and offline caches keep their existing meaning.
-- Connection settings foreground the paired device, then show four labelled color
-  previews as native radios. Restore Default stays available. Task failure and
-  incomplete-result colors adapt to dark mode without changing their labels.
+- Settings foreground the paired computer and phone in a single connection surface,
+  then show four labelled color previews in a two-column radio group. Restore Default
+  stays available. Task failure and incomplete-result colors adapt to dark mode without changing their labels.
 - Press, selection, disclosure and detail transitions use 150–250 ms transforms
   or opacity. No animation delays access to content. Respect reduced motion.
+- A rounded bottom navigation track uses one moving selection surface. Its labels
+  remain visible, including with the keyboard open. The internal `connection` view
+  key stays compatible with saved update/resume state; the visible destination is
+  Settings. Device management remains a disclosure with explicit removal consequences.
+  Long device names use two lines in the overview; their full value remains readable
+  in connection management so names cannot push primary controls off a small screen.
+- Conversation rows and task results use divided reading surfaces. Task status stays
+  separate from the title and preview; full content remains available in the detail
+  sheet. Assistant identity and user-message tint distinguish conversation roles.
 
 ## Appearance preference
 
@@ -113,7 +122,7 @@ trading workflows. The existing coin mark remains the identity.
 - Startup reads and validates the preference before React renders. The root
   `data-theme` and `dark` class are derived state; other tabs follow storage events.
   Switching does not reload a page, clear drafts or change chart data. Mobile
-  offers the same choices in its connection view; devices are not synchronized.
+  offers the same choices in Settings; devices are not synchronized.
 - Unknown or missing values fall back to the original appearance. Storage errors
   still allow the current page to change and visibly report that saving failed.
   Restoring the default is reversible; existing user records are untouched.

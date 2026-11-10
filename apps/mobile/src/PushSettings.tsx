@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { peerMode, flushPushReceipts } from './peer';
 import { api } from './native';
+import { Icon } from './Icon';
 
 interface Status { subscribed: boolean; public_key: string; tasks_enabled: boolean }
 interface BrowserStatus { permission: NotificationPermission; subscribed: boolean; publicKey: string | null }
@@ -125,7 +126,7 @@ export function PushSettings() {
     : status.subscribed && !enabled ? '通知需要重新开启。'
     : enabled ? '通知已开启' : '通知未开启');
   return <section className="connection-card" aria-label="通知与提醒">
-    <h3>通知与提醒</h3>
+    <h3><Icon name="bell" />通知与提醒</h3>
     <div className="notification-controls" aria-busy={busy}>
       <div className="notification-setting">
         <label className="notification-row notification-toggle"><span><strong>手机通知</strong><span className="notification-description" id="phone-notification-status">{busy ? '正在设置…' : description}</span></span>

@@ -408,7 +408,7 @@ export function App() {
   useEffect(() => { if (scrollArea.current) scrollArea.current.scrollTop = 0; }, [tab, connectionView]);
   const showNavigation = connection.connected && (approved || sessions.length > 0);
   const inConversation = !connectionView && tab === 'sessions' && !!selected;
-  const title = connectionView ? '我的连接' : tab === 'notices' ? '任务消息' : inConversation ? page?.title || '新对话' : '会话';
+  const title = connectionView ? (showNavigation ? '设置' : '连接电脑') : tab === 'notices' ? '任务消息' : inConversation ? page?.title || '新对话' : '会话';
   const connectionLabel = authorizationLost ? '连接已失效' : online ? approved ? '已连接' : '等待验证' : '等待连接';
   const restoringConnection = !peerMode && connection.connected && approved === null && !authorizationLost;
   // Keep the neutral launch screen until identity and authorization are known.
@@ -426,7 +426,8 @@ export function App() {
     <header className="app-header">
       {inConversation ? <button className="icon-button header-back" aria-label="所有会话" disabled={busy || older} onClick={() => selectSession(null)}><Icon name="back" /></button>
         : <span className="brand-mark" role="img" aria-label="交易罗盘" />}
-      <div className="header-title"><h1>{title}</h1>{connection.connected ? <p className={`connection-indicator ${online && approved && !authorizationLost ? 'online' : ''}`} role="status" aria-label={connectionLabel}><i aria-hidden="true" />{connectionLabel}</p> : <p>交易罗盘</p>}</div>
+      <div className="header-title"><h1>{title}</h1>{connection.connected && inConversation ? <p className={`connection-indicator ${online && approved && !authorizationLost ? 'online' : ''}`} role="status" aria-label={connectionLabel}><i aria-hidden="true" />{connectionLabel}</p> : null}</div>
+      {connection.connected && !inConversation ? <p className={`connection-indicator header-connection ${online && approved && !authorizationLost ? 'online' : ''}`} role="status" aria-label={connectionLabel}><i aria-hidden="true" />{connectionLabel}</p> : null}
       {inConversation ? <button className="icon-button new-session-button" aria-label="新建会话" aria-busy={creating}
         title={online ? '新建会话' : '恢复连接后可新建会话'} disabled={!online || !approved || authorizationLost || busy || older}
         onClick={() => void createSession()}><Icon name={creating ? 'more' : 'plus'} /></button> : null}
@@ -437,19 +438,23 @@ export function App() {
       const area = event.currentTarget;
       nearBottom.current = area.scrollHeight - area.clientHeight - area.scrollTop < 180;
     }}>
-      {connectionView ? <section className="connect-view">
+      {connectionView ? <section className={`connect-view ${showNavigation ? 'settings-view' : ''}`} aria-label={showNavigation ? '设置' : '连接电脑'}>
         {restoringConnection ? <p className="muted" role="status">正在恢复连接…</p> : connection.connected && approved && !authorizationLost ? <>
           <section className="service-card" aria-label="电脑连接状态">
-            <div className="service-heading"><span className="service-device-icon" aria-hidden="true"><Icon name="computer" /></span><div><span className="eyebrow">我的电脑</span><strong className={`service-status ${online ? 'online' : ''}`}><i />{online ? '已连接' : '正在重连'}</strong></div>
+            <div className="service-heading"><h2>设备连接</h2><strong className={`service-status ${online ? 'online' : ''}`}><i aria-hidden="true" />{online ? '已连接' : '正在重连'}</strong></div>
+            <div className={`device-link ${online ? 'is-online' : ''}`}>
+              <div className="device-end"><span className="device-art computer-art" aria-hidden="true"><Icon name="computer" /></span><span>我的电脑</span></div>
+              <span className="device-path" aria-hidden="true"><i /><span><Icon name={online ? 'check' : 'refresh'} /></span><i /></span>
+              <div className="device-end"><span className="device-art phone-art" aria-hidden="true"><Icon name="phone" /></span><span className="device-name">{deviceName}</span></div>
+            </div>
+            <div className="service-actions"><span className="pairing-status"><Icon name="lock" />已配对</span>
               <div className="connection-refresh"><button className="secondary refresh-button" aria-label="刷新连接状态" disabled={refreshing} aria-busy={refreshing} onClick={() => {
                 const id = refreshRequest.current.id + 1;
                 refreshRequest.current = { id, pending: true }; setRefreshing(true); setRefreshResult(''); setRefreshRevision(id);
-              }}><Icon name="refresh" /><span>{refreshing ? '刷新中…' : '刷新'}</span></button>
-                <span className="refresh-result" role="status">{refreshResult}</span></div></div>
-            <dl className="device-facts"><div><dt><Icon name="phone" />当前手机</dt><dd>{deviceName}</dd></div>
-              <div><dt><Icon name="lock" />配对状态</dt><dd>已配对</dd></div>
-            </dl>
-            <details className="connection-details"><summary><Icon name="link" /><span>连接管理</span><Icon name="chevron" /></summary><p className="endpoint">{connection.endpoint}</p><p className="muted">移除连接后，需要重新扫码。电脑中的会话会保留。</p><button className="danger-link" onClick={() => void forget()}>移除连接</button></details>
+              }}><Icon name="refresh" /><span>{refreshing ? '刷新中…' : '刷新状态'}</span></button>
+                <span className="refresh-result" role="status">{refreshResult}</span></div>
+            </div>
+            <details className="connection-details"><summary><Icon name="link" /><span>连接管理</span><Icon name="chevron" /></summary><dl className="connection-record"><div><dt>当前手机</dt><dd>{deviceName}</dd></div><div><dt>连接地址</dt><dd className="endpoint">{connection.endpoint}</dd></div></dl><p className="muted">移除连接后，需要重新扫码。电脑中的会话会保留。</p><button className="danger-link" onClick={() => void forget()}>移除连接</button></details>
           </section>
           <AppearanceSettings />
           {!native ? <PushSettings /> : null}
@@ -497,8 +502,8 @@ export function App() {
             }}><span>{question}</span><Icon name="arrow" /></button>)}</div> : null}
           </div> : null}
           {selected === missingSession ? <div className="empty" role="status"><Icon name="chat" /><h3>这段会话已删除</h3><p>可以返回会话列表，或开始新的对话。</p><button className="secondary" disabled={!online || busy} onClick={() => void createSession()}>{draft ? '用草稿新建会话' : '新建会话'}</button></div> : !page ? <ReadState subject="会话内容" state={error ? 'unavailable' : 'loading'} /> : page.messages.map((message, index) => <article className={`message ${message.role === 'user' ? 'user' : 'assistant'}`} key={page.page.start_index + index}>
-            <span className="message-avatar" aria-hidden="true">{message.role === 'user'
-              ? <Icon name="person" /> : <span className="brand-mark" aria-hidden="true" />}</span>
+            <span className="message-identity" aria-hidden="true"><span className="message-avatar">{message.role === 'user'
+              ? <Icon name="person" /> : <span className="brand-mark" aria-hidden="true" />}</span><span>{message.role === 'user' ? '你' : '交易罗盘'}</span></span>
             <div className="message-body"><span className="sr-only">{message.role === 'user' ? '你' : '交易罗盘'}</span><div className="message-bubble"><Markdown text={message.content} />
               {message.sections?.map((section, i) => <div key={i}><h3>{section.title}</h3><Markdown text={section.content} /></div>)}
               {message.tool_calls?.length ? <details className="message-tools"><summary>使用了 {message.tool_calls.length} 个工具</summary><p>{message.tool_calls.map(tool => tool.name).join('、')}</p></details> : null}
@@ -516,7 +521,7 @@ export function App() {
         </form>
       </section> : <section className="sessions-view" aria-label="会话列表">
         <button className="session-create" aria-label="新建会话" aria-busy={creating} disabled={!online || !approved || authorizationLost || busy || older} onClick={() => void createSession()}>
-          <span className="session-create-icon" aria-hidden="true"><Icon name={creating ? 'more' : 'plus'} /></span>
+          <span className="session-create-icon" aria-hidden="true"><Icon name={creating ? 'more' : 'compose'} /></span>
           <span><strong>{creating ? '正在创建…' : '新建会话'}</strong><small>{online ? '个股研究 · 市场分析' : '恢复连接后可新建'}</small></span><Icon name="arrow" />
         </button>
         <div className="section-heading"><h2>最近的会话</h2>{sessions.length > 0 || collectionsReady.sessions ? <span>{sessions.length} 段对话</span> : null}</div>
@@ -526,13 +531,13 @@ export function App() {
         }}>{loadingSessions ? '正在加载…' : '查看更早会话'}</button> : null}
       </section>}
     </main>
-    {showNavigation ? <nav className="bottom-nav" aria-label="主导航">
-      {([['sessions', '会话'], ['notices', '任务消息'], ['connection', '连接']] as const).map(([value, label]) => <button key={value}
+    {showNavigation ? <nav className="bottom-nav" aria-label="主导航"><div className="nav-track" data-active={tab}>
+      {([['sessions', '会话'], ['notices', '任务消息'], ['connection', '设置']] as const).map(([value, label]) => <button key={value}
         className={`nav-item ${tab === value ? 'active' : ''}`}
         aria-current={tab === value ? 'page' : undefined} disabled={busy || older} onClick={() => setTab(value)}>
-        <span className="nav-icon"><Icon name={value === 'sessions' ? 'chat' : value === 'notices' ? 'bell' : 'link'} /></span><span>{label}</span>
+        <span className="nav-icon"><Icon name={value === 'sessions' ? 'chat' : value === 'notices' ? 'bell' : 'settings'} /></span><span>{label}</span>
       </button>)}
-    </nav> : null}
+    </div></nav> : null}
     {!showNavigation ? <footer>TRADE COMPASS · 交易罗盘</footer> : null}
   </div>;
 }
@@ -541,7 +546,7 @@ function InstallGuide() {
   const standalone = matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone;
   if (standalone) return null;
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  return <details className="install-guide"><summary><Icon name="plus" /><span>添加到主屏幕<span>像应用一样打开，还能接收通知</span></span><Icon name="chevron" /></summary>
+  return <details className="install-guide"><summary><Icon name="install" /><span>添加到主屏幕<span>像应用一样打开，还能接收通知</span></span><Icon name="chevron" /></summary>
     <p>{ios ? '在 Safari 中轻点分享，选择「添加到主屏幕」。请从新图标打开后连接电脑。' : '打开浏览器菜单，选择「安装应用」或「添加到主屏幕」，再从新图标打开。'}</p>
     <p>若打开后没有连接信息，可再次扫码，或在下方「扫码或安装遇到问题？」中复制配对链接。</p>
   </details>;

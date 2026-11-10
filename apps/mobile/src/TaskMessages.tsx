@@ -37,7 +37,7 @@ export function TaskMessages({ notices, notificationClick, readState }: { notice
   });
   return <section className="notices-view" aria-label="任务结果">
     <div className="section-heading"><h2>最近的任务</h2>{notices.length > 0 || !readState ? <span>{notices.length} 条消息</span> : null}</div>
-    {notices.length === 0 && readState ? <ReadState subject="任务消息" state={readState} /> : notices.length === 0 ? <div className="empty"><Icon name="bell" /><h3>还没有任务消息</h3><p>任务结果和提醒会出现在这里。</p></div> : cards.map(({ notice, key, result }) => <article className={`task-card ${result.tone ? `task-${result.tone}` : ''}`} key={key}>
+    {notices.length === 0 && readState ? <ReadState subject="任务消息" state={readState} /> : notices.length === 0 ? <div className="empty"><Icon name="bell" /><h3>还没有任务消息</h3><p>任务结果和提醒会出现在这里。</p></div> : <div className="task-feed">{cards.map(({ notice, key, result }) => <article className={`task-card ${result.tone ? `task-${result.tone}` : ''}`} key={key}>
       <button className="task-card-open" aria-label={`查看任务详情：${notice.title}`} aria-description={result.label} aria-haspopup="dialog"
         onClick={event => {
           const entry = crypto.randomUUID();
@@ -46,10 +46,10 @@ export function TaskMessages({ notices, notificationClick, readState }: { notice
           navigation.current = { entry, returning: false };
           setActive({ notice, opener: event.currentTarget, entry });
         }} />
-      <div className="task-heading" aria-hidden="true"><span className="task-icon"><Icon name={result.tone ? 'alert' : 'bell'} /></span><h3>{notice.title}</h3></div>
+      <div className="task-meta" aria-hidden="true"><ResultBadge notice={notice} /><span className="task-open-icon"><Icon name="arrow" /></span></div>
+      <div className="task-heading" aria-hidden="true"><h3>{notice.title}</h3></div>
       <div className="task-preview" aria-hidden="true"><Markdown text={notice.message} /></div>
-      <div className="task-footer" aria-hidden="true"><ResultBadge notice={notice} /><span>查看详情<Icon name="chevron" /></span></div>
-    </article>)}
+    </article>)}</div>}
     {active ? <NoticeDetails notice={active.notice} opener={active.opener} entry={active.entry} onReturn={returnToList} onClose={close} /> : null}
   </section>;
 }
