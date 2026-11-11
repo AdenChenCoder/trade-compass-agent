@@ -58,7 +58,7 @@ test('experimental peer bundle connects using real RTC, preserves same session t
   expect(messages.messages.filter((m: any) => m.content === '静态网页通过直连继续同一会话')).toHaveLength(1);
   await phone.getByRole('button', { name: '任务消息', exact: true }).click();
   await expect(phone.getByText('收盘复盘已完成')).toBeVisible();
-  await phone.getByRole('button', { name: '连接', exact: true }).click();
+  await phone.getByRole('button', { name: '设置', exact: true }).click();
   await phone.getByRole('button', { name: '开启测试通知' }).click();
   await expect(phone.getByText('已保存通知订阅，等待真机测试。')).toBeVisible();
   await phone.getByRole('button', { name: '任务消息', exact: true }).click();
@@ -76,7 +76,7 @@ test('experimental peer bundle connects using real RTC, preserves same session t
   await expect(phone.getByRole('button', { name: '发送', exact: true })).toBeDisabled();
   await context.setOffline(false);
   await expect.poll(() => phone.evaluate(() => navigator.onLine)).toBe(true);
-  await phone.getByRole('button', { name: '连接', exact: true }).click();
+  await phone.getByRole('button', { name: '设置', exact: true }).click();
   await connect();
   await expect(phone.getByRole('status', { name: '已连接', exact: true })).toBeVisible({ timeout: 20000 }).catch(async error => { throw new Error(`${error}\nRTC状态：\n手机页面：${await phone.locator('body').innerText()}`); });
   await expect(page.getByText('手机已处理通知并回传；请确认锁屏是否可见')).toBeVisible({ timeout: 12000 }).catch(async error => { throw new Error(`${error}\n手机页面：${await phone.locator('body').innerText()}`); });
