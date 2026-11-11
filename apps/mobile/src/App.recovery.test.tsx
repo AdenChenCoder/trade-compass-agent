@@ -416,6 +416,44 @@ it('ignores a late network error after polling confirms completion', async () =>
   expect(posts).toHaveLength(1);
 });
 
+it('shows a submitting message immediately, then permits a separate draft without resending it', async () => {
+  network = true; receiptStatus = 'running';
+  // An identical older message must not swallow the new submission.
+  transcript = [{ role: 'user', content: '帮我整理研究问题' }, ...page.messages];
+  const existingFetch = fetch;
+  let accept!: (response: Response) => void;
+  vi.stubGlobal('fetch', vi.fn((path: string, options: RequestInit) => {
+    if (path.endsWith('/turns') && options.method === 'POST') {
+      posts.push(JSON.parse(options.body as string));
+      return new Promise<Response>(resolve => { accept = resolve; });
+    }
+    return existingFetch(path, options);
+  }));
+  await act(async () => root.render(createElement(App))); await settle(); await click('原会话');
+  await draft('帮我整理研究问题'); await click('发送');
+  expect(element.querySelector('.message-pending')?.textContent).toContain('帮我整理研究问题');
+  expect(element.querySelector('textarea')!.value).toBe('');
+  expect(JSON.parse(localStorage.getItem(prefix + 'draft.' + session.session_id)!)).toBe('帮我整理研究问题');
+  expect(element.querySelector('.turn-feedback')?.textContent).toContain('正在发送');
+  expect(posts[0]).not.toHaveProperty('after_index');
+  expect(JSON.parse(localStorage.getItem(prefix + 'page.' + session.session_id)!).messages).toEqual(transcript);
+  await act(async () => accept(Response.json({ ...posts[0], status: 'running' }))); await settle();
+  expect(element.querySelector('textarea')!.disabled).toBe(false);
+  expect(element.querySelector('.turn-feedback')?.textContent).toContain('正在回复');
+  await draft('接下来再核实数据');
+  expect(element.querySelector<HTMLButtonElement>('[aria-label="发送"]')!.disabled).toBe(true);
+  transcript = [...transcript, { role: 'user', content: '帮我整理研究问题' }];
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(element.querySelector('.message-pending')).toBeNull();
+  expect(element.querySelectorAll('.message.user')).toHaveLength(2);
+  receiptStatus = 'completed';
+  transcript = [...transcript, { role: 'assistant', content: '新的研究清单' }];
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(element.querySelector('textarea')!.value).toBe('接下来再核实数据');
+  expect(element.querySelector<HTMLButtonElement>('[aria-label="发送"]')!.disabled).toBe(false);
+  expect(posts).toHaveLength(1);
+});
+
 it.each(['failed', 'unknown'])('preserves the message when retrying an existing %s receipt', async status => {
   network = true;
   await act(async () => root.render(createElement(App))); await settle();
@@ -431,6 +469,41 @@ it.each(['failed', 'unknown'])('preserves the message when retrying an existing 
   expect(posts).toEqual([original, original]);
   expect(element.querySelector('textarea')!.value).toBe('请核对执行结果');
   expect(localStorage.getItem(prefix + 'request.' + session.session_id)).toBeNull();
+});
+
+it('preserves an identical new draft through repeated acceptance and reopening', async () => {
+  network = true; receiptStatus = 'running';
+  await act(async () => root.render(createElement(App))); await settle(); await click('原会话');
+  await draft('请继续'); await click('发送');
+  await draft('请继续');
+  await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+  expect(element.querySelector('textarea')!.value).toBe('请继续');
+  await act(async () => root.unmount()); root = createRoot(element);
+  await act(async () => root.render(createElement(App))); await settle(); await click('原会话');
+  expect(element.querySelector('textarea')!.value).toBe('请继续');
+  receiptStatus = 'completed';
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(element.querySelector('textarea')!.value).toBe('请继续');
+  expect(posts).toHaveLength(1);
+});
+
+it('does not treat session activity as confirmation of an uncertain mobile submission', async () => {
+  network = true;
+  const existingFetch = fetch;
+  vi.stubGlobal('fetch', vi.fn(async (path: string, options: RequestInit) => {
+    if (path.includes('/turns/')) return new Response('{}', { status: 404 });
+    const response = await existingFetch(path, options);
+    if (path.includes('/messages') && response.ok) return Response.json({ ...await response.json(), has_active_turn: posts.length > 0 });
+    return response;
+  }));
+  await act(async () => root.render(createElement(App))); await settle(); await click('原会话');
+  await draft('等待确认'); loseReply = true; await click('发送');
+  network = true;
+  await act(async () => window.dispatchEvent(new Event('pageshow'))); await settle();
+  expect(element.querySelector('.turn-feedback')?.textContent).toContain('发送结果待确认');
+  expect(element.querySelector('.reply-pulse')).toBeNull();
+  expect(element.querySelector<HTMLButtonElement>('[aria-label="确认并重试原消息"]')!.disabled).toBe(true);
+  expect(posts).toHaveLength(1);
 });
 
 it('keeps explicitly loaded history when the next sync fails and the app reopens offline', async () => {

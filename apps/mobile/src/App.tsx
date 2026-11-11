@@ -13,13 +13,15 @@ import { acknowledgeNotificationNavigation, listenForNotificationNavigation } fr
 import { fillHistoryGap } from '../../shared/session-history';
 import { AppearanceSettings } from './AppearanceSettings';
 import { ReadState } from './ReadState';
+import { TurnFeedback } from './TurnFeedback';
+import { useConversationScroll } from './useConversationScroll';
 
 interface Session { session_id: string; title?: string; preview?: string; updated_at: string }
 interface SessionList { sessions: Session[]; next_cursor?: string | null }
 interface Message { role: string; content: string; timestamp?: string; sections?: { title: string; content: string }[]; tool_calls?: { name: string }[] }
 interface Page { session_id: string; title?: string; messages: Message[]; has_active_turn: boolean; page: { start_index: number; next_before: number | null }; cache_version?: 1 }
 interface Receipt { request_id: string; session_id: string; status: string }
-interface Pending { request_id: string; session_id: string; message: string }
+interface Pending { request_id: string; session_id: string; message: string; after_index?: number; accepted?: boolean }
 const errorText = (error: unknown) => error instanceof Error ? error.message : '暂时无法连接电脑';
 function cached<T>(key: string, fallback: T): T { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } }
 function save(key: string, value: unknown) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Online use remains available if storage is full. */ } }
@@ -64,6 +66,8 @@ export function App() {
   const [draft, setDraft] = useState('');
   const [draftError, setDraftError] = useState('');
   const [pending, setPending] = useState<Pending | null>(null);
+  const [submission, setSubmission] = useState<Pending | null>(null);
+  const acceptedRequest = useRef<string | null>(null);
   const [receipt, setReceipt] = useState('');
   const [older, setOlder] = useState(false);
   const [refreshRevision, setRefreshRevision] = useState(0);
@@ -108,11 +112,17 @@ export function App() {
   }, [draftKey]);
   const applyReceipt = useCallback((record: Receipt, outstanding: Pending) => {
     // Polling can observe a terminal result before the POST response arrives.
-    if (cached<Pending | null>(requestKey, null)?.request_id !== outstanding.request_id) return;
+    const stored = cached<Pending | null>(requestKey, null);
+    if (stored?.request_id !== outstanding.request_id) return;
     if (record.status === 'unknown' || record.status === 'failed') {
       setDraft(current => current.trim() ? current : outstanding.message);
       if (!cached<string>(draftKey, '').trim()) save(draftKey, outstanding.message);
-    } else {
+    } else if (!stored.accepted && acceptedRequest.current !== outstanding.request_id) {
+      acceptedRequest.current = outstanding.request_id;
+      if (record.status === 'running') {
+        const accepted = { ...stored, accepted: true };
+        save(requestKey, accepted); setPending(accepted);
+      }
       clearSentDraft(outstanding.message);
     }
     setReceipt(record.status);
@@ -138,12 +148,6 @@ export function App() {
       url.searchParams.delete('view'); history.replaceState(null, '', url);
     }
   }, []);
-
-  useEffect(() => {
-    if (selected && page && nearBottom.current) requestAnimationFrame(() => {
-      if (scrollArea.current) scrollArea.current.scrollTop = scrollArea.current.scrollHeight;
-    });
-  }, [page?.messages.length, selected]);
 
   useEffect(() => {
     if (connection.connected) return;
@@ -191,7 +195,7 @@ export function App() {
   useEffect(() => {
     nearBottom.current = true;
     setMissingSession(null); setDraftError('');
-    setDraft(cached(draftKey, '')); setPending(cached(requestKey, null)); setReceipt('');
+    setDraft(cached(draftKey, '')); setPending(cached(requestKey, null)); setSubmission(cached(requestKey, null)); setReceipt('');
     setPage(selected ? cached(`${root}page.${selected}`, null) : null);
   }, [selected, root, draftKey, requestKey]);
 
@@ -336,22 +340,26 @@ export function App() {
     } catch (err) { setError(errorText(err)); }
   }
   async function send() {
-    if (!selected || selected === missingSession || busy || page?.has_active_turn) return;
-    const message = pending ?? { request_id: crypto.randomUUID(), session_id: selected, message: draft.trim() };
+    if (!selected || !page || selected === missingSession || !online || !approved || authorizationLost || busy
+      || page.has_active_turn || receipt === 'running' && pending) return;
+    const message = pending ?? { request_id: crypto.randomUUID(), session_id: selected, message: draft.trim(),
+      after_index: page.page.start_index + page.messages.length };
     if (!message.message) return;
     const sid = selected;
     let persisted = false;
     nearBottom.current = true;
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setReceipt('');
     try {
       // Persist before sending. A timeout leaves the same ID available for status/retry.
-      localStorage.setItem(requestKey, JSON.stringify(message)); persisted = true; setPending(message);
-      const result = await api<Receipt>('turns', 'POST', message);
+      localStorage.setItem(requestKey, JSON.stringify(message)); persisted = true; setPending(message); setSubmission(message);
+      composerInput.current?.blur();
+      const { request_id, session_id, message: text } = message;
+      const result = await api<Receipt>('turns', 'POST', { request_id, session_id, message: text });
       applyReceipt(result, message);
     } catch (err) {
       if (persisted && cached<Pending | null>(requestKey, null)?.request_id !== message.request_id) return;
       if (err instanceof RequestError && [404, 409, 422, 429].includes(err.status)) {
-        setPending(null); localStorage.removeItem(requestKey);
+        setPending(null); setSubmission(null); localStorage.removeItem(requestKey);
       }
       setError(errorText(err));
     } finally { if (selected === sid) setBusy(false); }
@@ -405,9 +413,19 @@ export function App() {
   }
 
   const connectionView = !connection.connected || tab === 'connection' || (!approved && sessions.length === 0);
-  useEffect(() => { if (scrollArea.current) scrollArea.current.scrollTop = 0; }, [tab, connectionView]);
   const showNavigation = connection.connected && (approved || sessions.length > 0);
   const inConversation = !connectionView && tab === 'sessions' && !!selected;
+  useEffect(() => { if (!inConversation && scrollArea.current) scrollArea.current.scrollTop = 0; }, [tab, connectionView, inConversation]);
+  const endIndex = page?.session_id === selected ? page.page.start_index + page.messages.length : 0;
+  const chatScroll = useConversationScroll(scrollArea, inConversation && page?.session_id === selected ? selected : null,
+    endIndex, pending?.request_id, nearBottom);
+  // A local echo is presentation only. Match within this submission's history range,
+  // never against an identical question from a previous turn or a legacy pending record.
+  const showSubmission = submission?.session_id === selected && submission.after_index !== undefined && page?.session_id === selected
+    && !page.messages.some((message, index) => page.page.start_index + index >= submission.after_index!
+      && message.role === 'user' && message.content.trim() === submission.message);
+  const awaitingReceipt = !!pending && receipt !== 'running';
+  const composerValue = awaitingReceipt && pending?.after_index !== undefined && !pending.accepted && draft.trim() === pending.message ? '' : draft;
   const title = connectionView ? (showNavigation ? '设置' : '连接电脑') : tab === 'notices' ? '任务消息' : inConversation ? page?.title || '新对话' : '会话';
   const connectionLabel = authorizationLost ? '连接已失效' : online ? approved ? '已连接' : '等待验证' : '等待连接';
   const restoringConnection = !peerMode && connection.connected && approved === null && !authorizationLost;
@@ -434,10 +452,7 @@ export function App() {
       <AppUpdate />
     </header>
     {error || createError || draftError ? <div className="notice error app-feedback" role="alert">{draftError || error || createError}</div> : null}
-    <main ref={scrollArea} className={inConversation ? 'chat-main' : ''} onScroll={event => {
-      const area = event.currentTarget;
-      nearBottom.current = area.scrollHeight - area.clientHeight - area.scrollTop < 180;
-    }}>
+    <main ref={scrollArea} className={inConversation ? 'chat-main' : ''} onScroll={chatScroll.onScroll}>
       {connectionView ? <section className={`connect-view ${showNavigation ? 'settings-view' : ''}`} aria-label={showNavigation ? '设置' : '连接电脑'}>
         {restoringConnection ? <p className="muted" role="status">正在恢复连接…</p> : connection.connected && approved && !authorizationLost ? <>
           <section className="service-card" aria-label="电脑连接状态">
@@ -496,12 +511,12 @@ export function App() {
       </section> : tab === 'notices' ? <TaskMessages key={connection.computer_id} notices={notices} notificationClick={notificationClick} readState={collectionsReady.notices ? undefined : error ? 'unavailable' : 'loading'} /> : selected ? <section className="conversation" aria-label="会话内容">
         <div className="transcript">
           {page?.page.next_before != null ? <button className="secondary older" disabled={older} onClick={() => void loadOlder()}>{older ? '正在加载…' : '查看更早消息'}</button> : null}
-          {page && page.messages.length === 0 ? <div className="empty conversation-welcome"><span className="brand-mark" aria-hidden="true" /><h3>今天想研究什么？</h3><p>分析个股、了解市场，或梳理投资思路。</p>
+          {page && page.messages.length === 0 && !pending && !showSubmission && !page.has_active_turn ? <div className="empty conversation-welcome"><span className="brand-mark" aria-hidden="true" /><h3>今天想研究什么？</h3><p>分析个股、了解市场，或梳理投资思路。</p>
             {!draft && !pending && !busy && !page.has_active_turn ? <div className="conversation-prompts" aria-label="问题建议">{['今天市场有哪些变化？', '如何梳理个股研究思路？'].map(question => <button key={question} onClick={() => {
               updateDraft(question); composerInput.current?.focus();
             }}><span>{question}</span><Icon name="arrow" /></button>)}</div> : null}
           </div> : null}
-          {selected === missingSession ? <div className="empty" role="status"><Icon name="chat" /><h3>这段会话已删除</h3><p>可以返回会话列表，或开始新的对话。</p><button className="secondary" disabled={!online || busy} onClick={() => void createSession()}>{draft ? '用草稿新建会话' : '新建会话'}</button></div> : !page ? <ReadState subject="会话内容" state={error ? 'unavailable' : 'loading'} /> : page.messages.map((message, index) => <article className={`message ${message.role === 'user' ? 'user' : 'assistant'}`} key={page.page.start_index + index}>
+          {selected === missingSession ? <div className="empty" role="status"><Icon name="chat" /><h3>这段会话已删除</h3><p>可以返回会话列表，或开始新的对话。</p><button className="secondary" disabled={!online || busy} onClick={() => void createSession()}>{draft ? '用草稿新建会话' : '新建会话'}</button></div> : !page ? <ReadState subject="会话内容" state={error ? 'unavailable' : 'loading'} /> : page.messages.map((message, index) => <article className={`message ${message.role === 'user' ? 'user' : 'assistant'}`} data-message-index={page.page.start_index + index} key={page.page.start_index + index}>
             <span className="message-identity" aria-hidden="true"><span className="message-avatar">{message.role === 'user'
               ? <Icon name="person" /> : <span className="brand-mark" aria-hidden="true" />}</span><span>{message.role === 'user' ? '你' : '交易罗盘'}</span></span>
             <div className="message-body"><span className="sr-only">{message.role === 'user' ? '你' : '交易罗盘'}</span><div className="message-bubble"><Markdown text={message.content} />
@@ -509,15 +524,18 @@ export function App() {
               {message.tool_calls?.length ? <details className="message-tools"><summary>使用了 {message.tool_calls.length} 个工具</summary><p>{message.tool_calls.map(tool => tool.name).join('、')}</p></details> : null}
             </div>{message.timestamp && Number.isFinite(Date.parse(message.timestamp)) ? <time className="message-time" dateTime={message.timestamp}>{new Date(message.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time> : null}</div>
           </article>)}
-          {page?.has_active_turn ? <div className="working" role="status"><span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>正在处理…</div> : null}
-          {['failed', 'unknown', 'interrupted'].includes(receipt) ? <div className="notice">{receipt === 'unknown' ? '处理曾中断，无法确定这条请求是否完成。请先检查历史和执行结果，再决定是否发起新请求。' : receipt === 'failed' ? '这次执行未成功，请在电脑查看详情。' : '这次执行已停止。'}</div> : null}
+          {showSubmission ? <article className="message user message-pending" aria-label="刚提交的消息"><div className="message-body"><div className="message-bubble"><Markdown text={submission.message} /></div><span className="message-delivery">{receipt === 'running' || receipt === 'completed' ? <><Icon name="check" />已接收</> : receipt === 'failed' ? '未完成' : receipt === 'interrupted' ? '已停止' : busy ? '发送中' : '等待确认'}</span></div></article> : null}
+          <TurnFeedback receipt={receipt} pending={!!pending} sending={busy && !!pending} active={!!page?.has_active_turn}
+            online={online} onRetry={() => void send()} />
         </div>
-        <form className={`composer ${pending ? 'has-pending' : ''}`} onSubmit={e => { e.preventDefault(); void send(); }}>
-          {pending ? <p className="pending-status" role="status">这条消息{receipt === 'running' ? '已接收，正在处理' : '的发送结果待确认'}。{receipt === 'unconfirmed' ? '尚无接收记录，可用原请求重试。' : ''}</p> : null}
-          <div className="composer-input"><textarea ref={composerInput} aria-label="消息" rows={1} placeholder="输入你的问题…" value={draft} maxLength={8000}
-            disabled={busy || !!pending} onChange={e => updateDraft(e.target.value)} />
-            <button className="primary send-button" aria-label={busy ? '正在发送…' : pending ? '确认并重试原消息' : '发送'} disabled={selected === missingSession || !online || busy || page?.has_active_turn || (!pending && !draft.trim()) || (!!pending && receipt === 'running')}>
-              <Icon name={busy ? 'more' : pending ? 'refresh' : 'send'} />{pending && !busy ? <span>确认并重试原消息</span> : null}</button></div>
+        <form className="composer" onSubmit={e => { e.preventDefault(); if (!pending) void send(); }}>
+          {chatScroll.away ? <button type="button" className={`latest-message ${chatScroll.hasUnread ? 'has-unread' : ''}`} onClick={chatScroll.jumpToLatest}><Icon name="down" />{chatScroll.hasUnread ? '查看新回复' : '回到最新'}</button> : null}
+          <span className="sr-only" role="status">{chatScroll.announcement}</span>
+          <div className="composer-input"><textarea ref={composerInput} aria-label="消息" rows={1} placeholder={awaitingReceipt ? '正在确认这条消息…' : pending || page?.has_active_turn ? '可以先写下一个问题…' : '输入你的问题…'} value={composerValue} maxLength={8000}
+            disabled={busy || awaitingReceipt} onChange={e => updateDraft(e.target.value)} />
+            <button className="primary send-button" aria-label={busy ? '正在发送…' : '发送'} disabled={selected === missingSession || !page || !online || busy || page.has_active_turn || !!pending || !draft.trim()}>
+              <Icon name={busy ? 'more' : 'send'} /></button></div>
+          {pending && receipt === 'running' || page?.has_active_turn ? <p className="composer-hint">回复完成后可发送下一条</p> : null}
         </form>
       </section> : <section className="sessions-view" aria-label="会话列表">
         <button className="session-create" aria-label="新建会话" aria-busy={creating} disabled={!online || !approved || authorizationLost || busy || older} onClick={() => void createSession()}>

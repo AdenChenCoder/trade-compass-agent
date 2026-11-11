@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import time
+import threading
 
 root = Path(tempfile.mkdtemp(prefix="compass-ui-test-"))
 config = root / "config.yaml"
@@ -80,12 +81,21 @@ store.append(session, SessionMessageRecord(role="user", content="帮我整理最
 store.append(session, SessionMessageRecord(role="assistant", content="我们可以从需求变化、企业盈利和估值三个方面继续讨论。"))
 JsonNotificationStore(root / "data/notifications.jsonl").append(Notification(channel="scheduler:demo", title="收盘复盘已完成", message="今天的观察清单已经整理好。\n\n- 关注成交量变化\n- 对照原来的研究假设"))
 
+reply_release = threading.Event()
+long_reply = "## 先把问题分成三组\n\n" + "\n\n".join(
+    f"### {index + 1}. 核实研究假设\n\n记录已有证据、尚未确认的信息，以及下一步需要核实的来源。把观察和判断分开，再回看原来的问题。"
+    for index in range(12))
+
 class Loop:
     def run_turn(self, message, **kwargs):
         current = store.load(kwargs["session_id"])
         store.append(current, SessionMessageRecord(role="user", content=message))
-        time.sleep(2 if message == "slow-test" else 0.4)
-        answer = "已在电脑上的同一个会话收到：" + message
+        if message == "请整理我的研究清单":
+            reply_release.wait(timeout=30)
+            answer = long_reply
+        else:
+            time.sleep(2 if message == "slow-test" else 0.4)
+            answer = "已在电脑上的同一个会话收到：" + message
         store.append(current, SessionMessageRecord(role="assistant", content=answer))
         return TurnResponse(session_id=current.session_id, summary=answer, sections=[])
 agent_api._loop_for_session = lambda *args: Loop()
@@ -142,6 +152,10 @@ if pwa_mode or peer_mode:
     async def fixture_info(request):
         return JSONResponse({"spki": spki, "subscription": subscription, "payloads": payloads})
     app.router.routes.insert(0, Route("/test/pwa", fixture_info))
+    async def release_reply(request):
+        reply_release.set()
+        return JSONResponse({"released": True})
+    app.router.routes.insert(0, Route('/test/reply', release_reply, methods=['POST']))
     if pwa_mode:
         async def fixture_release(request):
             label = (await request.json()).get('release')

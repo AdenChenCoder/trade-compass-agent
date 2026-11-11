@@ -113,6 +113,15 @@ trading workflows. The existing coin mark remains the identity.
 - Conversation rows and task results use divided reading surfaces. Task status stays
   separate from the title and preview; full content remains available in the detail
   sheet. Assistant identity and user-message tint distinguish conversation roles.
+- After submission, a local message echo gives immediate feedback without writing
+  to the authoritative transcript cache. Only a receipt confirms acceptance. The
+  response position owns sending, waiting, uncertain and terminal feedback; offline
+  status never looks like ongoing generation. Retrying an uncertain send keeps its
+  original request ID. Once accepted, the composer can hold the next draft while
+  sending remains disabled until the current reply finishes.
+- New long replies land at their beginning. Reading earlier messages never triggers
+  an automatic jump; a labelled control offers the new reply or latest position.
+  Screen readers receive a concise arrival announcement, not a full transcript replay.
 
 ## Appearance preference
 

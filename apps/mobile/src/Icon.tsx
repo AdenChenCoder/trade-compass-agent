@@ -3,6 +3,8 @@ export function Icon({ name }: { name: keyof typeof paths }) {
 }
 
 const paths = {
+  down: <path d="M12 4v16m-6-6 6 6 6-6" />,
+  pause: <><path d="M9 7v10m6-10v10" /><circle cx="12" cy="12" r="9" /></>,
   settings: <><path d="m9 3 .7-1h4.6L15 3l.6 2 1.8 1 2.1-.4 2.3 4-.9 1.6v2L22 15l-2.3 4-2.3-.4-1.8 1-.6 2H9l-.6-2-1.8-1-2.1.4-2.3-4 1-1.7v-2L2 10l2.3-4 2.3.4 1.8-1L9 3Z" transform="translate(0 1) scale(.96)" /><circle cx="12" cy="12" r="3.2" /></>,
   compose: <><path d="M12 4H6a3 3 0 0 0-3 3v11a3 3 0 0 0 3 3h11a3 3 0 0 0 3-3v-6M15 4l5 5M10 14l-1 5 5-1 8-8a2.1 2.1 0 0 0-5-5l-7 9Z" /></>,
   palette: <><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1.4-3.4 1.8 1.8 0 0 1 1.3-3.1H18a3 3 0 0 0 3-3A9 9 0 0 0 12 3Z" /><path d="M7 10h.01M10 6.5h.01M15 7h.01M17 11h.01" strokeWidth="3" /></>,
