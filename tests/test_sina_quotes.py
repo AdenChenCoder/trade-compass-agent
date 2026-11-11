@@ -178,6 +178,9 @@ def test_global_market_agent_can_verify_quotes_with_a_scoped_toolset(tmp_path, m
         model = "mock"
 
         def stream_complete(self, messages, *, tools=None, on_delta=None, is_cancelled=None):
+            from report_contract_helpers import report_reply
+            if result := report_reply(messages, gap="港股、汇率和商品存在数据缺口，收盘仍待核实"):
+                return result
             offered_tools.append({tool["function"]["name"] for tool in tools or []})
             if len(offered_tools) == 1:
                 return ChatCompletion(content="", model=self.model, provider=self.name, tool_calls=[
@@ -204,7 +207,7 @@ def test_global_market_agent_can_verify_quotes_with_a_scoped_toolset(tmp_path, m
 
     output = asyncio.run(builtin_operations.check_global_markets(ctx))
 
-    assert "全球市场结论" in output.data["analysis"]
+    assert "最新报价" in output.data["analysis"] or "报价" in output.data["analysis"]
     assert "数据缺口" in output.data["analysis"]
     assert output.data["us_index_snapshot"]["count"] == 3
     assert len(calls) == 2

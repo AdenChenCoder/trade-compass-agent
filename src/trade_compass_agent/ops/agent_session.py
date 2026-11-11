@@ -70,6 +70,8 @@ class ScheduledAgentSession:
         run_id: str = "",
         attempt: int = 1,
         initial_portfolio: dict | None = None,
+        initial_evidence: list[tuple[str, str]] | None = None,
+        initial_findings: list[dict] | None = None,
     ) -> None:
         self.config = replace(
             config,
@@ -89,6 +91,9 @@ class ScheduledAgentSession:
         self.attempt = max(1, int(attempt))
         self.warnings: list[str] = []
         self.degraded = False
+        self.verification: dict = {}
+        self._initial_evidence = list(initial_evidence or [])
+        self._initial_findings = list(initial_findings or [])
         self._verify_report_grounding = job_id in {"close", "eod_review", "postmarket", "weekly"} or (
             job_id == "premarket" and str(step_id or "").startswith("agent_briefing")
         )
@@ -110,7 +115,7 @@ class ScheduledAgentSession:
         """
         from trade_compass_agent.runtime.exceptions import AgentUnavailableError
         from trade_compass_agent.data.network import drain_timeout_workers, run_with_timeout
-        from trade_compass_agent.runtime.loop import AgentLoop, TOOL_ROUND_LIMIT_MESSAGE
+        from trade_compass_agent.runtime.loop import AgentLoop
         from trade_compass_agent.ops.autonomous_trading import JOB_ID
         from trade_compass_agent.llm.providers import _request_cancelled, _request_deadline
         import threading
@@ -153,6 +158,9 @@ class ScheduledAgentSession:
                 agent.report_date = self.run_date.isoformat()
                 agent.verify_report_grounding = self._verify_report_grounding
                 agent.initial_portfolio = self.initial_portfolio
+                agent.initial_evidence = self._initial_evidence
+                agent.initial_findings = self._initial_findings
+                agent.report_run_id = self.run_id
                 if self.job_id == "morning_plan" and self.step_id == "agent_plan":
                     from trade_compass_agent.portfolio.planning import premarket_reference_date
                     reference_date = premarket_reference_date(self.run_date)
@@ -178,6 +186,7 @@ class ScheduledAgentSession:
                                           **turn_options)
                 self.warnings = list(getattr(response, "warnings", []) or [])
                 self.degraded = getattr(response, "degraded", False) is True
+                self.verification = dict(getattr(response, "verification", {}) or {})
                 if getattr(response, "interrupted", False) is True:
                     if time.monotonic() >= deadline:
                         raise TimeoutError(f"Scheduled agent {self.job_id} deadline reached")
@@ -188,8 +197,6 @@ class ScheduledAgentSession:
                 )
                 if not text:
                     raise AgentUnavailableError(f"Agent returned empty response for job {self.job_id}")
-                if text.startswith(TOOL_ROUND_LIMIT_MESSAGE):
-                    raise AgentUnavailableError(f"Agent reached tool round limit for job {self.job_id}")
                 return text
 
         try:
@@ -219,7 +226,10 @@ async def run_agent_step(
     step_id: str | None = None,
     tool_whitelist: set[str] | None = None,
 ) -> StepOutput:
-    """Shared Agent step executor. Agent failure = step failure = Job failure."""
+    """Keep report completeness separate from actual agent execution failure."""
+    from dataclasses import asdict
+    from trade_compass_agent.runtime.report_publication import upstream_evidence
+    evidence, findings = upstream_evidence(ctx.config.data_dir, ctx.upstream, ctx.run_id)
     session = ScheduledAgentSession(
         ctx.config,
         job_id=job_id,
@@ -229,14 +239,17 @@ async def run_agent_step(
         run_id=ctx.run_id,
         initial_portfolio=(ctx.upstream.get("portfolio_check", StepOutput.empty()).data
                            if job_id == "morning_plan" and step_id == "agent_plan" else None),
+        initial_evidence=[*ctx.report_evidence, *evidence],
+        initial_findings=[*ctx.report_findings, *(asdict(f) for f in findings)],
     )
     timeout = ctx.step_timeout_seconds or 1800
     try:
         text = await asyncio.to_thread(session.run, prompt, timeout=timeout)
     except Exception as exc:
         raise StepExecutionError(f"Agent 执行失败 ({job_id}): {exc}") from exc
-    return StepOutput(message="Agent 分析完成", data={"analysis": text,
-        "warnings": session.warnings, "degraded": session.degraded, "session_id": session.session_id})
+    return StepOutput(message="部分分析待核实" if session.degraded else "Agent 分析完成", data={"analysis": text,
+        "warnings": session.warnings, "degraded": session.degraded, "session_id": session.session_id,
+        "verification": session.verification})
 
 
 def _select_scheduler_response_text(summary: str | None, session_file: Path) -> str:

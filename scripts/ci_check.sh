@@ -31,6 +31,15 @@ fi
   tests/test_session_cold_start.py \
   tests/test_agent_simulation_flow.py \
   tests/test_report_tool_citations.py \
+  tests/test_report_contract.py \
+  tests/test_report_nested_receipts.py \
+  src/trade_compass_agent/runtime/tool_receipts.py \
+  tests/test_report_publication.py \
+  tests/test_report_incident_annotations.py \
+  tests/report_contract_helpers.py \
+  src/trade_compass_agent/runtime/report_contract.py \
+  src/trade_compass_agent/runtime/report_execution.py \
+  src/trade_compass_agent/runtime/report_publication.py \
   tests/test_tool_evidence_boundaries.py \
   tests/test_learning_archive.py \
   tests/test_review_nudge_persistence.py \

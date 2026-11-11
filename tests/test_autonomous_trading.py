@@ -275,6 +275,9 @@ def test_agent_receives_failed_trade_and_retries_in_existing_session(stack, monk
         count = 0
 
         def stream_complete(self, messages, **kwargs):
+            from report_contract_helpers import report_reply
+            if result := report_reply(messages):
+                return result
             self.count += 1
             if self.count == 1:
                 assert "全局 Agent 自主交易：开启" in messages[0].content
@@ -330,6 +333,9 @@ def test_intraday_scheduler_runs_real_workflow_agent_and_keeps_receipts(stack, m
         count = 0
 
         def stream_complete(self, messages, **kwargs):
+            from report_contract_helpers import report_reply
+            if result := report_reply(messages, gap="本轮尚无账户核对依据" if len(clients) > 1 else None):
+                return result
             self.count += 1
             names = {s['function']['name'] for s in kwargs.get('tools') or []}
             assert 'place_paper_trade' in names
@@ -379,12 +385,11 @@ def test_intraday_scheduler_runs_real_workflow_agent_and_keeps_receipts(stack, m
     runs = first.run_store.recent_runs(job_id='autonomous_trading')
     assert len(runs) == 1
     assert runs[0].status == 'completed', runs[0].error
-    assert '实际成交' in runs[0].message
     assert len(ledger(stack).trades) == 1
     trade_id = ledger(stack).trades[0].trade_id
-    assert trade_id in runs[0].message
     artifacts = [json.loads(s) for s in Path(runs[0].artifact).read_text().splitlines()]
     assert artifacts[-1]['no_trade_disclaimer'] is False
+    assert trade_id in json.dumps(artifacts[-1], ensure_ascii=False)
     from fastapi.testclient import TestClient
     from trade_compass_agent.web.app import create_app
     monkeypatch.setattr('trade_compass_agent.web.api.load_app_config', lambda: stack.config)

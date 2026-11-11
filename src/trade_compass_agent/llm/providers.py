@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 _request_deadline: ContextVar[float | None] = ContextVar("llm_request_deadline", default=None)
 _request_cancelled: ContextVar[Callable[[], bool] | None] = ContextVar("llm_request_cancelled", default=None)
 _maintenance_mode: ContextVar[bool] = ContextVar("llm_maintenance_mode", default=False)
+_maintenance_output_limit: ContextVar[int] = ContextVar("llm_maintenance_output_limit", default=4096)
 
 
 class LLMExecutionCancelled(BaseException):
@@ -81,13 +82,15 @@ def llm_request_deadline(deadline: float, *, is_cancelled: Callable[[], bool] | 
 
 
 @contextmanager
-def llm_maintenance_mode():
+def llm_maintenance_mode(*, max_tokens: int = 4096):
     """Use non-thinking generation only for factual compression or formatting."""
     token = _maintenance_mode.set(True)
+    limit_token = _maintenance_output_limit.set(max_tokens)
     try:
         yield
     finally:
         _maintenance_mode.reset(token)
+        _maintenance_output_limit.reset(limit_token)
 
 
 def _remaining_request_time() -> float | None:
@@ -653,7 +656,9 @@ class OpenAIChatClient:
             prompt_parts.append("<|im_start|>assistant\n<think>\n\n</think>\n\n")
             summary_kwargs = {
                 "model": self.model, "prompt": "".join(prompt_parts),
-                "temperature": 0.3, "max_tokens": 4096, "stream": True,
+                "temperature": 0.3,
+                "max_tokens": min(_maintenance_output_limit.get(), self.response_token_limit or 4096),
+                "stream": True,
                 "stream_options": {"include_usage": True},
                 "stop": ["<|im_end|>", "<|im_start|>"],
             }

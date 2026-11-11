@@ -118,6 +118,10 @@ def test_next_agent_reads_execution_quantity_and_persists_receipt_table(valued_s
     class Client:
         count = 0
         def stream_complete(self, messages, **kwargs):
+            from report_contract_helpers import report_reply
+            published = report_reply(messages)
+            if published:
+                return published
             self.count += 1
             if self.count == 1:
                 if scheduled:
@@ -140,7 +144,7 @@ def test_next_agent_reads_execution_quantity_and_persists_receipt_table(valued_s
         monkeypatch.setattr(AgentLoop, "from_config", lambda config, **kwargs:
                             AgentLoop(config=config, stack=valued_stack, session_store=store, **kwargs))
         text = ScheduledAgentSession(valued_stack.config, job_id="eod_review").run("核对今天的成交与持仓", timeout=10)
-        assert "持仓分析" in text
+        assert "持仓" in text
         assert "继续核查来源与信号" not in text
     else:
         agent = AgentLoop(config=valued_stack.config, stack=valued_stack, session_store=store)

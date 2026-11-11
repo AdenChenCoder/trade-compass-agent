@@ -104,6 +104,8 @@ function StepStatusDot({ status }: { status: string }) {
         ? "bg-blue-500 animate-pulse"
         : status === "failed" || status === "timed_out"
           ? "bg-red-500"
+          : status === "degraded"
+            ? "bg-amber-500"
           : "bg-gray-400";
   return <span className={`inline-block h-2 w-2 rounded-full ${color}`} />;
 }
@@ -115,6 +117,15 @@ function formatStepData(step: StepRun): string | null {
   // Agent analysis — the actual valuable content
   if (typeof data.analysis === "string" && data.analysis) {
     return data.analysis;
+  }
+
+  if (data.verification && typeof data.verification === "object") {
+    const verification = data.verification as { status?: string; findings?: Array<{ message?: string }> };
+    const messages = Array.isArray(verification.findings)
+      ? verification.findings.flatMap((finding) => typeof finding.message === "string" ? [finding.message] : [])
+      : [];
+    if (messages.length > 0) return `待核实事项：\n${[...new Set(messages)].map((message) => `- ${message}`).join("\n")}`;
+    if (verification.status === "complete") return "报告已完成核验。";
   }
 
   // Screening candidates

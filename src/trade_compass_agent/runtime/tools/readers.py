@@ -45,6 +45,11 @@ _MAX_WARNING_LENGTH = 300
 
 
 def run_reader_tool(name: str, **kwargs: Any) -> str:
+    from trade_compass_agent.runtime.tool_receipts import record_receipt
+    return record_receipt(name, _run_reader_tool(name, **kwargs))
+
+
+def _run_reader_tool(name: str, **kwargs: Any) -> str:
     reader_type = READER_TOOL_TYPES.get(name)
     if reader_type is None:
         return json.dumps({"error": f"unknown reader tool: {name}"}, ensure_ascii=False)

@@ -128,13 +128,16 @@ def test_cash_total_repair_receives_account_facts_without_replaying_tools(tmp_pa
             return ChatCompletion(
                 content="本轮仅查询。当前可操作资金：710000.00 元，未进行任何交易。"
             )
-        assert len(calls) == 3 and kwargs["tools"] is None
-        assert (
-            json.loads(messages[1].content)["portfolio_facts"]["total_available_cash"] == 709888.581
-        )
-        return ChatCompletion(
-            content="本轮仅查询，未进行任何交易。初始本金710000元，当前可操作资金：709888.58 元。"
-        )
+        assert kwargs["tools"] is None
+        payload = json.loads(messages[-1].content)
+        from report_contract_helpers import report_facts, report_reply
+        if "facts" in payload:
+            balances = [f for f in report_facts(payload) if f["metric"] == "available_cash"]
+            assert {f["account"] for f in balances} == {"short_stock", "mid_term", "etf_rotation"}
+            return ChatCompletion(content=json.dumps({"schema_version": 1, "items": [{
+                "id": "total", "type": "calculation", "section": "positions", "operation": "sum",
+                "refs": [f["id"] for f in balances]}]}))
+        return report_reply(messages)
 
     monkeypatch.setattr(
         loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=stream)
@@ -157,4 +160,5 @@ def test_cash_total_repair_receives_account_facts_without_replaying_tools(tmp_pa
         "只核对可用资金", session_id="scheduler-cash-total"
     )
     assert "709888.58" in result.summary and not report_issues(result.summary, facts())
-    assert tools == ["analyze_portfolio"] and len(calls) == 3
+    assert tools == ["analyze_portfolio"] and len(calls) == 4
+    assert result.verification["status"] == "complete"

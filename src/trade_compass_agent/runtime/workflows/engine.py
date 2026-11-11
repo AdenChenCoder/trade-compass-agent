@@ -447,13 +447,17 @@ def _execute_steps_once(
         result_output = _output_as_dict(result.output)
         result_data = result_output.get("data") if isinstance(result_output.get("data"), dict) else {}
         result_error = str(result_output.get("error") or result_data.get("error") or "")
+        verification = result_output.get("verification") or result_data.get("verification") or {}
         context.record(
             "builtin.step_finished",
             {
                 "step_id": step.id,
                 "warning_count": len(result.warnings),
-                "status": "failed" if result_error else "degraded" if result_data.get("degraded") or result_output.get("degraded") else "completed",
+                "status": ("failed" if verification.get("execution") == "failed" else
+                           "degraded" if verification.get("status") == "incomplete" else
+                           "failed" if result_error else "degraded" if result_data.get("degraded") or result_output.get("degraded") else "completed"),
                 **({"error": result_error} if result_error else {}),
+                **({"verification": verification} if verification else {}),
             },
         )
 
@@ -531,13 +535,15 @@ def _compose_workflow_output(
     warnings: list[str],
 ) -> dict[str, Any]:
     primary_step_id, primary = _primary_step_payload(manifest, outputs)
+    from trade_compass_agent.runtime.report_contract import combine_verifications, incomplete
+    verification = combine_verifications({key: _output_as_dict(value.output) for key, value in outputs.items()})
     primary = {key: value for key, value in primary.items() if key != "steps"}
     merged_warnings = [*warnings]
     if isinstance(primary.get("warnings"), list):
         merged_warnings.extend(str(item) for item in primary["warnings"])
     if primary.get("error"):
         merged_warnings.append(f"primary output step failed: {primary_step_id}: {primary['error']}")
-    degraded = bool(primary.get("error") or primary.get("degraded"))
+    degraded = bool(primary.get("error") or primary.get("degraded") or incomplete(verification))
     degraded_steps = []
     degradation_errors = []
     for result in outputs.values():
@@ -557,6 +563,7 @@ def _compose_workflow_output(
         "as_of": str(primary.get("as_of") or inputs.get("as_of") or ""),
         "primary_step_id": primary_step_id,
         "warnings": list(dict.fromkeys(merged_warnings)),
+        **({"verification": verification} if verification else {}),
         "no_trade_disclaimer": not manifest.risk_policy.get("executes_paper_trades", False),
         **({"degraded": True, "degraded_steps": degraded_steps,
             "primary_output_failed": bool(primary.get("primary_output_failed", primary.get("error")
@@ -808,7 +815,28 @@ def _run_step(
         if descriptor.category == "reader":
             output = run_reader_tool(tool_id, **args)
             return WorkflowStepResult(step_id=step.id, type=step.type, uses=step.uses, output=output)
-        output = ToolRegistry(stack).execute(tool_id, args)
+        from dataclasses import asdict
+        from trade_compass_agent.ops.job_definition import StepOutput
+        from trade_compass_agent.runtime.report_publication import upstream_evidence
+        from trade_compass_agent.runtime.tools.operations import workflow_report_evidence, workflow_report_findings
+        evidence = [(result.uses.removeprefix("tool:"),
+                          result.output if isinstance(result.output, str) else json.dumps(result.output, ensure_ascii=False))
+                         for key, result in outputs.items() if key in step.depends_on and result.type == "tool"]
+        findings = []
+        for key, result in outputs.items():
+            if key not in step.depends_on or result.type != "workflow":
+                continue
+            owned, rejected = upstream_evidence(data_dir, {key: StepOutput("", _output_as_dict(result.output))},
+                                                f"{parent_run_id}-{key}", trusted_tree=True)
+            evidence.extend(owned)
+            findings.extend(asdict(f) for f in rejected)
+        token = workflow_report_evidence.set(tuple(evidence))
+        finding_token = workflow_report_findings.set(tuple(findings))
+        try:
+            output = ToolRegistry(stack).execute(tool_id, args)
+        finally:
+            workflow_report_evidence.reset(token)
+            workflow_report_findings.reset(finding_token)
         decoded = _output_as_dict(output) or {}
         data = decoded.get("data") if isinstance(decoded.get("data"), dict) else {}
         warnings = tuple(str(w) for w in [*(decoded.get("warnings") or []), *(data.get("warnings") or [])])
@@ -847,6 +875,8 @@ def _with_metadata(
 ) -> dict[str, Any]:
     result = dict(output)
     result["run_id"] = str(result.get("run_id") or context.run_id)
+    if isinstance(result.get("verification"), dict) and "steps" in result["verification"]:
+        result["verification"] = {**result["verification"], "run_id": context.run_id}
     result.setdefault("artifact_id", _hash({"workflow_id": manifest.id, "run_id": context.run_id, "output": output}))
     result.setdefault("created_at", _utc_now())
     result["schema_version"] = 2
@@ -870,6 +900,7 @@ def _degraded_output(
     error: str,
     warnings: list[str],
 ) -> dict[str, Any]:
+    from trade_compass_agent.runtime.report_contract import Finding, verification_result
     degraded_warning = f"workflow degraded: {error}"
     merged_warnings = [*warnings, degraded_warning]
     return _with_metadata(
@@ -882,6 +913,9 @@ def _degraded_output(
             "warnings": merged_warnings,
             "no_trade_disclaimer": not manifest.risk_policy.get("executes_paper_trades", False),
             "degraded": True,
+            "error": error,
+            "verification": verification_result([Finding("execution", "workflow_failed", error)],
+                                                report="unavailable", execution="failed"),
         },
         context,
     )

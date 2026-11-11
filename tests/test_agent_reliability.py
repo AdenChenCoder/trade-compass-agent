@@ -106,16 +106,19 @@ def test_consumer_publishes_matching_fill_and_retracted_history_without_replayin
                        agent=AgentConfig(learning_enabled=False, llm_session_titles=False))
     draft = "此前记忆中「已卖出000001（trade_id=old-fake）」与当时账本不符。\n本轮已卖出000001共100股 trade_id=actual。"
     completions = [ChatCompletion(content="", tool_calls=[ToolCall(id="sell", name="place_paper_trade", arguments="{}")]),
-                   ChatCompletion(content=draft)]
+                   ChatCompletion(content=draft), ChatCompletion(content='{"schema_version":1,"items":[]}'),
+                   ChatCompletion(content='{"reviews":[],"coverage":{"complete":true,"missing":[]}}')]
     calls = []
     def execute(self, name, arguments):
         calls.append(name)
-        return encoded(name, status="executed", trade_id="actual", symbol="000001", side="sell", quantity=100)[1]
+        return encoded(name, status="executed", trade_id="actual", symbol="000001", side="sell", quantity=100,
+                       account="short_stock", price=10, timestamp="2026-11-10T14:00:00")[1]
     monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=lambda *args, **kwargs: completions.pop(0)))
     monkeypatch.setattr(loop, "shared_consolidation_worker", lambda **_: None)
     monkeypatch.setattr(ToolRegistry, "execute", execute)
     result = loop.AgentLoop.from_config(config).run_turn("核对本轮成交与旧记忆的矛盾", session_id="scheduler-execution-quote-test")
-    assert draft in result.summary and calls == ["place_paper_trade"]
+    assert "actual" in result.summary and "old-fake" not in result.summary and calls == ["place_paper_trade"]
+    assert not result.degraded and not completions
     assert not (config.data_dir / "paper_trades.jsonl").exists()
 
 
@@ -127,10 +130,13 @@ def test_report_repair_has_no_tools_and_never_publishes_rejected_draft(tmp_path,
         agent=AgentConfig(learning_enabled=False, llm_session_titles=False))
     requests = []
     completions = [ChatCompletion(content="", tool_calls=[ToolCall(id=str(i), name=name, arguments="{}") for i, (name, _) in enumerate(FACTS)]),
-        ChatCompletion(content="601928（新华传媒）现价高于MA5。"),
-        ChatCompletion(content="601928（凤凰传媒）现价低于MA5，高于MA20，本轮未成交。")]
+        ChatCompletion(content="601928（新华传媒）现价高于MA5。")]
     def stream(*args, on_delta=None, **kwargs):
         requests.append(kwargs)
+        from report_contract_helpers import report_reply
+        published = report_reply(args[0])
+        if published:
+            return published
         result = completions.pop(0)
         if on_delta and result.content:
             on_delta(result.content)
@@ -144,8 +150,8 @@ def test_report_repair_has_no_tools_and_never_publishes_rejected_draft(tmp_path,
     assert "凤凰传媒" in result.summary and "新华传媒" not in result.summary
     assert requests[-1]["tools"] is None
     assert not any("新华传媒" in e.data.get("text", "") for e in events if e.event == "delta")
-    diagnostic = next((config.data_dir / "report_diagnostics").glob("*.json"))
-    assert "新华传媒" in json.loads(diagnostic.read_text())["draft"]
+    diagnostic = next((config.data_dir / "report_artifacts").glob("*.json"))
+    assert json.loads(diagnostic.read_text())["document"]["schema_version"] == 1
     assert diagnostic.stat().st_mode & 0o777 == 0o600
     assert not (config.data_dir / "paper_trades.jsonl").exists()
 

@@ -10,6 +10,7 @@ from trade_compass_agent.config import AppConfig
 from trade_compass_agent.llm.providers import LLMExecutionCancelled, check_execution_active
 from trade_compass_agent.runtime.exceptions import TurnInterruptedError
 from trade_compass_agent.runtime.types import TurnEvent
+from trade_compass_agent.runtime.tool_receipts import capture_receipts
 from trade_compass_agent.runtime.market_stack import MarketStack
 from trade_compass_agent.runtime.specialists.assets import load_specialist_profiles
 from trade_compass_agent.runtime.specialists.run import run_specialist
@@ -88,17 +89,18 @@ def _run_sequential(
                     data=_specialist_event_data(name, task),
                 )
             )
-        try:
-            output = run_specialist(
-                stack, name, task, config=app_config, on_event=on_event,
-            )
-        except TurnInterruptedError:
-            raise
-        except Exception as exc:
-            check_execution_active()
-            output = json.dumps(
-                {"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False
-            )
+        with capture_receipts() as receipts:
+            try:
+                output = run_specialist(
+                    stack, name, task, config=app_config, on_event=on_event,
+                )
+            except TurnInterruptedError:
+                raise
+            except Exception as exc:
+                check_execution_active()
+                output = json.dumps(
+                    {"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False
+                )
         check_execution_active()
         if not isinstance(output, str) or not output.strip():
             output = json.dumps({"error": "专家未返回研究结果"}, ensure_ascii=False)
@@ -114,7 +116,7 @@ def _run_sequential(
                     },
                 )
             )
-        results.append({"specialist": name, "task": task, "output": output})
+        results.append({"specialist": name, "task": task, "output": output, "tool_receipts": receipts})
     return json.dumps({"results": results}, ensure_ascii=False)
 
 
@@ -154,17 +156,18 @@ def _run_parallel(
         task_text = str(item.get("task") or item.get("message") or "")
         if not name:
             return idx, {"error": "missing specialist name", "task": task_text}
-        try:
-            output = run_specialist(
-                stack, name, task_text, config=app_config, on_event=_safe_emit,
-            )
-        except TurnInterruptedError:
-            raise
-        except Exception as exc:
-            check_execution_active()
-            output = json.dumps(
-                {"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False
-            )
+        with capture_receipts() as receipts:
+            try:
+                output = run_specialist(
+                    stack, name, task_text, config=app_config, on_event=_safe_emit,
+                )
+            except TurnInterruptedError:
+                raise
+            except Exception as exc:
+                check_execution_active()
+                output = json.dumps(
+                    {"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False
+                )
         check_execution_active()
         if not isinstance(output, str) or not output.strip():
             output = json.dumps({"error": "专家未返回研究结果"}, ensure_ascii=False)
@@ -179,7 +182,7 @@ def _run_parallel(
                 },
             )
         )
-        return idx, {"specialist": name, "task": task_text, "output": output}
+        return idx, {"specialist": name, "task": task_text, "output": output, "tool_receipts": receipts}
 
     with ThreadPoolExecutor(max_workers=min(len(tasks), 4)) as pool:
         futures = {pool.submit(copy_context().run, _invoke, i, item): i for i, item in enumerate(tasks)}
