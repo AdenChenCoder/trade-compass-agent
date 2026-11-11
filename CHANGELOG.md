@@ -4,7 +4,7 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
-## [0.5.4] - 2026-11-11
+## [0.5.5] - 2026-11-11
 
 ### Changed
 
