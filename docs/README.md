@@ -9,6 +9,8 @@ Choose the shortest path for what you want to accomplish.
 | Use or automate the command line | [CLI reference](cli.md) |
 | Understand, create, and package Skills | [Skills](skills.md) |
 | Understand the runtime and repository boundaries | [Architecture](architecture.md) |
+| Change reports, research, trading, memory or Agent behavior | [Engineering contracts by domain](engineering-contracts.md) |
+| Isolate development, validate model reports, upgrade or recover the stable service | [Development and production](development-production.md) |
 | Review data flows and security boundaries | [Privacy](../PRIVACY.md) / [Threat model](threat-model.md) |
 | Build, verify, and publish a release | [Releasing](releasing.md) |
 | Prepare the private repository for public visibility | [Public release checklist](public-release-checklist.md) |
