@@ -4,7 +4,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from report_contract_helpers import report_reply
+from report_contract_helpers import report_facts, report_reply
 from trade_compass_agent.config import AgentConfig, AppConfig
 from trade_compass_agent.llm.providers import ChatCompletion, ToolCall
 from trade_compass_agent.ops.agent_session import SCHEDULER_OUTPUT_RULES
@@ -13,8 +13,9 @@ from trade_compass_agent.ops.run_store import SqliteRunStore
 
 
 @pytest.mark.parametrize("missing", [False, True])
-def test_job_coverage_uses_business_task_and_preserves_real_gaps(tmp_path, monkeypatch, missing):
-    task = "列出原始收盘价。" + ("还需比较营收。" if missing else "")
+@pytest.mark.parametrize("derived", [False, True])
+def test_job_coverage_uses_business_task_and_preserves_real_gaps(tmp_path, monkeypatch, missing, derived):
+    task = "列出原始收盘价。" + ("计算价格变动并说明方向。" if derived else "") + ("还需比较营收。" if missing else "")
     execution_prompts, publication_tasks = [], []
 
     class Client:
@@ -25,11 +26,23 @@ def test_job_coverage_uses_business_task_and_preserves_real_gaps(tmp_path, monke
             if result:
                 payload = json.loads(messages[-1].content)
                 publication_tasks.append(payload["task"])
+                if derived and "schema" in payload:
+                    document = json.loads(result.content)
+                    refs = [f["id"] for f in report_facts(payload) if f["metric"] == "close"]
+                    document["items"].extend([
+                        {"id": "direction", "type": "inference", "section": "assessment", "text": "两日收盘价上升。", "refs": ["change"]},
+                        {"id": "change", "type": "calculation", "section": "market", "operation": "change_pct", "refs": refs},
+                    ])
+                    result = ChatCompletion(content=json.dumps(document))
                 if "inferences" in payload:
                     # A reviewer must not receive execution/presentation policy
                     # as an additional business requirement, regardless of wording.
                     polluted = SCHEDULER_OUTPUT_RULES in payload["task"]
-                    result = ChatCompletion(content=json.dumps({"reviews": [], "coverage": {
+                    if derived:
+                        assert payload["inferences"][0]["calculations"][0]["result"].startswith("13.0303")
+                        assert len(payload["inferences"][0]["evidence"]) == 2
+                    result = ChatCompletion(content=json.dumps({"reviews": [
+                        {"id": "direction", "supported": True, "reason": ""}] if derived else [], "coverage": {
                         "complete": not (polluted or missing),
                         "missing": ["缺少营收依据"] if missing else ["执行提示混入业务任务"] if polluted else [],
                     }}))
@@ -50,7 +63,7 @@ def test_job_coverage_uses_business_task_and_preserves_real_gaps(tmp_path, monke
         calls.append(name)
         assert name == "get_bars"
         return json.dumps({"symbol": "002415", "name": "海康威视", "bars": [
-            {"timestamp": "2026-11-10", "close": 7.46}]})
+            {"timestamp": "2026-11-09", "close": 6.60}, {"timestamp": "2026-11-10", "close": 7.46}]})
 
     monkeypatch.setattr("trade_compass_agent.runtime.tools.registry.ToolRegistry.execute", execute)
     monkeypatch.setattr("trade_compass_agent.ops.delivery.DeliveryRouter.deliver", lambda *_: None)
@@ -73,6 +86,8 @@ def test_job_coverage_uses_business_task_and_preserves_real_gaps(tmp_path, monke
     assert verification["execution"] == "completed"
     assert verification["status"] == ("incomplete" if missing else "complete")
     assert "7.46" in detail["analysis"]
+    if derived:
+        assert "13.03%" in detail["analysis"] and "研判：两日收盘价上升。" in detail["analysis"]
     assert bool(verification["findings"]) is missing
     if missing:
         assert run.error == "缺少营收依据"

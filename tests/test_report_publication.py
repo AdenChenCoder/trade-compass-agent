@@ -239,3 +239,79 @@ def test_semantic_review_receives_complete_owned_receipt_not_only_selected_field
         return '{"reviews":[{"id":"judgment","supported":true,"reason":""}],"coverage":{"complete":true,"missing":[]}}'
     result = publish_report(task='核对MACD状态', draft='', tool_results=[('compute_macd',raw)], run_scope='full-source', call=call)
     assert result.verification['status'] == 'complete' and 'MACD出现金叉' in result.text
+
+
+@pytest.mark.parametrize("inference_first", [False, True])
+@pytest.mark.parametrize("supported", [False, True])
+def test_judgment_can_use_verified_calculation_without_losing_original_evidence(inference_first, supported):
+    receipts = [("get_bars", json.dumps({"symbol": "002415", "bars": [
+        {"timestamp": "2026-11-10", "close": 34.83}, {"timestamp": "2026-11-11", "close": 34.25}]}))]
+    calls = []
+
+    def call(system, user):
+        payload = json.loads(user)
+        calls.append(payload)
+        if "schema" in payload:
+            document = compose(payload)
+            item = {"id": "direction", "type": "inference", "section": "assessment",
+                    "text": "收盘价较前一交易日下降。", "refs": ["change"]}
+            document["items"].insert(0 if inference_first else 1, item)
+            return json.dumps(document)
+        judgment = payload["inferences"][0]
+        calculation = judgment["calculations"][0]
+        assert calculation["id"] == "change" and calculation["operation"] == "change_pct"
+        assert calculation["result"].startswith("-1.665") and calculation["unit"] == "%"
+        assert calculation["refs"] == [f["id"] for f in judgment["evidence"]]
+        assert [f["value"] for f in judgment["evidence"]] == ["34.83", "34.25"]
+        assert all(f["observed_at"] and f["pointer"] and f["receipt_id"] for f in judgment["evidence"])
+        assert payload["receipts"][0]["result"] == receipts[0][1]
+        return json.dumps({"reviews": [{"id": "direction", "supported": supported,
+                                      "reason": "" if supported else "不能据此推断后续方向"}],
+                           "coverage": {"complete": True, "missing": []}})
+
+    result = publish_report(task="比较两日价格变化", draft="", tool_results=receipts, run_scope="derived", call=call)
+    assert len(calls) == 2 and "-1.67%" in result.text
+    assert (result.verification["status"] == "complete") is supported
+    assert ("研判：收盘价" in result.text) is supported
+    assert result.artifact["calculations"]["change"]["result"].startswith("-1.665")
+
+
+@pytest.mark.parametrize("bad_reference", ["unknown", "self", "cycle", "other_symbol", "condition", "collision", "duplicate"])
+def test_calculation_reference_never_launders_invalid_evidence(bad_reference):
+    reviews = []
+
+    def call(system, user):
+        payload = json.loads(user)
+        if "schema" in payload:
+            document = compose(payload)
+            calc = document["items"][0]
+            calc["refs"] = calc["refs"][:2]
+            target = calc["id"]
+            if bad_reference == "unknown":
+                target = "unowned-calculation"
+            elif bad_reference == "self":
+                calc["refs"][0] = target
+            elif bad_reference == "cycle":
+                document["items"].append({**calc, "id": "second", "refs": [target, calc["refs"][1]]})
+                calc["refs"][0] = "second"
+            elif bad_reference == "other_symbol":
+                calc["refs"][1] = next(f["id"] for f in report_facts(payload) if f.get("subject") == "000001" and f["metric"] == "close")
+            elif bad_reference == "condition":
+                target = "planned"
+                document["items"].append({"id": target, "section": "plan", "type": "condition", "ref": calc["refs"][0],
+                                          "comparison": "lt", "threshold": "6", "unit": "元/股", "action": "review"})
+            elif bad_reference == "collision":
+                calc["id"] = calc["refs"][0]
+                target = calc["id"]
+            else:
+                document["items"].append(dict(calc))
+            document["items"].append({"id": "judgment", "type": "inference", "section": "assessment",
+                                      "text": "未经支持的结论", "refs": [target]})
+            return json.dumps(document)
+        reviews.extend(payload["inferences"])
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+
+    other = ("get_bars", json.dumps({"symbol": "000001", "bars": [{"timestamp": "2026-11-11", "close": 8}]}))
+    result = publish_report(task="比较", draft="", tool_results=[*RECEIPTS, other], run_scope="invalid-derived", call=call)
+    assert result.verification["status"] == "incomplete"
+    assert not reviews and "研判：未经支持的结论" not in result.text

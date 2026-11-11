@@ -4,6 +4,15 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-11-11
+
+### Fixed
+
+- Allow report judgments to reference validated calculations with their original
+  operand values, dates, units and tool receipts. Resolve references independently
+  of report order while rejecting unknown, cyclic, ambiguous and incompatible
+  evidence; semantic review still decides whether a calculation supports a claim.
+
 ## [0.5.5] - 2026-11-11
 
 ### Changed
