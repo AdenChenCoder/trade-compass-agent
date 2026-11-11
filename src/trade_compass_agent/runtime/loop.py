@@ -408,6 +408,7 @@ class AgentLoop:
         attachments: list[dict] | None = None,
         turn_id: str | None = None,
         is_cancelled: Callable[[], bool] | None = None,
+        report_task: str | None = None,
     ) -> TurnResponse:
         from contextlib import nullcontext
         from trade_compass_agent.llm.native_session import native_session_guard
@@ -427,6 +428,7 @@ class AgentLoop:
                 attachments=attachments,
                 turn_id=turn_id,
                 is_cancelled=is_cancelled,
+                report_task=report_task,
             )
 
     def _run_turn(
@@ -437,6 +439,7 @@ class AgentLoop:
         attachments: list[dict] | None = None,
         turn_id: str | None = None,
         is_cancelled: Callable[[], bool] | None = None,
+        report_task: str | None = None,
     ) -> TurnResponse:
         from trade_compass_agent.llm.native import NativeAgentClient
 
@@ -927,7 +930,8 @@ class AgentLoop:
                     check_execution_active()
 
                 publication = publish_report(
-                    task=message, draft=final_text, tool_results=report_evidence,
+                    task=message if report_task is None else report_task,
+                    draft=final_text, tool_results=report_evidence,
                     run_scope=f"{session.session_id}:{turn_id or uuid4().hex}",
                     run_id=self.report_run_id, current_tool_results=tool_calls_log,
                     call=review_call, check_active=publication_active,

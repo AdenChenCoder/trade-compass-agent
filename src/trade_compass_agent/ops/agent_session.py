@@ -183,6 +183,9 @@ class ScheduledAgentSession:
                 dated_prompt = (f"本次任务日期：{self.run_date.isoformat()}（{self.config.scheduler.timezone}）。"
                                 "本任务的今天及本周均以此日期为基准，工具取回时间不改变归档日。\n\n" + prompt)
                 response = agent.run_turn(wrap_scheduler_prompt(dated_prompt), session_id=self.session_id,
+                                          # Coverage belongs to the dated business task;
+                                          # execution policy is not report content.
+                                          report_task=dated_prompt,
                                           **turn_options)
                 self.warnings = list(getattr(response, "warnings", []) or [])
                 self.degraded = getattr(response, "degraded", False) is True
