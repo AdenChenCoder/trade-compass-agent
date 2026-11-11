@@ -53,7 +53,7 @@ class Condition(Item):
 class Inference(Item):
     type: Literal["inference"]
     text: str = Field(min_length=1, max_length=2500)
-    refs: list[str] = Field(min_length=1, max_length=20, description="仅引用事实目录id，不引用报告条目id")
+    refs: list[str] = Field(min_length=1, max_length=20, description="引用事实目录id或本报告中calculation条目的id；条件和其他研判不是证据")
 
 
 class Gap(Item):
@@ -440,6 +440,33 @@ def calculate(item: Calculation, catalog: EvidenceCatalog) -> tuple[str, dict]:
         "operation": item.operation, "refs": item.refs, "result": str(result), "unit": unit}
 
 
+def inference_evidence(item: Inference, document: ReportDocument, catalog: EvidenceCatalog):
+    """Resolve judgments to source facts and runtime-verified calculations.
+
+    Calculations keep their raw-fact-only operand contract. Revalidating them
+    here makes resolution independent of document order and rejects cycles,
+    invalid operands and scope conflicts before semantic review.
+    """
+    items = {entry.id: entry for entry in document.items}
+    facts, calculations = {}, {}
+    for ref in item.refs:
+        if ref in catalog.facts:
+            if ref in items:
+                raise ValueError("报告条目ID与事实ID冲突，引用含义不明确")
+            fact = catalog.resolve(ref)
+            facts[fact.id] = fact
+        elif isinstance(items.get(ref), Calculation):
+            calculation = items[ref]
+            _, trace = calculate(calculation, catalog)
+            calculations[ref] = {"id": ref, "operation": calculation.operation, **trace}
+            for operand in calculation.refs:
+                fact = catalog.resolve(operand)
+                facts[fact.id] = fact
+        else:
+            raise ValueError("研判引用不属于本轮事实或已验证计算")
+    return list(facts.values()), list(calculations.values())
+
+
 def validate_document(document: ReportDocument, catalog: EvidenceCatalog):
     findings, rendered, traces = [], {}, {}
     ids = [item.id for item in document.items]
@@ -447,6 +474,8 @@ def validate_document(document: ReportDocument, catalog: EvidenceCatalog):
         return [Finding("report", "duplicate_item", "报告条目重复，未完成核验")], {}, {}
     for item in document.items:
         try:
+            if item.id in catalog.facts:
+                raise ValueError("报告条目ID与事实ID冲突，引用含义不明确")
             if isinstance(item, Observation):
                 rendered[item.id] = catalog.resolve(item.ref).display()
             elif isinstance(item, Calculation):
@@ -465,8 +494,7 @@ def validate_document(document: ReportDocument, catalog: EvidenceCatalog):
                 rendered[item.id] = (f"条件计划：若{fact.subject}的{fact.label}{op}{threshold}{item.unit}，{action}。"
                                      f"该条件不是已发生事实或已执行指令。参考：{fact.display()}")
             elif isinstance(item, Inference):
-                for ref in item.refs:
-                    catalog.resolve(ref)
+                inference_evidence(item, document, catalog)
             else:
                 findings.append(Finding("data", "declared_gap", item.text, item.id))
                 rendered[item.id] = "待核实：" + item.text
