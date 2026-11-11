@@ -35,6 +35,19 @@ flowchart LR
 - `memory_dir` owns durable knowledge, rules, and runtime-created Skills.
 - Backups and exports are recovery artifacts, not replacements for live state.
 
+## Package asset boundaries
+
+- Source Skills under `.trade-compass/skills/` are packaged as
+  `trade_compass_agent/builtin_skills/` in a wheel.
+- Source and packaged configuration defaults are separate files; changes must
+  preserve equivalent behavior through both supported entry points.
+- Editable and release installations resolve frontend assets differently. Follow
+  [development and production](development-production.md) when serving a preview
+  or verifying the installed UI.
+- Source distributions exclude workspace `node_modules` independently of Git
+  ignore discovery. Check archive contents and rebuild the wheel from the source
+  distribution before accepting package changes.
+
 ## Extension boundaries
 
 - Add reusable workflow guidance as a Skill.
