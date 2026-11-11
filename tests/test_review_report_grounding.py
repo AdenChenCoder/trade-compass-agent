@@ -1,55 +1,31 @@
 import json
-from types import SimpleNamespace
+from report_contract_helpers import report_facts
 
 import pytest
 
-from trade_compass_agent.config import AgentConfig, AppConfig, LLMConfig
-from trade_compass_agent.llm.providers import ChatCompletion, ToolCall
-from trade_compass_agent.runtime import loop
 from trade_compass_agent.runtime.exceptions import AgentTurnError
 from trade_compass_agent.runtime.report_quality import report_issues, review_report_evidence
-from trade_compass_agent.runtime.tools.registry import ToolRegistry
+from trade_compass_agent.runtime.report_publication import publish_report
 
 
 @pytest.mark.parametrize("recover", [True, False])
-def test_report_is_verified_before_publication_and_correction_never_replays_tools(tmp_path, monkeypatch, recover):
-    wrong = "601928 持仓成本8.79，明日分红0.1元。"
-    correct = "601928 持仓成本9.21。公告仅有标题，分红金额和日期待核实。"
-    review = json.dumps({"valid": False, "issues": [{"quote": "持仓成本8.79", "reason": "持仓avg_cost为9.21，筹码均价不能作为持仓成本"}]})
-    completions = [ChatCompletion(content=None, tool_calls=[ToolCall("read", "analyze_portfolio", "{}")]),
-        ChatCompletion(content=wrong), ChatCompletion(content=review),
-        ChatCompletion(content=correct if recover else wrong),
-        ChatCompletion(content=json.dumps({"valid": True, "issues": []}) if recover else review)]
-    if not recover:
-        completions.extend([ChatCompletion(content=wrong), ChatCompletion(content=review)])
-    requests, tools = [], []
-
-    def stream(messages, **kwargs):
-        requests.append((messages, kwargs))
-        return completions.pop(0)
-
-    monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=stream))
-    monkeypatch.setattr(loop, "shared_consolidation_worker", lambda **_: None)
-
-    def execute(self, name, args):
-        tools.append(name)
-        return json.dumps({"positions": [{"symbol": "601928", "avg_cost": 9.21, "price_is_fresh": True,
-                                          "last_price": 8.92}], "recent_trades": []})
-
-    monkeypatch.setattr(ToolRegistry, "execute", execute)
-    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory", data_provider="sample",
-                       llm=LLMConfig(provider="disabled"), agent=AgentConfig(learning_enabled=False, llm_session_titles=False))
-    agent = loop.AgentLoop.from_config(config, verify_report_grounding=True)
-    if recover:
-        result = agent.run_turn("核对持仓并写收盘报告", session_id="scheduler-grounding")
-        assert correct in result.summary and wrong not in result.summary
-    else:
-        with pytest.raises(AgentTurnError, match="未能核实"):
-            agent.run_turn("核对持仓并写收盘报告", session_id="scheduler-grounding")
-    assert tools == ["analyze_portfolio"] and not completions
-    assert all(request[1].get("tools") is None for request in requests[-3:])
-    public = (config.data_dir / "agent_sessions/scheduler-grounding.jsonl").read_text()
-    assert wrong not in public
+def test_report_is_verified_before_publication_and_correction_never_replays_tools(recover):
+    receipts = [("analyze_portfolio", json.dumps({"positions": [{"symbol": "601928", "avg_cost": 9.21}]}))]
+    calls = []
+    def call(system, user):
+        payload = json.loads(user)
+        calls.append(payload)
+        if "inferences" in payload:
+            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        cost = next(f for f in report_facts(payload) if f["metric"] == "avg_cost")
+        ref = cost["id"] if recover and len(calls) > 1 else "invented-cost"
+        return json.dumps({"schema_version": 1, "items": [
+            {"id": "cost", "type": "fact", "section": "positions", "ref": ref}]})
+    result = publish_report(task="核对持仓成本", draft="成本8.79", tool_results=receipts, run_scope="run", call=call)
+    assert (result.verification["status"] == "complete") is recover
+    assert ("9.21" in result.text) is recover
+    assert "8.79" not in result.text and len(calls) <= 4
+    assert result.artifact["receipts"][0]["result"] == receipts[0][1]
 
 
 @pytest.mark.parametrize("raw", ['{"valid":true,"issues":[{}]}', 'not json', '{"valid":false,"issues":[]}',
@@ -60,93 +36,69 @@ def test_invalid_review_cannot_mark_a_report_verified(raw):
 
 
 @pytest.mark.parametrize("recover", [True, False])
-def test_model_agreement_cannot_override_wrong_price_distance(tmp_path, monkeypatch, recover):
-    wrong = "601928止损位8.50距当前价仍有3.4%空间。"
-    correct = "601928当前价8.92，止损计划阈值8.50；本轮未成交。"
-    verdict = ChatCompletion(content='{"valid":true,"issues":[]}')
-    replies = [ChatCompletion(content=None, tool_calls=[ToolCall("read", "analyze_portfolio", "{}")]),
-               ChatCompletion(content=wrong), verdict,
-               ChatCompletion(content=correct if recover else wrong), verdict]
-    if not recover:
-        replies.extend([ChatCompletion(content=wrong), verdict])
-    monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=lambda *a, **k: replies.pop(0)))
-    monkeypatch.setattr(loop, "shared_consolidation_worker", lambda **_: None)
-    monkeypatch.setattr(ToolRegistry, "execute", lambda *a: json.dumps({"positions": [{"symbol": "601928",
-                         "last_price": 8.92, "price_is_fresh": True}]}))
-    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory", data_provider="sample",
-                       llm=LLMConfig(provider="disabled"), agent=AgentConfig(learning_enabled=False, llm_session_titles=False))
-    agent = loop.AgentLoop.from_config(config, verify_report_grounding=True)
-    if recover:
-        assert correct in agent.run_turn("核对价格距离", session_id="distance-report").summary
-    else:
-        with pytest.raises(AgentTurnError, match="未能核实"):
-            agent.run_turn("核对价格距离", session_id="distance-report")
-    assert wrong not in (config.data_dir / "agent_sessions/distance-report.jsonl").read_text()
+def test_model_agreement_cannot_override_wrong_price_distance(recover):
+    receipts = [("analyze_portfolio", json.dumps({"positions": [{"symbol": "601928", "last_price": 8.92, "price_is_fresh": True}]}))]
+    attempts = []
+    def call(system, user):
+        payload = json.loads(user)
+        if "inferences" in payload:
+            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        attempts.append(payload)
+        fact = next(f for f in report_facts(payload) if f["metric"] == "last_price")
+        item = {"id": "stop", "type": "condition", "section": "plan", "ref": fact["id"],
+                "threshold": "8.50", "unit": "元/股", "comparison": "lt", "action": "review"}
+        if not recover or len(attempts) == 1:
+            item["distance_pct"] = 3.4  # Undeclared arithmetic cannot pass through a plan.
+        return json.dumps({"schema_version": 1, "items": [item]})
+    result = publish_report(task="保留止损计划阈值", draft="价格距离3.4%", tool_results=receipts, run_scope="run", call=call)
+    assert (result.verification["status"] == "complete") is recover
+    assert "3.4%" not in result.text
+    assert ("8.50" in result.text) is recover
 
 
-def test_later_discovered_fact_error_gets_one_more_readonly_correction(tmp_path, monkeypatch):
-    first = "601928成本8.79；高股息精选概念今日跌0.74%。"
-    second = "601928成本9.21；高股息精选概念今日跌0.74%。"
-    final = "601928成本9.21；10月20日旧新闻中的概念跌幅不能当成今日行情。"
-    replies = [ChatCompletion(content=None, tool_calls=[ToolCall("read", "analyze_portfolio", "{}")]),
-               ChatCompletion(content=first),
-               ChatCompletion(content='{"valid":false,"issues":[{"line":1,"reason":"成本应为9.21"}]}'),
-               ChatCompletion(content=second),
-               ChatCompletion(content='{"valid":false,"issues":[{"line":1,"reason":"新闻日期是10月20日"}]}'),
-               ChatCompletion(content=final), ChatCompletion(content='{"valid":true,"issues":[]}')]
-    tool_reads = []
-    def execute(*args):
-        tool_reads.append(args[1])
-        return json.dumps({"positions": [{"symbol": "601928", "avg_cost": 9.21}]})
-    monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=lambda *a, **k: replies.pop(0)))
-    monkeypatch.setattr(loop, "shared_consolidation_worker", lambda **_: None)
-    monkeypatch.setattr(ToolRegistry, "execute", execute)
-    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory", data_provider="sample",
-                       llm=LLMConfig(provider="disabled"), agent=AgentConfig(learning_enabled=False, llm_session_titles=False))
-    result = loop.AgentLoop.from_config(config, verify_report_grounding=True).run_turn("核对持仓与新闻", session_id="scheduler-two-facts")
-    assert result.summary.startswith(final) and tool_reads == ["analyze_portfolio"] and not replies
-    saved = (config.data_dir / "agent_sessions/scheduler-two-facts.jsonl").read_text()
-    assert first not in saved and second not in saved
+def test_later_discovered_fact_error_gets_one_more_readonly_correction():
+    receipts = [("analyze_portfolio", json.dumps({"positions": [{"symbol": "601928", "avg_cost": 9.21}]}))]
+    attempts = []
+    def call(system, user):
+        payload = json.loads(user)
+        if "inferences" in payload:
+            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        attempts.append(payload)
+        cost = next(f for f in report_facts(payload) if f["metric"] == "avg_cost")
+        items = [{"id": "cost", "type": "fact", "section": "positions",
+                  "ref": cost["id"] if len(attempts) > 1 else "invented-cost"}]
+        if len(attempts) < 3:
+            items.append({"id": "news", "type": "fact", "section": "market", "ref": "unfetched-news"})
+        else:
+            items.append({"id": "news", "type": "gap", "section": "gaps", "text": "未取得对应日期的新闻原文"})
+        return json.dumps({"schema_version": 1, "items": items})
+    result = publish_report(task="核对持仓和当日新闻", draft="旧新闻当作今日跌幅", tool_results=receipts, run_scope="run", call=call)
+    assert len(attempts) == 3
+    assert "9.21" in result.text and "未取得对应日期" in result.text
+    assert result.verification["status"] == "incomplete"
 
 
-def test_correction_rechecks_whole_source_claim_and_remembers_earlier_errors(tmp_path, monkeypatch):
-    first = "新闻明确PE119.59，成交量2699万手。"
-    second = "新闻明确PE119.59，成交量2698.65万股。"
-    final = "新闻记载PE96.44；本轮基本面工具返回PE119.59。日线成交量26986525股。"
-    replies = [
-        ChatCompletion(content=None, tool_calls=[ToolCall("read", "get_fundamentals", '{"symbol":"003021"}')]),
-        ChatCompletion(content=first),
-        ChatCompletion(content='{"valid":false,"issues":[{"line":1,"reason":"成交量单位错误，回执为26986525股"}]}'),
-        ChatCompletion(content=second),
-        ChatCompletion(content='{"valid":false,"issues":[{"line":1,"reason":"新闻PE为96.44，119.59来自基本面工具，来源归属错误"}]}'),
-        ChatCompletion(content=final), ChatCompletion(content='{"valid":true,"issues":[]}'),
-    ]
-    correction_payloads, tools = [], []
-
-    def stream(messages, **kwargs):
-        if messages[0].content.startswith("只校正报告"):
-            assert kwargs.get("tools") is None
-            correction_payloads.append(json.loads(messages[-1].content))
-        return replies.pop(0)
-
-    def execute(*args):
-        tools.append(args[1])
-        return '{"symbol":"003021","pe":119.59}'
-
-    monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=stream))
-    monkeypatch.setattr(loop, "shared_consolidation_worker", lambda **_: None)
-    monkeypatch.setattr(ToolRegistry, "execute", execute)
-    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory", data_provider="sample",
-                       llm=LLMConfig(provider="disabled"), agent=AgentConfig(learning_enabled=False, llm_session_titles=False))
-    result = loop.AgentLoop.from_config(config, verify_report_grounding=True).run_turn(
-        "新闻PE96.44；日线成交量26986525股。核对基本面后写报告。", session_id="source-correction")
-    assert result.summary.startswith(final) and tools == ["get_fundamentals"] and not replies
-    assert len(correction_payloads) == 2
-    last = correction_payloads[-1]
-    assert any("成交量单位错误" in issue for issue in last["previous_issues"])
-    assert any("来源归属错误" in issue for issue in last["issues"])
-    public = (config.data_dir / "agent_sessions/source-correction.jsonl").read_text()
-    assert final in public and first not in public and second not in public
+def test_correction_rechecks_whole_source_claim_and_remembers_earlier_errors():
+    receipts = [("get_fundamentals", '{"symbol":"003021","pe_ttm":119.59}'),
+                ("fetch_url", '{"url":"https://example.org/news","content":"历史新闻记载PE96.44"}')]
+    attempts = []
+    def call(system, user):
+        payload = json.loads(user)
+        if "inferences" in payload:
+            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        attempts.append(payload)
+        refs = {f["metric"]: f["id"] for f in report_facts(payload)}
+        items = [{"id": "current", "type": "fact", "section": "market", "ref": refs["pe_ttm"]},
+                 {"id": "historical", "type": "fact", "section": "market", "ref": "missing" if len(attempts) == 1 else refs["content"]}]
+        if len(attempts) == 2:
+            items[0]["ref"] = refs["content"]  # A repair may not replace an already valid observation.
+        return json.dumps({"schema_version": 1, "items": items})
+    result = publish_report(task="比较来源", draft="新闻PE119.59", tool_results=receipts, run_scope="run", call=call)
+    assert len(attempts) == 2
+    assert result.verification["status"] == "complete"
+    assert result.artifact["document"]["items"][0]["ref"] != result.artifact["document"]["items"][1]["ref"]
+    assert "119.59" in result.text and "历史新闻记载PE96.44" in result.text
+    assert "新闻PE119.59" not in result.text
 
 
 def test_different_dated_source_values_can_be_reported_with_explicit_attribution():

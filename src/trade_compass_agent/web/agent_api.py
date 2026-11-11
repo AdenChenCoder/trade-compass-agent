@@ -139,6 +139,7 @@ class TurnResponsePayload(BaseModel):
     interrupted: bool = False
     warnings: list[str] = Field(default_factory=list)
     degraded: bool = False
+    verification: dict = Field(default_factory=dict)
 
 
 class ControlRequest(BaseModel):
@@ -212,6 +213,7 @@ class SessionMessagePayload(BaseModel):
     timestamp: str | None = None
     sections: list[SessionSectionPayload] | None = None
     tool_calls: list[ToolCallPayload] | None = None
+    verification: dict | None = None
 
 
 class SessionDetailPayload(BaseModel):
@@ -374,6 +376,7 @@ def execute_agent_turn(body: TurnRequest, *, reserved_turn_id=None, reserved_can
         interrupted=result.interrupted,
         warnings=list(getattr(result, "warnings", []) or []),
         degraded=bool(getattr(result, "degraded", False)),
+        verification=dict(getattr(result, "verification", {}) or {}),
         sections=[
             TurnSectionPayload(
                 title=s.title,
@@ -579,6 +582,7 @@ def _session_message_payload(message) -> SessionMessagePayload:
         timestamp=message.timestamp.isoformat() if message.timestamp else None,
         sections=sections or None,
         tool_calls=tool_calls or None,
+        verification=getattr(message, "verification", None),
     )
 
 

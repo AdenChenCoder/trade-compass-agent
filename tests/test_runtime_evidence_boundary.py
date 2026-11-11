@@ -220,34 +220,36 @@ def test_flow_guard_checks_publication_without_replaying_tools(tmp_path, monkeyp
     from trade_compass_agent.config import AgentConfig, AppConfig, LLMConfig
     from trade_compass_agent.llm.providers import ChatCompletion, ToolCall
     from trade_compass_agent.runtime import loop
-    from trade_compass_agent.runtime.exceptions import AgentTurnError
     from trade_compass_agent.runtime.tools.registry import ToolRegistry
+    from report_contract_helpers import report_reply
 
     wrong = "行业资金净流入：电子信息162亿 [get_fund_flow]。当前没有新成交。"
-    correct = "行业资金净流入：金融行业18.44亿 [get_fund_flow]。快照时点未知，当前没有新成交。"
-    valid = ChatCompletion(content='{"valid":true,"issues":[]}')
-    replies = [ChatCompletion(content=None, tool_calls=[ToolCall("flow", "get_fund_flow", '{"category":"industry"}')]),
-               ChatCompletion(content=wrong), valid, ChatCompletion(content=correct if recover else wrong), valid]
-    if not recover:
-        replies.extend([ChatCompletion(content=wrong), valid])
-    reads = []
+    reads, calls = [], []
+
+    def stream(messages, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return ChatCompletion(content=None, tool_calls=[ToolCall("flow", "get_fund_flow", '{"category":"industry"}')])
+        if len(calls) == 2:
+            return ChatCompletion(content=wrong)
+        assert kwargs.get("tools") is None
+        return report_reply(messages, metrics={"net_inflow_yi"}, invalid_ref=not recover)
 
     def execute(self, name, args):
         reads.append(name)
         return FLOW[0][1]
 
-    monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=lambda *a, **k: replies.pop(0)))
+    monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=stream))
     monkeypatch.setattr(loop, "shared_consolidation_worker", lambda **_: None)
     monkeypatch.setattr(ToolRegistry, "execute", execute)
     config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory", data_provider="sample",
                        llm=LLMConfig(provider="disabled"), agent=AgentConfig(learning_enabled=False, llm_session_titles=False))
     agent = loop.AgentLoop.from_config(config, verify_report_grounding=True, report_date="2026-10-26")
+    result = agent.run_turn("复核行业资金快照，不把未知时点当作当前行情", session_id="scheduler-flow-check")
+    assert result.degraded is not recover
     if recover:
-        assert correct in agent.run_turn("复核当前行业资金", session_id="scheduler-flow-check").summary
-    else:
-        with pytest.raises(AgentTurnError, match="未能核实"):
-            agent.run_turn("复核当前行业资金", session_id="scheduler-flow-check")
-    assert reads == ["get_fund_flow"] and not replies
+        assert "18.44亿元" in result.summary and "时点未提供" in result.summary
+    assert reads == ["get_fund_flow"]
     assert wrong not in (config.data_dir / "agent_sessions/scheduler-flow-check.jsonl").read_text()
 
 

@@ -205,6 +205,9 @@ def test_agent_consumer_saves_only_the_corrected_memory(tmp_path, monkeypatch, a
     original = ToolRegistry.execute
 
     def stream(messages, **kwargs):
+        from report_contract_helpers import report_reply
+        if result := report_reply(messages):
+            return result
         calls.append(kwargs)
         if len(calls) == 1:
             return ChatCompletion(content=None, tool_calls=[ToolCall("read", "get_bars", '{"symbol":"601928"}')])

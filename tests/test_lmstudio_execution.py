@@ -411,8 +411,9 @@ def test_autonomous_hallucinated_fill_is_not_published_or_learned(tmp_path, monk
     monkeypatch.setattr(loop, "curate_turn_insight", lambda **kwargs: learned.append(kwargs))
     config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory", data_provider="sample")
     AutonomousTradingStore(config.data_dir).set_enabled(True)
-    with pytest.raises(AgentTurnError, match="缺少本轮成交回执"):
-        ScheduledAgentSession(config, job_id="autonomous_trading").run("检查并执行交易", timeout=5)
+    scheduled = ScheduledAgentSession(config, job_id="autonomous_trading")
+    scheduled.run("检查并执行交易", timeout=5)
+    assert scheduled.degraded and scheduled.verification["report"] == "unavailable"
     assert not learned and not (config.data_dir / "paper_trades.jsonl").exists()
     session = next((config.data_dir / "agent_sessions").glob("*.jsonl"))
     assert claim not in session.read_text()
@@ -432,6 +433,20 @@ def test_reasoning_only_finish_uses_one_readonly_finalization_without_replaying_
 
     def handler(request):
         requests.append(request)
+        from report_contract_helpers import report_reply
+        payload = json.loads(request.content)
+        messages = [SimpleNamespace(content=message.get("content", "")) for message in payload.get("messages", [])]
+        if "prompt" in payload:
+            assert payload["max_tokens"] == (8192 if model.startswith("qwen3.5") else 16384)
+            user_json = payload["prompt"].split("<|im_start|>user\n", 1)[1].split("<|im_end|>", 1)[0]
+            messages = [SimpleNamespace(content=user_json)]
+        publication = report_reply(messages) if messages else None
+        if publication:
+            if "prompt" in payload:
+                body = 'data: ' + json.dumps({"choices": [{"text": publication.content, "finish_reason": "stop"}]}) + '\n\ndata: [DONE]\n\n'
+                return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+            return httpx.Response(200, text=_sse({"index": 0, "delta": {"content": publication.content}, "finish_reason": "stop"}),
+                                  headers={"content-type": "text/event-stream"})
         if len(requests) == 1:
             body = _sse({"index": 0, "delta": {"tool_calls": [{"index": 0, "id": "order", "type": "function",
                 "function": {"name": "place_paper_trade", "arguments": json.dumps({"symbol": "000001", "side": "buy",
@@ -449,7 +464,7 @@ def test_reasoning_only_finish_uses_one_readonly_finalization_without_replaying_
         assert name == "place_paper_trade"
         orders.append(args)
         return json.dumps({"status": "executed", "trade_id": "actual-receipt", "symbol": "000001",
-                           "quantity": 100, "price": 10, "account": "short_stock", "side": "buy"})
+                           "quantity": 100, "price": 10, "account": "short_stock", "side": "buy", "timestamp": "2026-11-10T10:00:00+08:00"})
 
     monkeypatch.setattr("trade_compass_agent.llm.providers._usage_http_client",
                         lambda: httpx.Client(transport=httpx.MockTransport(handler)))
@@ -460,8 +475,9 @@ def test_reasoning_only_finish_uses_one_readonly_finalization_without_replaying_
     AutonomousTradingStore(config.data_dir).set_enabled(True)
     reply = ScheduledAgentSession(config, job_id="autonomous_trading").run("买入000001100股", timeout=5)
     assert len(orders) == 1 and "actual-receipt" in reply
-    assert [r.url.path for r in requests] == ["/v1/chat/completions"] * 3
-    finalization = json.loads(requests[-1].content)
+    assert [r.url.path for r in requests] == ["/v1/chat/completions"] * 3 + ["/v1/completions", "/v1/chat/completions"]
+    finalization = json.loads(requests[2].content)
+    assert all("tools" not in json.loads(request.content) for request in requests[2:])
     final_messages = json.dumps(finalization["messages"])
     assert "tools" not in finalization and "actual-receipt" in final_messages
     assert "private reasoning" not in final_messages and "private" not in reply

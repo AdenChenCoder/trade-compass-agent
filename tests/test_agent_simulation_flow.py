@@ -71,6 +71,9 @@ def test_scheduled_simulated_task_uses_real_tools_ledger_and_recoverable_archive
             self.index = 0
 
         def stream_complete(self, messages, **kw):
+            from report_contract_helpers import report_reply
+            if result := report_reply(messages, metrics={"total_available_cash"}, inference=archive):
+                return result
             if messages[-1].role == "tool":
                 receipts.append(json.loads(messages[-1].content))
             if self.index == len(steps):
@@ -84,6 +87,9 @@ def test_scheduled_simulated_task_uses_real_tools_ledger_and_recoverable_archive
             pass
 
         def run_agent(self, messages, *, execute_tool, **kw):
+            from report_contract_helpers import report_reply
+            if result := report_reply(messages, metrics={"total_available_cash"}, inference=archive):
+                return result
             for index in range(len(steps)):
                 receipts.append(json.loads(execute_tool(arguments(index))))
             return ChatCompletion(content="本次仅为固定行情与模拟决策的隔离演练，交易及归档结果以回执为准。")

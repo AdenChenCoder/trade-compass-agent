@@ -77,6 +77,9 @@ class StepContext:
     step_timeout_seconds: int | None = None
     job_id: str = ""
     run_id: str = ""
+    # Runtime-owned reads. This field is never decoded from tool arguments.
+    report_evidence: list[tuple[str, str]] = field(default_factory=list)
+    report_findings: list[dict] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

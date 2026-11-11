@@ -113,7 +113,10 @@ def test_scheduled_plan_publishes_reference_or_visible_gap(tmp_path, monkeypatch
     monkeypatch.setattr(loop, "shared_consolidation_worker", lambda **_: None)
     replies = [ChatCompletion(content=None, tool_calls=[ToolCall("read", "analyze_portfolio", "{}")]),
                ChatCompletion(content="003021盘前参考2026-10-23收盘价91.73，非实时报价。" if has_reference else "持仓报价存在数据缺口。")]
-    monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=lambda *a, **k: replies.pop(0)))
+    def stream(messages, **kwargs):
+        from report_contract_helpers import report_reply
+        return report_reply(messages, gap=None if has_reference else "持仓报价存在数据缺口") or replies.pop(0)
+    monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=stream))
     real_from_config = loop.AgentLoop.from_config
 
     def make_agent(*args, **kwargs):
@@ -126,7 +129,7 @@ def test_scheduled_plan_publishes_reference_or_visible_gap(tmp_path, monkeypatch
                                     tool_whitelist={"analyze_portfolio"})
     text = session.run("生成盘前计划", timeout=20)
     assert session.degraded is (not has_reference)
-    assert ("2026-10-23" in text) is has_reference
+    assert ("盘前计划参考2026-10-23收盘价91.73" in text) is has_reference
     assert "交易前须重新核验" in text if has_reference else "持仓价格未更新" in text
     saved = (config.data_dir / "agent_sessions" / f"{session.session_id}.jsonl").read_text()
     assert text in [json.loads(line).get("content") for line in saved.splitlines()]
@@ -145,9 +148,12 @@ def test_workflow_plan_checks_upstream_even_without_another_tool_read(tmp_path, 
     snapshot = json.loads(registry.execute("analyze_portfolio", {}))
     monkeypatch.setattr("trade_compass_agent.portfolio.planning.premarket_reference_date", lambda day: PREVIOUS)
     monkeypatch.setattr(loop, "shared_consolidation_worker", lambda **_: None)
-    monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(
-        stream_complete=lambda *a, **k: ChatCompletion(content="盘前观察计划。")))
-    ctx = StepContext(config, DAY, upstream={"portfolio_check": StepOutput(message="持仓", data=snapshot)})
+    def stream(messages, **kwargs):
+        from report_contract_helpers import report_reply
+        return report_reply(messages, gap=None if has_reference else "持仓报价存在数据缺口") or ChatCompletion(content="盘前观察计划。")
+    monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=stream))
+    ctx = StepContext(config, DAY, upstream={"portfolio_check": StepOutput(message="持仓", data=snapshot)},
+                      report_evidence=[("builtin.check_positions", json.dumps({"data": snapshot}))])
     result = asyncio.run(run_agent_step(ctx, "盘前计划", "morning_plan", step_id="agent_plan", tool_whitelist=set()))
     assert result.data["degraded"] is (not has_reference)
     assert "2026-10-23" in result.data["analysis"] if has_reference else "持仓价格未更新" in result.data["analysis"]

@@ -49,6 +49,8 @@ def test_final_report_and_saved_history_label_rejection_truthfully(tmp_path, mon
         ChatCompletion(
             content="本轮卖出未成交。工具确认当日买入受T+1限制，持仓与资金均未改变。下次执行前须核对可卖数量，本轮不重复下单，也不把历史买入视为新成交。"
         ),
+        ChatCompletion(content='{"schema_version":1,"items":[]}'),
+        ChatCompletion(content='{"reviews":[],"coverage":{"complete":true,"missing":[]}}'),
     ]
     monkeypatch.setattr(
         loop,
@@ -70,8 +72,8 @@ def test_final_report_and_saved_history_label_rejection_truthfully(tmp_path, mon
     )
     agent = loop.AgentLoop.from_config(config)
     result = agent.run_turn("尝试卖出当日刚买入的100股", session_id="scheduler-rejection-report")
-    assert reason in result.summary and "未成交记录" in result.summary
+    assert reason in result.summary and "本次未成交" in result.summary
     assert "暂不可用" not in result.summary and "数据可用性" not in result.summary
     assert not result.degraded
     saved = "\n".join(p.read_text() for p in config.data_dir.rglob("*.jsonl"))
-    assert "未成交记录" in saved and "暂不可用" not in saved
+    assert "本次未成交" in saved and "暂不可用" not in saved

@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextvars import ContextVar
 from datetime import date
 from typing import Any
 
 from trade_compass_agent.config import AppConfig
 from trade_compass_agent.ops.job_definition import StepContext, StepOutput
 
+# Set only by the workflow engine from actual dependency outputs. Tool arguments
+# and model-provided upstream summaries cannot populate this channel.
+workflow_report_evidence: ContextVar[tuple] = ContextVar("workflow_report_evidence", default=())
+workflow_report_findings: ContextVar[tuple] = ContextVar("workflow_report_findings", default=())
 
 _OPERATIONS: dict[str, str] = {
     "builtin.agent_autonomous_trading": "agent_autonomous_trading",
@@ -85,6 +90,8 @@ def tool_run_builtin_operation(config: AppConfig, name: str, args: dict[str, Any
         step_timeout_seconds=_parse_optional_int(args.get("step_timeout_seconds")),
         job_id=str(args.get("job_id") or ""),
         run_id=str(args.get("run_id") or ""),
+        report_evidence=list(workflow_report_evidence.get()),
+        report_findings=list(workflow_report_findings.get()),
     )
     from trade_compass_agent.llm.usage import llm_usage_context
 
