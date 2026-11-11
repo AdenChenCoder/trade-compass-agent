@@ -24,6 +24,15 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
   and reopening. Uncertain sends retain their original request ID for explicit
   retries, without adding duplicate messages to computer history.
 
+## [0.5.4] - 2026-11-11
+
+### Fixed
+
+- Keep scheduled business requirements separate from execution and presentation
+  instructions during report verification. Complete reports no longer degrade
+  because scheduler formatting rules are counted as missing analysis; genuine
+  evidence gaps still remain visible and incomplete.
+
 ## [0.5.3] - 2026-11-11
 
 ### Fixed
