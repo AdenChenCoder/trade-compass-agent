@@ -4,6 +4,26 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-11-11
+
+### Changed
+
+- Rename the phone connection destination to Settings and redesign device status,
+  appearance previews, conversations, task messages and bottom navigation. Keep
+  all four palettes, existing pairing, history and notification preferences.
+- Show submitted messages immediately and consolidate sending, waiting and
+  recovery feedback beside the reply. Once accepted, let users prepare their next
+  draft without sending it until the current reply finishes.
+- Open long replies at their beginning, preserve the reading position in earlier
+  history, and offer explicit navigation to new replies. Respect reduced motion,
+  keyboard space and narrow screens.
+
+### Fixed
+
+- Preserve a new draft that repeats the previous question through status updates
+  and reopening. Uncertain sends retain their original request ID for explicit
+  retries, without adding duplicate messages to computer history.
+
 ## [0.5.3] - 2026-11-11
 
 ### Fixed
