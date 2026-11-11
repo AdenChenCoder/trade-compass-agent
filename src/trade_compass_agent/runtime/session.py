@@ -27,6 +27,7 @@ class SessionMessageRecord:
     tool_calls: list[dict] = field(default_factory=list)
     autonomous_trading_enabled: bool = False
     image_paths: list[str] = field(default_factory=list)
+    verification: dict | None = None
 
     def to_chat_message(self) -> ChatMessage:
         return ChatMessage(
@@ -120,6 +121,8 @@ class SessionStore:
             record["autonomous_trading_enabled"] = True
         if message.image_paths:
             record["image_paths"] = message.image_paths
+        if message.verification:
+            record["verification"] = message.verification
         return record
 
     def _write_records(
@@ -186,6 +189,7 @@ class SessionStore:
                     tool_calls=raw.get("tool_calls") or [],
                     autonomous_trading_enabled=raw.get("autonomous_trading_enabled") is True,
                     image_paths=raw.get("image_paths") or [],
+                    verification=raw.get("verification") if isinstance(raw.get("verification"), dict) else None,
                 )
             )
         return AgentSession(
@@ -256,6 +260,7 @@ class SessionStore:
                             tool_calls=raw.get("tool_calls") or [],
                             autonomous_trading_enabled=raw.get("autonomous_trading_enabled") is True,
                             image_paths=raw.get("image_paths") or [],
+                            verification=raw.get("verification") if isinstance(raw.get("verification"), dict) else None,
                         )
                     )
                 total_messages += 1
@@ -304,6 +309,7 @@ class SessionStore:
                     tool_calls=raw.get("tool_calls") or [],
                     autonomous_trading_enabled=raw.get("autonomous_trading_enabled") is True,
                     image_paths=raw.get("image_paths") or [],
+                    verification=raw.get("verification") if isinstance(raw.get("verification"), dict) else None,
                 )
             )
         return messages

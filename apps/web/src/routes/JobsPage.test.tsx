@@ -10,6 +10,27 @@ let view: HTMLDivElement; let root: Root; let client: QueryClient;
 const settle = async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 15)); }); };
 async function click(selector: string) { await act(async () => view.querySelector<HTMLButtonElement>(selector)!.click()); await settle(); }
 afterEach(async () => { await act(async () => root?.unmount()); view?.remove(); client?.clear(); vi.resetAllMocks(); });
+it("shows a partial report's concrete gap without exposing verification internals", async () => {
+  const run = { id: "partial", job_id: "close", status: "degraded" as const, started_at: "2026-11-10T15:10:00Z", ok: false, message: "部分分析未完成" };
+  vi.mocked(api.fetchJobs).mockResolvedValue([]);
+  vi.mocked(api.fetchCustomJobs).mockResolvedValue([]);
+  vi.mocked(api.fetchJobRuns).mockResolvedValue([run]);
+  vi.mocked(api.fetchSchedulerConfig).mockResolvedValue({ enabled: false, timezone: "Asia/Shanghai", premarket_time: "08:50", morning_plan_time: "09:15", close_time: "15:10", eod_review_time: "15:30", postmarket_time: "16:30", weekly_day: "sat", weekly_time: "10:00" });
+  vi.mocked(api.fetchJobRunDetail).mockResolvedValue({ ...run, step_runs: [{ id: "s", step_id: "report", status: "degraded", data: {
+    verification: { status: "incomplete", execution: "completed", report: "partial", artifact_id: "private-reference", findings: [{ code: "required_content_missing", message: "持仓逻辑尚未评估" }] },
+  } }] });
+  view = document.createElement("div"); document.body.append(view); root = createRoot(view);
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  await act(async () => root.render(<QueryClientProvider client={client}><JobsPage /></QueryClientProvider>)); await settle();
+  await click('[role="tab"][id$="-history"]');
+  await click('.run-disclosure');
+  await click('[aria-label="步骤 report"]');
+  expect(view.textContent).toContain('持仓逻辑尚未评估');
+  expect(view.textContent).not.toContain('private-reference');
+  expect(view.textContent).not.toContain('required_content_missing');
+  expect(view.textContent).not.toContain('Agent 执行失败');
+  expect(api.runJob).not.toHaveBeenCalled();
+});
 it("opens run and step details without executing a job, and retries a failed detail read", async () => {
   const run = { id: "run-1", job_id: "premarket", status: "failed" as const, started_at: "2026-10-20T08:00:00Z", ok: false, message: "研究未完成", error: "数据不完整" };
   vi.mocked(api.fetchJobs).mockResolvedValue([{ id: "premarket", name: "盘前扫描", cadence: "trading_day 08:50", enabled: true, delivery_channels: ["web_log"] }]);

@@ -191,6 +191,7 @@ class JobExecutor:
                 "run_id": output.get("run_id"),
                 "artifact_id": output.get("artifact_id"),
                 "warnings": output.get("warnings", []),
+                "verification": output.get("verification", {}),
                 "trace_path": str(self.config.data_dir / "workflow_runs" / run.id / "trace.jsonl"),
                 "schedule_binding": {
                     "job_id": job.id,

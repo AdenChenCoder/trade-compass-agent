@@ -124,35 +124,39 @@ def test_historical_price_guard_is_preserved_through_report_publication(tmp_path
     from trade_compass_agent.config import AgentConfig, AppConfig, LLMConfig
     from trade_compass_agent.llm.providers import ChatCompletion, ToolCall
     from trade_compass_agent.runtime import loop
-    from trade_compass_agent.runtime.exceptions import AgentTurnError
     from trade_compass_agent.runtime.tools.registry import ToolRegistry
+    from report_contract_helpers import report_reply
 
     wrong = "003021在10/23建仓，当日最高98.01。"
-    correct = "003021在10/23建仓，当日最高91.73；今日最高98.01。get_bars(003021)为核对来源。"
-    valid = ChatCompletion(content='{"valid":true,"issues":[]}')
-    replies = [ChatCompletion(content=None, tool_calls=[ToolCall("bars", "get_bars", '{"symbol":"003021"}')]),
-               ChatCompletion(content=wrong), valid,
-               ChatCompletion(content=correct if recover else wrong), valid]
-    if not recover:
-        replies.extend([ChatCompletion(content=wrong), valid])
-    reads = []
+    reads, calls = [], []
+
+    def stream(messages, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return ChatCompletion(content=None, tool_calls=[ToolCall("bars", "get_bars", '{"symbol":"003021"}')])
+        if len(calls) == 2:
+            return ChatCompletion(content=wrong)
+        assert kwargs.get("tools") is None
+        return report_reply(messages, metrics={"high"}, invalid_ref=not recover)
 
     def execute(self, name, args):
         reads.append(name)
         return evidence()[1][1]
 
-    monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=lambda *a, **k: replies.pop(0)))
+    monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=stream))
     monkeypatch.setattr(loop, "shared_consolidation_worker", lambda **_: None)
     monkeypatch.setattr(ToolRegistry, "execute", execute)
     config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory", data_provider="sample",
                        llm=LLMConfig(provider="disabled"), agent=AgentConfig(learning_enabled=False, llm_session_titles=False))
     agent = loop.AgentLoop.from_config(config, verify_report_grounding=True, report_date="2026-10-26")
+    result = agent.run_turn("核对历史和今日价格", session_id="scheduler-date-scope")
+    assert result.degraded is not recover
+    assert "最高价 98.01" in result.summary and "2026-10-26" in result.summary
     if recover:
-        assert correct in agent.run_turn("核对历史和今日价格", session_id="scheduler-date-scope").summary
+        assert "最高价 91.73" in result.summary and "2026-10-23" in result.summary
     else:
-        with pytest.raises(AgentTurnError, match="未能核实"):
-            agent.run_turn("核对历史和今日价格", session_id="scheduler-date-scope")
-    assert reads == ["get_bars"] and not replies
+        assert "最高价 91.73" not in result.summary
+    assert reads == ["get_bars"]
     public = (config.data_dir / "agent_sessions/scheduler-date-scope.jsonl").read_text()
     assert wrong not in public
 
@@ -165,7 +169,6 @@ def test_report_correction_receives_the_same_settlements_without_replaying_tools
 
     reads = []
     wrong = "601928可用现金合计0元；已结算净亏损303.71元。"
-    correct = "601928已结算净亏损303.71元；全部账户可用现金合计100元。"
     calls = []
 
     def stream(messages, **kwargs):
@@ -174,19 +177,22 @@ def test_report_correction_receives_the_same_settlements_without_replaying_tools
             return ChatCompletion(content=None, tool_calls=[ToolCall("read", "analyze_portfolio", "{}")])
         if len(calls) == 2:
             return ChatCompletion(content=wrong)
-        payload = json.loads(messages[1].content)
-        if "report_lines" in payload:
-            assert payload["verified_fifo_settlements"]["covered_totals"][0]["pnl"] == -303.71
-            if payload["report"] == wrong:
-                return ChatCompletion(content='{"valid":false,"issues":[{"line":1,"reason":"可用现金合计应为100"}]}')
-            return ChatCompletion(content='{"valid":true,"issues":[]}')
+        from report_contract_helpers import report_facts, report_reply
+        payload = json.loads(messages[-1].content)
+        if "facts" in payload:
+            settlements = [f for f in report_facts(payload) if f["metric"] == "pnl"]
+            from decimal import Decimal
+            assert sum(Decimal(f["value"]) for f in settlements) == Decimal("-303.71")
+            assert all("fifo_after_entry_and_exit_fees" in f["scope"] for f in settlements)
         assert kwargs.get("tools") is None
-        assert payload["settlement_facts"]["covered_totals"][0]["pnl"] == -303.71
-        return ChatCompletion(content=correct)
+        return report_reply(messages, metrics={"pnl", "available_cash"})
 
     def execute(self, name, args):
         reads.append(name)
-        return json.dumps({**settled_portfolio(), "positions": [],
+        portfolio = settled_portfolio()
+        for row in portfolio["recent_closed_trades"]:
+            row["pnl_basis"] = "fifo_after_entry_and_exit_fees"
+        return json.dumps({**portfolio, "positions": [],
                            "account_balances": [{"id": "short_stock", "available_cash": 100}]})
 
     monkeypatch.setattr(loop, "create_chat_client", lambda *_: SimpleNamespace(stream_complete=stream))
@@ -195,4 +201,7 @@ def test_report_correction_receives_the_same_settlements_without_replaying_tools
     config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory", data_provider="sample",
                        llm=LLMConfig(provider="disabled"), agent=AgentConfig(learning_enabled=False, llm_session_titles=False))
     result = loop.AgentLoop.from_config(config, verify_report_grounding=True).run_turn("核对净结算与现金", session_id="scheduler-settlement")
-    assert correct in result.summary and wrong not in result.summary and reads == ["analyze_portfolio"]
+    assert "-150.06元" in result.summary and "-153.65元" in result.summary
+    assert "可用现金 100元" in result.summary and "已扣分摊买卖费用" in result.summary
+    assert result.verification["status"] == "complete"
+    assert wrong not in result.summary and reads == ["analyze_portfolio"]

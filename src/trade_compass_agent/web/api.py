@@ -1340,6 +1340,11 @@ def get_run_detail(run_id: str):
                     item["status"] = str(data.get("status") or "completed")
                     item["finished_at"] = event.get("recorded_at")
                     item["output"] = str(data.get("error") or "completed")
+                    if isinstance(data.get("verification"), dict):
+                        item["data"] = {**(item.get("data") or {}), "verification": data["verification"]}
+                        if data["verification"].get("status") == "incomplete" and not data.get("error"):
+                            messages = [row["message"] for row in data["verification"].get("findings", [])]
+                            item["output"] = "；".join(dict.fromkeys(messages)) or "部分结果待核实"
                     if data.get("error"):
                         item["error"] = str(data.get("error"))
                     if item.get("started_at") is None:
@@ -1372,7 +1377,9 @@ def get_run_detail(run_id: str):
             {
                 "id": sr.id,
                 "step_id": sr.step_id,
-                "status": sr.status,
+                "status": ("degraded" if sr.status == "completed" and
+                           ((_parse_data(sr.data_json) or {}).get("verification") or {}).get("status") == "incomplete"
+                           else sr.status),
                 "started_at": sr.started_at.isoformat() if sr.started_at else None,
                 "finished_at": sr.finished_at.isoformat() if sr.finished_at else None,
                 "output": sr.output,

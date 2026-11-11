@@ -9,6 +9,7 @@ ScheduledAgentSession through the shared agent-session runner.
 
 from __future__ import annotations
 
+
 import asyncio
 import json
 import logging
@@ -209,6 +210,7 @@ async def check_global_markets(ctx: StepContext) -> StepOutput:
     from trade_compass_agent.runtime.tools.search import tool_sina_realtime_quote
 
     snapshot = await asyncio.to_thread(tool_sina_realtime_quote, symbols="gb_dji,gb_ixic,gb_inx")
+    ctx.report_evidence.append(("sina_realtime_quote", snapshot))
     prompt = (
         f"今天是 {ctx.date.isoformat()}，请分析全球市场对今日 A 股的影响：\n"
         "1. 美股三大指数最近一个已完成交易日的收盘情况（注明美东交易日期）\n"
@@ -1310,7 +1312,9 @@ def _review_execution_context(ctx: StepContext, *, days: int) -> dict:
 
 
 def _review_execution_section(ctx: StepContext, *, days: int) -> str:
-    return ("## 任务执行记录\n" + json.dumps(_review_execution_context(ctx, days=days), ensure_ascii=False) + "\n"
+    ledger = json.dumps(_review_execution_context(ctx, days=days), ensure_ascii=False)
+    ctx.report_evidence.append(("task_run_ledger", ledger))
+    return ("## 任务执行记录\n" + ledger + "\n"
             "任务总数及状态计数以 total_runs、status_counts、by_job 为准；recent_runs 仅是截取的最近明细，不是全部运行。"
             "按 by_trigger 区分定时调度 scheduler 与 cli/api 等手动重跑，不得把所有运行称为定时任务。"
             "具体失败原因以 error 为准，未取得的原因不能自行推定为超时。"

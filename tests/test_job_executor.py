@@ -70,6 +70,9 @@ def test_sector_flow_agent_keeps_market_and_history_tools_scoped(tmp_path, monke
         model = "mock"
 
         def stream_complete(self, messages, *, tools=None, on_delta=None, is_cancelled=None):
+            from report_contract_helpers import report_reply
+            if result := report_reply(messages, gap="昨日同口径数据缺失，无法判断趋势"):
+                return result
             names = {tool["function"]["name"] for tool in tools or []}
             seen_tools.append(names)
             assert {"get_fund_flow", "search_industry_boards", "search_concept_boards",

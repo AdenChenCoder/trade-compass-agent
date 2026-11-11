@@ -4,6 +4,20 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-11-11
+
+### Fixed
+
+- Publish scheduled reports from verified tool receipts and typed facts,
+  calculations, conditions and judgments. Report wording no longer determines
+  whether an otherwise valid scheduled report fails verification.
+- Preserve verified content alongside unresolved items, distinguish incomplete
+  reports from execution failures, and retain those states in task history and
+  workflow results. Incomplete runs remain excluded from automatic learning.
+- Carry exact specialist receipts through report verification with isolated
+  invocation scopes. Report correction remains read-only and shares the original
+  execution deadline; existing account, session and device records are preserved.
+
 ## [0.5.2] - 2026-11-09
 
 ### Fixed

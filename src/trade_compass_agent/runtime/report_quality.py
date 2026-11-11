@@ -16,6 +16,12 @@ class DataQuality:
     warnings: list[str] = field(default_factory=list)
     degraded: bool = False
     execution_warnings: list[str] = field(default_factory=list)
+    findings: list[dict] = field(default_factory=list)
+
+    def reject(self, code, message, tool, scope=""):
+        self.degraded = True
+        self.findings.append({"category": "data", "code": code, "message": message,
+                              "tool": tool, "scope": scope})
 
 
 _CORE_DATA = {"analyze_portfolio", "get_bars", "batch_get_bars", "sina_realtime_quote",
@@ -166,7 +172,7 @@ def assess_data_quality(tool_results, *, planning_reference_date: str | None = N
         label = _LABELS.get(name, name)
         if name == "write_memory" and data.get("fact_check_failed"):
             result.warnings.append(f"记忆未保存（{scope}）：{'；'.join(data.get('issues', []))}")
-            result.degraded = True
+            result.reject("memory_validation_failed", result.warnings[-1], name, scope)
             continue
         if data.get("error") or data.get("unavailable") is True:
             if name == "write_memory":
@@ -174,12 +180,15 @@ def assess_data_quality(tool_results, *, planning_reference_date: str | None = N
                 continue
             reason = "查询参数有误，未取得对应数据" if data.get("error_type") == "invalid_arguments" else "暂不可用"
             result.warnings.append(f"{label}{'（' + scope + '）' if scope else ''}{reason}")
-            result.degraded |= name in _CORE_DATA
+            if name in _CORE_DATA:
+                result.reject("invalid_arguments" if data.get("error_type") == "invalid_arguments" else "source_unavailable",
+                              result.warnings[-1], name, scope)
         if isinstance(data.get("unavailable"), list) and data["unavailable"]:
             result.warnings.append(f"{label}部分数据未取得：{', '.join(data['unavailable'])}")
         if data.get("errors"):
             result.warnings.append(f"{label}部分查询未取得数据")
-            result.degraded |= name in _CORE_DATA
+            if name in _CORE_DATA:
+                result.reject("partial_source_failure", result.warnings[-1], name, scope)
         if name == "get_fundamentals" and data.get("has_real_fundamentals") is False:
             result.warnings.append(f"{scope}真实基本面数据未取得，不能据此判断估值")
         result.warnings.extend(str(w) for w in data.get("warnings", []) if isinstance(w, str))
@@ -198,7 +207,7 @@ def assess_data_quality(tool_results, *, planning_reference_date: str | None = N
                     stale.append(p["symbol"])
             if stale:
                 result.warnings.append(f"持仓价格未更新：{', '.join(stale)}，不能据此判断当前盈亏")
-                result.degraded = True
+                result.reject("valuation_unavailable", result.warnings[-1], name, ",".join(stale))
     result.warnings = list(dict.fromkeys(result.warnings))
     result.execution_warnings = list(dict.fromkeys(result.execution_warnings))
     return result

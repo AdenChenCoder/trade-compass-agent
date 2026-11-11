@@ -29,3 +29,4 @@ class TurnResponse:
     interrupted: bool = False
     warnings: list[str] = field(default_factory=list)
     degraded: bool = False
+    verification: dict = field(default_factory=dict)

@@ -7,7 +7,6 @@ import pytest
 from trade_compass_agent.config import AgentConfig, AppConfig, LLMConfig
 from trade_compass_agent.llm.providers import ChatCompletion, ToolCall
 from trade_compass_agent.runtime import loop
-from trade_compass_agent.runtime.exceptions import AgentTurnError
 from trade_compass_agent.runtime.report_quality import report_issues
 from trade_compass_agent.runtime.tools.registry import ToolRegistry
 
@@ -120,15 +119,14 @@ def test_scheduled_report_publication_preserves_identity_and_raw_evidence(tmp_pa
     responses = [ChatCompletion(content=None, tool_calls=[
         ToolCall("portfolio", "analyze_portfolio", "{}"),
         ToolCall("flow", "get_fund_flow", "{}"),
-    ]), ChatCompletion(content=report), ChatCompletion(content='{"valid":true,"issues":[]}')]
-    if not valid:
-        responses += [ChatCompletion(content=report), ChatCompletion(content='{"valid":true,"issues":[]}')] * 2
+    ]), ChatCompletion(content=report)]
 
     def stream(messages, **kwargs):
         requests.append(kwargs)
-        if messages[0].content.startswith("你是独立报告事实复核者"):
-            payload = json.loads(messages[1].content)
-            assert ["get_fund_flow", tools["get_fund_flow"]] in payload["tool_results"]
+        from report_contract_helpers import report_reply
+        reply = report_reply(messages)
+        if reply is not None:
+            return reply
         return responses.pop(0)
 
     def execute(self, name, args):
@@ -143,15 +141,18 @@ def test_scheduled_report_publication_preserves_identity_and_raw_evidence(tmp_pa
                        agent=AgentConfig(learning_enabled=False, llm_session_titles=False))
     agent = loop.AgentLoop.from_config(config, verify_report_grounding=True, report_date="2026-11-02")
     session_id = "scheduler-report-identity"
-    if valid:
-        result = agent.run_turn("核对持仓与资金快照并写报告", session_id=session_id)
-        assert report in result.summary and len(requests) == 3
-    else:
-        with pytest.raises(AgentTurnError, match="未能核实"):
-            agent.run_turn("核对持仓与资金快照并写报告", session_id=session_id)
+    result = agent.run_turn("核对持仓与资金快照并写报告", session_id=session_id)
+    assert "九强生物" in result.summary and "错误公司" not in result.summary
+    assert "173.3亿元" in result.summary and "时点未提供" in result.summary
+    assert result.verification["status"] == "complete" and len(requests) == 4
+    artifact = json.loads((config.data_dir / "report_artifacts" /
+                           (result.verification["artifact_id"] + ".json")).read_text())
+    assert any(row["tool"] == "get_fund_flow" and row["result"] == tools["get_fund_flow"]
+               for row in artifact["receipts"])
     assert not responses
     assert sorted(reads) == ["analyze_portfolio", "get_fund_flow"]
     assert all(request.get("tools") is None for request in requests[2:])
     public = [json.loads(line) for line in
               (config.data_dir / "agent_sessions" / f"{session_id}.jsonl").read_text().splitlines()]
-    assert any(report in row.get("content", "") for row in public) is valid
+    assert public[-1]["content"] == result.summary
+    assert public[-1]["verification"] == result.verification

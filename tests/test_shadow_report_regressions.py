@@ -94,11 +94,9 @@ def test_plain_report_correction_gets_market_receipts_without_repeating_tools(tm
             return ChatCompletion(content=None, tool_calls=[ToolCall("read", tool, "{}")])
         if len(calls) == 2:
             return ChatCompletion(content=wrong)
-        assert len(calls) == 3 and kwargs.get("tools") is None
-        evidence = json.loads(messages[-1].content)
-        assert evidence["market_tool_results"] == [[tool, raw]]
-        assert evidence["report_date"] == "2026-10-26"
-        return ChatCompletion(content=correct)
+        from report_contract_helpers import report_reply
+        assert kwargs.get("tools") is None
+        return report_reply(messages, gap=correct)
 
     def execute(self, name, args):
         reads.append(name)
@@ -112,5 +110,8 @@ def test_plain_report_correction_gets_market_receipts_without_repeating_tools(tm
     agent = loop.AgentLoop.from_config(config, report_date="2026-10-26")
     response = agent.run_turn("核对当前市场", session_id="scheduler-market-correction")
     assert correct in response.summary and wrong not in response.summary
-    assert reads == [tool] and len(calls) == 3
+    assert reads == [tool] and len(calls) == 4
+    assert response.degraded and response.verification["data"] == "insufficient"
+    artifact = json.loads((config.data_dir / "report_artifacts" / f"{response.verification['artifact_id']}.json").read_text())
+    assert any(row["tool"] == tool and row["result"] == raw for row in artifact["receipts"])
     assert wrong not in (config.data_dir / "agent_sessions/scheduler-market-correction.jsonl").read_text()

@@ -977,6 +977,9 @@ def _refresh_dynamic_schema(schema: dict[str, Any]) -> dict[str, Any]:
         return schema
     refreshed = json.loads(json.dumps(schema, ensure_ascii=False))
     refreshed["function"]["description"] = _dispatch_specialists_description()
+    from trade_compass_agent.runtime.specialists.assets import load_specialist_profiles
+    names = sorted(load_specialist_profiles())
+    refreshed["function"]["parameters"]["properties"]["tasks"]["items"]["properties"]["specialist"]["enum"] = names
     return refreshed
 
 
@@ -1115,6 +1118,10 @@ class ToolRegistry:
         return schemas
 
     def execute(self, name: str, arguments: str | dict | None) -> str:
+        from trade_compass_agent.runtime.tool_receipts import record_receipt
+        return record_receipt(name, self._execute_with_errors(name, arguments))
+
+    def _execute_with_errors(self, name: str, arguments: str | dict | None) -> str:
         from trade_compass_agent.portfolio.trading_policy import TradeRejected
         from trade_compass_agent.llm.providers import check_execution_active
         from trade_compass_agent.runtime.exceptions import TurnInterruptedError

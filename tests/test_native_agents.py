@@ -392,8 +392,12 @@ def test_native_agent_cannot_bypass_trade_authorization(native_config, monkeypat
 def test_native_scheduled_session_uses_same_backend(native_config):
     from trade_compass_agent.ops.agent_session import ScheduledAgentSession
 
-    result = ScheduledAgentSession(native_config, job_id="native-check").run("查询行情", timeout=5)
-    assert "工具结果" in result
+    session = ScheduledAgentSession(native_config, job_id="native-check")
+    result = session.run("查询行情", timeout=5)
+    # The protocol-only child returns prose, not a report document. Its tools
+    # still run through the native backend; publication is correctly incomplete.
+    assert "报告尚未完成核验" in result and session.degraded
+    assert session.verification["execution"] == "completed"
 
 
 def test_native_cancellation_and_timeout_clean_up(native_config, monkeypatch):

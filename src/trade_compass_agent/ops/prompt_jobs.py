@@ -204,18 +204,28 @@ class PromptJobExecutor:
             return
 
         try:
+            step = self.run_store.create_step_run(run.id, "agent")
+            self.run_store.start_step(step)
             session = ScheduledAgentSession(
                 self.config,
                 job_id=f"prompt-{job.id}",
                 run_id=run.id,
             )
             text = session.run(job.prompt)
+            verification = dict(getattr(session, "verification", {}) or {})
+            self.run_store.complete_step(step, output=text, data_json=json.dumps({
+                "analysis": text, "verification": verification,
+                "degraded": session.degraded, "session_id": session.session_id,
+            }, ensure_ascii=False))
             if getattr(session, "degraded", False) is True:
-                self.run_store.degrade_run(run, message=text, error="关键数据未完整取得")
+                reasons = [finding["message"] for finding in verification.get("findings", [])]
+                self.run_store.degrade_run(run, message=text, error="；".join(dict.fromkeys(reasons)) or "任务未完整完成")
             else:
                 self.run_store.complete_run(run, message=text)
         except Exception as exc:
             logger.error("Prompt job %s failed: %s", job.name, exc)
+            if "step" in locals():
+                self.run_store.fail_step(step, error=str(exc))
             self.run_store.fail_run(run, error=str(exc), message=f"Prompt job '{job.name}' 执行失败")
 
         from trade_compass_agent.ops.delivery import DeliveryRouter

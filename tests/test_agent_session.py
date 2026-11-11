@@ -131,8 +131,9 @@ def test_scheduled_agent_session_fails_on_tool_round_limit(
 
     session = ScheduledAgentSession(config, job_id="eod_review")
 
-    with pytest.raises(AgentUnavailableError, match="tool round limit"):
-        session.run("请复盘今天表现", timeout=5)
+    text = session.run("请复盘今天表现", timeout=5)
+    assert session.degraded and session.verification["status"] == "incomplete"
+    assert "报告尚未完成核验" in text
 
 
 def test_scheduled_agent_session_forces_summary_on_tool_round_limit(
@@ -152,6 +153,9 @@ def test_scheduled_agent_session_forces_summary_on_tool_round_limit(
             return self.stream_complete(messages, tools=tools)
 
         def stream_complete(self, messages, *, tools=None, on_delta=None, is_cancelled=None):
+            from report_contract_helpers import report_reply
+            if result := report_reply(messages, gap="尚无本轮事实依据，无法完成盘后复盘结论"):
+                return result
             self.calls += 1
             if self.calls == 1:
                 return ChatCompletion(content="", model="mock", provider="mock")
@@ -184,7 +188,7 @@ def test_scheduled_agent_session_forces_summary_on_tool_round_limit(
     text = session.run("请复盘今天表现", timeout=5)
 
     assert "盘后复盘结论" in text
-    assert chat_client.calls == 3
+    assert chat_client.calls == 2 and session.degraded
 
 
 def test_scheduled_agent_session_uses_extended_llm_timeout(
@@ -203,6 +207,9 @@ def test_scheduled_agent_session_uses_extended_llm_timeout(
             return ChatCompletion(content="定时任务分析完成。", model="mock", provider="mock")
 
         def stream_complete(self, messages, *, tools=None, on_delta=None, is_cancelled=None):
+            from report_contract_helpers import report_reply
+            if result := report_reply(messages, gap="尚无本轮事实依据"):
+                return result
             result = self.complete(messages, tools=tools)
             if on_delta and result.content:
                 on_delta(result.content)
@@ -222,7 +229,7 @@ def test_scheduled_agent_session_uses_extended_llm_timeout(
 
     text = ScheduledAgentSession(config, job_id="morning_plan").run("生成计划", timeout=5)
 
-    assert text == "定时任务分析完成。"
+    assert "尚无本轮事实依据" in text
     assert captured_configs
     assert all(item.llm.timeout == 900.0 for item in captured_configs)
     assert config.llm.timeout == 60.0
@@ -281,11 +288,10 @@ def test_scheduler_response_does_not_promote_a_longer_intermediate_draft(tmp_pat
     assert full_report in session_file.read_text(encoding="utf-8").replace("\\n", "\n")
 
 
-@pytest.mark.parametrize("summary", [None, "", "tool_limit"])
+@pytest.mark.parametrize("summary", [None, ""])
 def test_scheduled_failure_cannot_be_hidden_by_a_long_draft(tmp_path, monkeypatch, summary):
     from types import SimpleNamespace
     from trade_compass_agent.ops.agent_session import ScheduledAgentSession
-    from trade_compass_agent.runtime.loop import TOOL_ROUND_LIMIT_MESSAGE
 
     config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "vault")
     session = ScheduledAgentSession(config, job_id="eod_review")
@@ -293,11 +299,11 @@ def test_scheduled_failure_cannot_be_hidden_by_a_long_draft(tmp_path, monkeypatc
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"role": "assistant", "content": "尚未核实的分析。" * 300}))
     before = path.read_bytes()
-    final = TOOL_ROUND_LIMIT_MESSAGE if summary == "tool_limit" else summary
+    final = summary
     fake = SimpleNamespace(_tools=SimpleNamespace(schemas=[]),
                            run_turn=lambda *a, **k: SimpleNamespace(summary=final, interrupted=False))
     monkeypatch.setattr("trade_compass_agent.runtime.loop.AgentLoop.from_config", lambda *a, **k: fake)
-    with pytest.raises(AgentUnavailableError, match="tool round limit" if final else "empty response"):
+    with pytest.raises(AgentUnavailableError, match="empty response"):
         session.run("复盘", timeout=5)
     assert path.read_bytes() == before
 

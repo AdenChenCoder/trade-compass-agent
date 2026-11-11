@@ -169,6 +169,7 @@ def test_live_turn_compacts_after_tools_without_replaying_order_or_losing_histor
                     "quantity": 100,
                     "price": 10,
                     "account": "short_stock",
+                    "timestamp": "2026-11-10T10:00:00+08:00",
                 }
             )
         return json.dumps({"snapshot": f"pulse{seen.count('get_market_pulse')}"})
