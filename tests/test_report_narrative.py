@@ -18,7 +18,7 @@ def text(value):
     return {"type": "text", "text": value}
 
 
-def value(ref, field="value"):
+def value(ref, field="value_with_unit"):
     return {"type": "value", "ref": ref, "field": field}
 
 
@@ -230,12 +230,6 @@ def test_source_notes_cannot_substitute_for_answering_the_task_in_the_body():
     assert seen
 
 
-
-
-
-
-
-
 def test_reader_composition_omits_redundant_order_index_without_dropping_evidence():
     from trade_compass_agent.runtime.report_contract import EvidenceCatalog
     from trade_compass_agent.runtime.report_transport import ReportTransport
@@ -250,3 +244,16 @@ def test_reader_composition_omits_redundant_order_index_without_dropping_evidenc
     # The complete catalog still restores the original interleaving and null dates.
     assert len(full["fact_order"]) == len(catalog.facts)
     assert any(f.observed_at is None for f in catalog.facts.values())
+
+
+@pytest.mark.parametrize("raw_field", ["value", "unit"])
+def test_numeric_display_is_atomic_and_cannot_omit_its_unit(raw_field):
+    result, calls = publish()
+    fields = [s for s in calls[-1]["inferences"][0]["segments"] if s["origin"] == "evidence"]
+    assert [s["text"] for s in fields if s["field"] == "value_with_unit"] == ["10元/股", "11元/股", "10.00%"]
+    assert "10元/股升至11元/股" in result.artifact["reader_body"]
+    def omit_unit(doc):
+        next(p for p in doc["items"][1]["parts"] if p.get("ref") == "change")["field"] = raw_field
+    invalid, _ = publish(mutate=omit_unit)
+    assert invalid.verification["report"] == "partial"
+    assert not any(r["id"] == "answer" and r["supported"] for r in invalid.artifact["review"]["reviews"])

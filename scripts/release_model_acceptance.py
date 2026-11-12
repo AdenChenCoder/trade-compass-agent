@@ -77,8 +77,8 @@ def check_report(detail, artifact, receipt, *, missing):
             require(all(facts[ref]["subject"] == "002415" for ref in item["refs"]),
                     "published calculation belongs to another instrument")
     expected = [(str(b["close"]), b["timestamp"]) for b in bars]
-    found = False
-    for calc in artifact["calculations"].values():
+    matched_calculations = set()
+    for calc_id, calc in artifact["calculations"].items():
         if calc["operation"] != "change_pct":
             continue
         operands = [facts.get(ref, {}) for ref in calc["refs"]]
@@ -86,8 +86,9 @@ def check_report(detail, artifact, receipt, *, missing):
             actual = [(str(f["value"]), f["observed_at"][:10]) for f in operands]
             if actual == expected:
                 wanted = (Decimal(expected[1][0]) / Decimal(expected[0][0]) - 1) * 100
-                found = abs(Decimal(calc["result"]) - wanted) < Decimal("0.000001")
-    require(found, "requested closing-price change is absent or uses wrong metrics/dates")
+                if abs(Decimal(calc["result"]) - wanted) < Decimal("0.000001"):
+                    matched_calculations.add(calc_id)
+    require(bool(matched_calculations), "requested closing-price change is absent or uses wrong metrics/dates")
     for value, timestamp in expected:
         require(value in detail["analysis"] and timestamp in detail["analysis"],
                 "dated closing prices are absent from the published report")
@@ -97,10 +98,9 @@ def check_report(detail, artifact, receipt, *, missing):
     require(all(item["id"] in approved for item in paragraphs), "final prose did not pass review")
     require(artifact["published_text"] == detail["analysis"], "persisted body differs from published body")
     require(bool(artifact["reader_body"]), "reader body missing")
-    required_calcs = {key for key, calc in artifact["calculations"].items() if calc.get("operation") == "change_pct"}
     visible_calcs = {part["ref"] for paragraph in paragraphs for part in paragraph["parts"]
-                     if part["type"] == "value" and part["field"] == "value"}
-    require(bool(required_calcs & visible_calcs), "requested change percentage appears only in evidence, not the body")
+                     if part["type"] == "value" and part["field"] == "value_with_unit"}
+    require(bool(matched_calculations & visible_calcs), "requested change percentage appears only in evidence, not the body")
     if not missing:
         require(artifact["review_input"]["report"] == detail["analysis"], "reviewed body differs from final body")
 

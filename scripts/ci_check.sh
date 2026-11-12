@@ -17,6 +17,8 @@ fi
   scripts/release_model_acceptance.py \
   scripts/report_narrative_acceptance.py \
   tests/test_release_acceptance_gate.py \
+  tests/conftest.py \
+  tests/test_unit_model_isolation.py \
   tests/test_report_batch_contract.py \
   scripts/mobile_probe.py \
   src/trade_compass_agent/llm/native.py \

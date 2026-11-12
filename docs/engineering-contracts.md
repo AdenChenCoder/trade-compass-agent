@@ -10,7 +10,10 @@ in the linked regression tests, not in expanding prose exception lists.
 - Evidence structure is not the reader's writing structure. Published paragraphs
   may combine observations and judgments naturally. Explicit inline bindings keep
   values, units, identity and dates runtime-owned; a semantic review checks their
-  use in the expanded sentence against original receipts and task scope. Reference
+  use in the expanded sentence against original receipts and task scope. The explicitly named
+  `value_with_unit` field binds a number and its unit as one indivisible display
+  value; a percentage must not lose its percent sign. Author-written facts or
+  units still require semantic review. Reference
   existence alone does not establish meaning, and prose keyword/regex rules are
   not a substitute for this review.
 - Review the actual reader presentation. No model rewrites approved paragraphs

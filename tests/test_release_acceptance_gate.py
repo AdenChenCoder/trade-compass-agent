@@ -63,7 +63,7 @@ def valid_report():
                 "document": {"items": [{"id": "observation", "type": "fact", "ref": "0"},
                                        {"id": "change", "type": "calculation", "refs": ["0", "1"]},
                                        {"id": "answer", "type": "paragraph", "parts": [
-                                           {"type": "value", "ref": "change", "field": "value"}]}]},
+                                           {"type": "value", "ref": "change", "field": "value_with_unit"}]}]},
                 "review": {"reviews": [{"id": "answer", "supported": True}]},
                 "published_text": detail["analysis"], "reader_body": detail["analysis"],
                 "review_input": {"report": detail["analysis"]}}
@@ -110,4 +110,12 @@ def test_correct_requested_calculation_cannot_hide_an_extra_foreign_observation(
     artifact["facts"].append({**artifact["facts"][0], "id": "foreign", "subject": "000005"})
     artifact["document"]["items"].append({"id": "extra", "type": "fact", "ref": "foreign"})
     with pytest.raises(RuntimeError, match="another instrument"):
+        MODEL["check_report"](detail, artifact, receipt, missing=False)
+
+
+def test_requested_calculation_must_be_visible_not_an_unrelated_result():
+    detail, artifact, receipt = valid_report()
+    artifact["calculations"]["other"] = {"operation": "change_pct", "refs": ["1", "0"], "result": "-9.090909"}
+    artifact["document"]["items"][-1]["parts"][0]["ref"] = "other"
+    with pytest.raises(RuntimeError, match="not the body"):
         MODEL["check_report"](detail, artifact, receipt, missing=False)

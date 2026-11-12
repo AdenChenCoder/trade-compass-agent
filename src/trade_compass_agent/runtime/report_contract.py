@@ -69,8 +69,8 @@ class EvidenceValue(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     type: Literal["value"]
     ref: str = Field(description="事实id、fact条目id或calculation条目id；不是正文段落id")
-    field: Literal["value", "subject", "account", "date", "label"] = Field(
-        description="value自动包含单位；计算只支持value。日期不从检索时间推测。")
+    field: Literal["value_with_unit", "subject", "account", "date", "label"] = Field(
+        description="value_with_unit是完整的带单位数值，例如22元/股或4.55%，不能再补单位。计算仅支持此字段。日期不从检索时间推测。")
 
 
 class Paragraph(Item):
@@ -534,18 +534,18 @@ def paragraph_segments(item: Paragraph, document: ReportDocument, catalog: Evide
         ref = part.ref
         entry = entries.get(ref)
         if isinstance(entry, Calculation):
-            if part.field != "value":
-                raise ValueError("计算仅提供结果，身份和日期须引用原始事实")
+            if part.field != "value_with_unit":
+                raise ValueError("计算仅提供带单位的结果，身份和日期须引用原始事实")
             _, trace = calculate(entry, catalog)
             value = (format(Decimal(trace["result"]).quantize(Decimal("0.01")), "f") + trace["unit"]
                      if "unit" in trace else trace["result"])
         else:
             fact = catalog.resolve(entry.ref if isinstance(entry, Observation) else ref)
-            value = {"value": fact.value + fact.unit, "subject": fact.subject,
+            value = {"value_with_unit": fact.value + fact.unit, "subject": fact.subject,
                      "account": fact.account, "date": _date(fact) if fact.observed_at else "",
                      "label": fact.label}[part.field]
             if not value:
-                raise ValueError("引用的事实未提供所需身份、账户或日期")
+                raise ValueError("引用的事实未提供所需身份、账户、日期或单位")
         segments.append({"origin": "evidence", "ref": part.ref, "field": part.field, "text": _plain(value)})
     return segments
 

@@ -23,6 +23,8 @@ CASES = {
     "wrong_date": ("上述两项收盘价分别来自2025年1月3日和1月4日。", False),
     "wrong_unit": ("前一日收盘价为22美元，后一日为23美元。", False),
     "unsupported_cause": ("营收增长导致了这次上涨。", False),
+    "missing_percentage_unit": ("价格变动比例为4.55。", False),
+    "correct_percentage": ("价格变动比例为4.55%。", True),
     "hidden_result": ("收盘价上升。", True),
     "visible_result": ("收盘价上升。", True),
     "historical_execution": ("本轮已经买入002415共100股，成交价22元/股。", False),
@@ -82,9 +84,9 @@ def main():
                          for group in payload["facts"] if group["metric"] == "close" for row in group["rows"]]
                 parts = [{"type": "value", "ref": facts[0]["id"], "field": "subject"},
                          {"type": "text", "text": "的收盘价从"},
-                         {"type": "value", "ref": facts[0]["id"], "field": "value"},
+                         {"type": "value", "ref": facts[0]["id"], "field": "value_with_unit"},
                          {"type": "text", "text": "变为"},
-                         {"type": "value", "ref": facts[1]["id"], "field": "value"},
+                         {"type": "value", "ref": facts[1]["id"], "field": "value_with_unit"},
                          {"type": "text", "text": "。" + prose}]
                 historical_refs = [row[0] for group in payload["facts"]
                                    if group["source"] == "analyze_portfolio" for row in group["rows"]]
@@ -92,13 +94,13 @@ def main():
                     raise RuntimeError("historical execution fixture lost its source")
                 definitions = []
                 refs = historical_refs if name == "historical_execution" else []
-                if name in {"hidden_result", "visible_result"}:
+                if name in {"hidden_result", "visible_result", "missing_percentage_unit", "correct_percentage"}:
                     definitions = [{"type": "calculation", "id": "change", "section": "overview",
                                     "operation": "change_pct", "refs": [facts[0]["id"], facts[1]["id"]]}]
                     refs = ["change"]
                     if name == "visible_result":
                         parts.extend([{"type": "text", "text": "收盘价变动比例为"},
-                                      {"type": "value", "ref": "change", "field": "value"},
+                                      {"type": "value", "ref": "change", "field": "value_with_unit"},
                                       {"type": "text", "text": "。"}])
                 return json.dumps({"schema_version": 1, "items": [*definitions,
                     {"type": "paragraph", "id": "answer", "section": "overview", "parts": parts,
@@ -117,7 +119,7 @@ def main():
         try:
             with llm_request_deadline(started + 120):
                 task = "说明这两个观察日收盘价变化，仅在存在本轮执行记录时报告成交。"
-                if name in {"hidden_result", "visible_result"}:
+                if name in {"hidden_result", "visible_result", "missing_percentage_unit", "correct_percentage"}:
                     task += "给出收盘价变动比例。"
                 report = publish_report(task=task,
                     draft="", tool_results=case_receipts, current_tool_results=case_receipts,

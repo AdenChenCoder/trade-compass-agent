@@ -22,11 +22,11 @@ def example_publication(*, missing=False):
             {"id": "direction", "type": "paragraph", "section": "assessment", "refs": ["change"], "parts": [
                 {"type": "value", "ref": facts[0]["id"], "field": "subject"},
                 {"type": "text", "text": "这两日收盘价上升，从"},
-                {"type": "value", "ref": facts[0]["id"], "field": "value"},
+                {"type": "value", "ref": facts[0]["id"], "field": "value_with_unit"},
                 {"type": "text", "text": "升至"},
-                {"type": "value", "ref": facts[1]["id"], "field": "value"},
+                {"type": "value", "ref": facts[1]["id"], "field": "value_with_unit"},
                 {"type": "text", "text": "，变动"},
-                {"type": "value", "ref": "change", "field": "value"},
+                {"type": "value", "ref": "change", "field": "value_with_unit"},
                 {"type": "text", "text": "。这一变化不能说明后续走势。"}]},
             *([{"id": "gap", "type": "gap", "section": "gaps", "text": "缺少营收资料"}] if missing else []),
         ]})

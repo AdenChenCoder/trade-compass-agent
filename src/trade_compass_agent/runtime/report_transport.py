@@ -85,15 +85,15 @@ class ReportTransport:
             self.table["fact_rendering_example"] = {
                 "ref": self.aliases[sample.id], "rendered": sample.display(),
             }
-            # Demonstrate the actual sentence boundary: a value already owns
-            # its unit. This is an example, not a prescribed sentence template.
+            # Name the atomic display field explicitly so neither the writer nor
+            # renderer has to infer whether a numeric value includes its unit.
             ref = self.aliases[sample.id]
             self.table["paragraph_rendering_example"] = {
                 "parts": [{"type": "value", "ref": ref, "field": "subject"},
                           {"type": "text", "text": "的"},
                           {"type": "value", "ref": ref, "field": "label"},
                           {"type": "text", "text": "为"},
-                          {"type": "value", "ref": ref, "field": "value"},
+                          {"type": "value", "ref": ref, "field": "value_with_unit"},
                           {"type": "text", "text": "。"}],
                 "rendered": f"{sample.subject}的{sample.label}为{sample.value}{sample.unit}。",
             }
