@@ -13,7 +13,9 @@ in the linked regression tests, not in expanding prose exception lists.
   use in the expanded sentence against original receipts and task scope. The explicitly named
   `value_with_unit` field binds a number and its unit as one indivisible display
   value; a percentage must not lose its percent sign. Author-written facts or
-  units still require semantic review. Reference
+  units still require semantic review. The body must establish the units of
+  author-written quantities; evidence units cannot silently fill a missing unit
+  or rescale an unqualified ratio as a percentage. Reference
   existence alone does not establish meaning, and prose keyword/regex rules are
   not a substitute for this review.
 - Review the actual reader presentation. No model rewrites approved paragraphs
