@@ -4,6 +4,22 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-11-12
+
+### Fixed
+
+- Keep large scheduled reports within the model input budget by losslessly
+  encoding repeated evidence metadata and using temporary short references.
+  Persist original fact IDs, values, scopes and receipts unchanged.
+- Resolve judgments that cite report observations to their original evidence,
+  with independent semantic review and rejection of unknown or recursive refs.
+- Accept percentage-based observation plans using the evidence producer's type,
+  while retaining unit checks and keeping plans distinct from executed trades.
+  Give bounded repairs exact source context and calculation constraints.
+- Preserve valid report items when another item has an invalid structure. Keep
+  unresolved items incomplete and retain composition inputs and failed model
+  responses for reproducible, read-only diagnosis and repair.
+
 ## [0.5.6] - 2026-11-11
 
 ### Fixed

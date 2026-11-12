@@ -13,7 +13,7 @@ in the linked regression tests, not in expanding prose exception lists.
   Agent summaries, activity previews and model-supplied reader text cannot replace
   original evidence. Receipts belong to the exact run and instrument.
 - Keep business requirements separate from execution and presentation policy.
-  A report may reference raw facts and validated calculations; retain the original
+  A report may reference raw facts, direct observation aliases and validated calculations; retain the original
   operands and resolve references independently of document order. Provenance
   does not establish semantic support, and model approval cannot clear a
   deterministic evidence conflict.

@@ -12,6 +12,27 @@ RECEIPTS = [("get_bars", json.dumps({"symbol": "002415", "name": "海康威视",
     {"timestamp": "2026-11-09", "close": 6.60}, {"timestamp": "2026-11-10", "close": 7.46}]}))]
 
 
+@pytest.mark.parametrize("metric,unit,accepted", [("pnl_pct", "%", True), ("change_pct", "%", True),
+                                                 ("pnl_pct", "元", False), ("quantity", "股", False)])
+def test_percentage_plans_use_producer_types_without_accepting_wrong_units(metric, unit, accepted):
+    receipts = [("analyze_portfolio", json.dumps({"positions": [
+        {"symbol": "002415", "account": "short_stock", metric: -2.37}]}))]
+    def call(system, user):
+        payload = json.loads(user)
+        if "inferences" in payload:
+            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        fact = next(f for f in report_facts(payload) if f["metric"] == metric)
+        return json.dumps({"schema_version": 1, "items": [{"id": "plan", "section": "plan", "type": "condition",
+            "ref": fact["id"], "comparison": "lt", "threshold": "-5", "unit": unit, "action": "review"}]})
+    result = publish_report(task="设置持仓比例观察条件", draft="", tool_results=receipts, run_scope="plan", call=call)
+    assert (result.verification["status"] == "complete") == accepted
+    assert result.verification["execution"] == "completed"
+    if accepted:
+        assert "低于-5%" in result.text and "不是已发生事实或已执行指令" in result.text
+    else:
+        assert any(f["code"] == "invalid_evidence" for f in result.verification["findings"])
+
+
 def compose(payload, *, inference=False):
     facts = [f for f in report_facts(payload) if f["metric"] == "close"]
     items = [{"id": "change", "type": "calculation", "section": "market", "operation": "change_pct",
@@ -315,3 +336,47 @@ def test_calculation_reference_never_launders_invalid_evidence(bad_reference):
     result = publish_report(task="比较", draft="", tool_results=[*RECEIPTS, other], run_scope="invalid-derived", call=call)
     assert result.verification["status"] == "incomplete"
     assert not reviews and "研判：未经支持的结论" not in result.text
+
+
+@pytest.mark.parametrize("first", [True, False])
+@pytest.mark.parametrize("supported", [True, False])
+def test_observation_reference_retains_source_and_independent_semantic_review(first, supported):
+    def call(system, user):
+        payload = json.loads(user)
+        if "schema" in payload:
+            fact = next(f for f in report_facts(payload) if f['metric'] == 'close')
+            items = [
+                {'id': 'observation', 'section': 'market', 'type': 'fact', 'ref': fact['id']},
+                {'id': 'judgment', 'section': 'assessment', 'type': 'inference',
+                 'text': '该价位仍需结合其他时点评估。', 'refs': ['observation']},
+            ]
+            return json.dumps({'schema_version': 1, 'items': items if first else items[::-1]})
+        evidence = payload['inferences'][0]['evidence']
+        assert len(evidence) == 1 and evidence[0]['value'] == '6.6'
+        assert evidence[0]['pointer'] == '/bars/0/close'
+        assert payload['receipts'][0]['result'] == RECEIPTS[0][1]
+        return json.dumps({'reviews': [{'id': 'judgment', 'supported': supported,
+                         'reason': '' if supported else '依据不足'}],
+                         'coverage': {'complete': True, 'missing': []}})
+    result = publish_report(task='列出价格及限制', draft='', tool_results=RECEIPTS, run_scope='observation', call=call)
+    assert (result.verification['status'] == 'complete') is supported
+    assert ('研判：该价位' in result.text) is supported
+
+
+@pytest.mark.parametrize('target', ['unknown', 'observation', 'other'])
+def test_observation_alias_does_not_accept_unowned_or_recursive_evidence(target):
+    reviewed = []
+    def call(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            return json.dumps({'schema_version': 1, 'items': [
+                {'id': 'observation', 'section': 'market', 'type': 'fact', 'ref': target},
+                {'id': 'other', 'section': 'market', 'type': 'fact', 'ref': 'observation'},
+                {'id': 'judgment', 'section': 'assessment', 'type': 'inference',
+                 'text': '不应发布', 'refs': ['observation']},
+            ]})
+        reviewed.extend(payload['inferences'])
+        return '{"reviews":[],"coverage":{"complete":false,"missing":["事实未核实"]}}'
+    result = publish_report(task='列出价格', draft='', tool_results=RECEIPTS, run_scope='invalid-observation', call=call)
+    assert not reviewed and result.verification['status'] == 'incomplete'
+    assert '研判：不应发布' not in result.text
