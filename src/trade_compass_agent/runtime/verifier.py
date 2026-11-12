@@ -126,7 +126,8 @@ def trade_receipt_section(tool_results: list[tuple[str, str]], *, compact: bool 
         for identity, row in sorted(facts.items(), key=lambda pair: str(pair[1].get("timestamp", ""))):
             source = "本轮回执" if identity in executed else "当日账本"
             side = "买入" if row["side"] == "buy" else "卖出"
-            lines.append(f"\n- **{_plain(row['symbol'])} · {side}{_plain(row['quantity'])}股 · {_plain(row['price'])}元/股**  \n"
+            lines.append(f"\n- **{_plain(row['symbol'])} · {side}**  \n"
+                         f"  数量：{_plain(row['quantity'])}；成交价：{_plain(row['price'])}  \n"
                          f"  {source}；账户：{_plain(row['account'])}  \n"
                          f"  时间：{_plain(row.get('timestamp') or '未提供')}  \n"
                          f"  成交编号：{_plain(identity)}")

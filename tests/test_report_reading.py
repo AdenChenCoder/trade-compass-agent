@@ -121,7 +121,7 @@ def test_execution_history_and_unknown_result_survive_reader_grouping():
     assert "fill-1" in report.text and "卖出100股" in report.text
     assert "操作结果尚未确认" in report.text
     assert "| 依据 |" not in report.text
-    assert "**000001 · 买入200股 · 9元/股**" in report.text
+    assert "**000001 · 买入**  \n  数量：200；成交价：9" in report.text
     assert "当日账本；账户：two" in report.text and "成交编号：old-fill" in report.text
     assert "本轮回执；账户：one" in report.text
     assert "账本记录不表示本轮新下单" in report.text
