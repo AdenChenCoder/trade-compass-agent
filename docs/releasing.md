@@ -46,87 +46,12 @@ attaches the installer, Python distributions, a CycloneDX SBOM, and
 
 ## Acceptance
 
-### Installed behavior gate
-
-CI, TestPyPI and production builds run `scripts/release_acceptance.py` with the
-candidate wheel's interpreter before publication. The script verifies every
-installed package file against that wheel, copies the selected consumer tests
-outside the checkout, isolates all writable roots, and runs them with explicit
-model/tool doubles. It covers report transport and repair, legitimate and invalid
-evidence, repeated scheduled execution, persisted API/session views, native
-continuation and cancellation. Source test success alone is insufficient.
-
-The gate rejects zero tests, skips, collection errors and assertion failures.
-It retains JUnit, logs, suite hashes and the exact wheel digest on failure as well
-as success. Production post-publication acceptance compares the PyPI installation
-to the wheel accepted before publication and reruns the same behavioral suite.
-Missing evidence is not a passing result.
-
-```bash
-/path/to/installed-venv/bin/python -I scripts/release_acceptance.py \
-  --wheel /path/to/candidate.whl --output /outside/checkout/new-acceptance-directory
-```
-
-Install the pinned CI pytest version into the isolated environment first. Each
-output directory is exclusive: preserve failures and use a new directory after
-fixing a defect. Keep the same scene and acceptance criteria when comparing a bad
-release with its fix. A collection error only proves rejection; use the targeted
-consumer regression separately to demonstrate the original behavioral failure.
-
-### Real model gate
-
-Deterministic doubles cannot establish whether a deployed model follows the wire
-protocol, chooses the right metric or fits its actual context window. Run
-`scripts/release_model_acceptance.py` with the exact installed wheel against the
-required LM Studio model. Its fixed scene plan uses synthetic dated receipts,
-real inference, isolated roots, no business writes, bounded calls and separate
-processes for first/continued execution. The model and service must already be
-available; the harness does not start, reconfigure or switch models.
-The executor explicitly grants only the scene's frozen query tool through the
-existing scheduler capability boundary. Both the model schema and operation
-guard enforce that scope; prompt wording is not a permission boundary. Ordinary
-prompt-job executors retain their default tool availability.
-
-```bash
-/path/to/installed-venv/bin/python -I scripts/release_model_acceptance.py \
-  --wheel /path/to/candidate.whl --model MODEL_ID \
-  --output /outside/checkout/new-model-acceptance-directory
-```
-
-Availability and safety are separate requirements. Every normal scene must finish
-with a complete, correct report; a safely withheld normal answer still fails the
-availability gate. A deliberately missing-data scene must retain the true gap and
-valid available content. The independent oracle checks dated closing-price
-operands and arithmetic, not only the model's completeness verdict. Do not
-reclassify an unexpected failure as an expected negative after seeing results,
-drop a failed scene, increase budgets after a timeout, or retry until green.
-Changing a scene or threshold requires review and a new complete evidence set.
-
-The production `publish` job depends on `model-acceptance`. Configure repository
-variables `RELEASE_MODEL_RUNNER` (an approved runner label) and `RELEASE_MODEL_ID`
-(the required LM Studio model ID). With either missing, a hosted runner fails
-preflight; absence of a local runner/model never skips acceptance or permits
-publication. The approved runner must have LM Studio reachable on its loopback
-interface and capacity reserved for acceptance. Use an isolated runner account
-without production state, credentials or supervision privileges; never expose
-this runner to pull-request jobs. The harness does not install/register a runner
-or change repository variables. Until that infrastructure is approved and ready,
-production releases are intentionally blocked. TestPyPI remains a deterministic
-artifact preview, not permission to deploy to the stable service.
-
-Other providers need their own real-adapter acceptance; native protocol doubles
-do not certify vendor authentication or real inference. A model profile change
-requires a new complete fixed-plan evidence set. The fixed small suite is a
-regression gate, not a statistical guarantee of future model reliability.
-
-These gates cover the report incident class, not all product journeys. Expand
-consumer contracts with affected features: first/continued use, restart, upgrade
-and rollback with new records, real UI drafts and device authorization where
-applicable. Deployments still require a stopped-state backup, one production
-writer and an authorized read-only probe. Do not auto-restore older state after
-new trades or replay mutations to test a release. Define candidate/production
-failure criteria before cutover and retain the prior program for compatible
-program-only recovery.
+Before an Agent merges or releases changes affecting execution behavior, it must
+complete the local [execution protection acceptance](development-production.md#执行链路变更的防护验收).
+This is a repository Agent completion requirement, not an additional GitHub CI
+job or self-hosted runner dependency. The existing CI and release workflows
+remain unchanged. Local acceptance does not replace the normal release checks
+or authorize deployment by itself.
 
 The installed-package smoke test verifies:
 

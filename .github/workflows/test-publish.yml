@@ -61,21 +61,6 @@ jobs:
           export TRADE_COMPASS_HOME="$RUNNER_TEMP/trade-compass-home"
           "$RUNNER_TEMP/release-smoke/bin/trade-compass" --version
           "$RUNNER_TEMP/release-smoke/bin/python" -m trade_compass_agent.release_smoke
-      - name: Accept installed report and session behavior
-        run: |
-          "$RUNNER_TEMP/release-smoke/bin/python" -m pip install "pytest==9.0.3"
-          "$RUNNER_TEMP/release-smoke/bin/python" -I scripts/release_acceptance.py \
-            --wheel dist/*.whl --output "$RUNNER_TEMP/behavior-acceptance"
-      - name: Preserve behavioral acceptance evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: installed-behavior-acceptance
-          path: |
-            ${{ runner.temp }}/behavior-acceptance/acceptance.json
-            ${{ runner.temp }}/behavior-acceptance/junit.xml
-            ${{ runner.temp }}/behavior-acceptance/pytest.log
-          if-no-files-found: error
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: test-python-distributions

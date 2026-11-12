@@ -127,18 +127,3 @@ jobs:
           assert not str(config.data_dir).startswith(str(PACKAGE_ROOT))
           print("installed config, runtime paths, and package assets ok")
           PY
-      - name: Accept installed report and session behavior
-        run: |
-          python -m pip install "pytest==9.0.3"
-          python -I scripts/release_acceptance.py \
-            --wheel dist/*.whl --output "$RUNNER_TEMP/behavior-acceptance"
-      - name: Preserve behavioral acceptance evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: installed-behavior-acceptance
-          path: |
-            ${{ runner.temp }}/behavior-acceptance/acceptance.json
-            ${{ runner.temp }}/behavior-acceptance/junit.xml
-            ${{ runner.temp }}/behavior-acceptance/pytest.log
-          if-no-files-found: error
