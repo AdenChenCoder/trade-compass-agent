@@ -186,6 +186,9 @@ class ScheduledAgentSession:
                                           # Coverage belongs to the dated business task;
                                           # execution policy is not report content.
                                           report_task=dated_prompt,
+                                          # Daily history remains visible; each execution
+                                          # acquires its own facts and native context.
+                                          fresh_context=True,
                                           **turn_options)
                 self.warnings = list(getattr(response, "warnings", []) or [])
                 self.degraded = getattr(response, "degraded", False) is True

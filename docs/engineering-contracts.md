@@ -34,6 +34,11 @@ in the linked regression tests, not in expanding prose exception lists.
   through workflows, API, sessions and UI. Preserve valid content beside unresolved
   items. Data gaps and unsupported conclusions remain incomplete; they do not
   imply execution failure. Incomplete output must not become automatic learning.
+- Model-declared gaps are semantic claims. The existing reviewer may dismiss a
+  gap only when it is outside the task or cites validated report facts/calculations
+  already providing the requested content. Preserve the original claim and review
+  in the artifact. Missing/invalid reviews retain gaps; deterministic evidence and
+  execution failures cannot be dismissed by this review.
 - Publication and correction use the same original receipts and deadline.
   Correction is read-only and cannot repeat business mutations. Recovery appends
   a verified revision while preserving original status and evidence; it does not
@@ -132,6 +137,9 @@ Regression entry points:
   concurrent cold sessions without serializing their model execution.
   Concurrency tests wait for owned workers and durable terminal records rather
   than arbitrary short sleeps; release blocked workers before removing model mocks.
+- Each scheduled execution starts with fresh model context, including native
+  adapters. Daily session IDs and append-only user-visible history remain stable;
+  previous receipts or answers cannot replace the current execution's evidence.
 - Tool-sequence reasoning is transient operational context. Account for its input
   tokens separately from recent-source protection; exclude it from public session
   records and factual summary inputs.

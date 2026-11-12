@@ -30,6 +30,14 @@ class ReportTransport:
         for row in table["facts"]:
             row[0] = self.aliases[row[0]]
         self.table = {**table, "fact_dictionaries": dictionaries}
+        # Show the actual consumer rendering contract once, not a second copy
+        # of the catalogue. Observation dates/units are already in fact output.
+        sample = next((fact for fact in catalog.facts.values() if fact.observed_at),
+                      next(iter(catalog.facts.values()), None))
+        if sample is not None:
+            self.table["fact_rendering_example"] = {
+                "ref": self.aliases[sample.id], "rendered": sample.display(),
+            }
 
     def encode_document(self, document):
         """Repair prompts use exactly the same aliases as initial composition."""

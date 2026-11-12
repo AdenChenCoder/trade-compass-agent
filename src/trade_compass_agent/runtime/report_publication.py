@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from trade_compass_agent.llm.providers import check_execution_active, llm_maintenance_mode
 from trade_compass_agent.runtime.exceptions import TurnInterruptedError
 from trade_compass_agent.runtime.report_contract import (
-    EvidenceCatalog, Finding, Inference, ReportDocument, ReportContentDocument, render_document,
+    EvidenceCatalog, Finding, Inference, Gap, Observation, Calculation, ReportDocument, ReportContentDocument, render_document,
     inference_evidence, validate_document, verification_result,
 )
 from trade_compass_agent.runtime.report_execution import execution_evidence
@@ -32,6 +32,8 @@ _COMPOSE = (
     "事实使用fact引用facts中的id，不抄写数值、不重命名字段。计算使用calculation和原始操作数引用，"
     "facts是表格，每行的列按fact_columns顺序排列。fact_dictionaries中的列使用从0开始的索引，"
     "读取这些列时用索引取回相应字典值；id和value始终是原文，不是索引。"
+    "fact_rendering_example是本目录中一个fact引用的实际输出，展示程序如何显示身份、数值、单位、"
+    "observed_at观测时点和口径；这些信息由引用自动呈现，不需要另建日期或单位条目。"
     "报告条目的id不能使用事实目录的id。"
     "事实、条件和计算的ref/refs必须逐字复制事实目录的id。研判还可以引用本报告的fact或calculation条目id，"
     "fact由程序还原到原始事实，calculation的运算及原始操作数由程序验证；条件计划和其他研判不能作为事实依据。"
@@ -56,7 +58,13 @@ _REVIEW = (
     '只返回JSON {"reviews":[{"id":"原条目id","supported":true,"reason":""}],'
     '"coverage":{"complete":true,"missing":[]}}。missing只列遗漏的任务要求，最多8项。'
     "必须覆盖所有研判且各一次。支持时reason为空；不支持时说明具体缺口，不提供替换数字或改写报告。"
-    "reviews只对应inferences数组中的id；数组为空时reviews必须为空。报告中的待核实提示不属于研判条目。"
+    "reviews只对应inferences数组中的id；数组为空时reviews必须为空。"
+    "gaps非空时另返回gap_reviews，逐一判断模型声明的资料缺口是否真正影响task："
+    '每项为{"id":"缺口id","status":"required","refs":[],"reason":""}。'
+    "status为required时保留缺口；already_present表示任务所需内容已由verified_items中的事实或计算提供，"
+    "refs必须列出对应条目id；outside_task表示缺口不属于任务要求（包括任务明确排除的目标），refs为空。"
+    "already_present和outside_task必须说明理由。任务要求的数据确实缺失时不能因为已声明缺口就当作完成；"
+    "已有来源也不能替代不存在的具体事实。未知时保留required。不能撤销程序判定的引用、单位、计算或执行错误。"
 )
 _REPAIR = (
     "这是结构修复轮次。previous_document中validation_errors指出的条目未通过程序校验。"
@@ -87,6 +95,34 @@ def _json_value(raw):
     return json.loads(raw, object_pairs_hook=unique)
 
 
+def _dismissed_gaps(review, gaps, verified_ids):
+    """Missing/legacy reviews retain gaps; only validated semantic decisions clear them."""
+    rows = review.get("gap_reviews")
+    if rows is None:
+        return set()
+    if (not isinstance(rows, list) or len(rows) != len(gaps)
+            or any(not isinstance(row, dict) or set(row) != {"id", "status", "refs", "reason"} for row in rows)):
+        raise ValueError("invalid gap review")
+    if {row["id"] for row in rows} != {item.id for item in gaps}:
+        raise ValueError("gap review identities do not match")
+    dismissed = set()
+    for row in rows:
+        status, refs, reason = row["status"], row["refs"], row["reason"]
+        if (status not in {"required", "already_present", "outside_task"}
+                or not isinstance(reason, str) or len(reason) > 500
+                or not isinstance(refs, list) or any(not isinstance(ref, str) for ref in refs)
+                or len(refs) != len(set(refs))):
+            raise ValueError("invalid gap decision")
+        if status == "already_present":
+            if not refs or not set(refs) <= verified_ids or not reason.strip():
+                raise ValueError("gap coverage needs verified report facts or calculations")
+        elif refs or (status == "outside_task" and not reason.strip()):
+            raise ValueError("invalid gap rationale")
+        if status != "required":
+            dismissed.add(row["id"])
+    return dismissed
+
+
 def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", current_tool_results=None,
                    check_active=check_execution_active):
     """No business-tool callback is available anywhere in this pipeline."""
@@ -100,6 +136,7 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
     document = None
     findings, rendered, traces = [], {}, {}
     attempts, review, fixed_items = [], None, {}
+    dismissed_gaps = set()
     pending_items = None
     for _ in range(3):  # Initial composition, then at most two structural repairs.
         check_active()
@@ -201,13 +238,19 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
                 "inferences": [{"id": item.id, "text": item.text,
                 "evidence": [asdict(fact) for fact in evidence[item.id][0]],
                 "calculations": evidence[item.id][1]} for item in inferences]}
+            gaps = [item for item in document.items if isinstance(item, Gap)]
+            verified_items = {item.id: rendered[item.id] for item in document.items
+                              if isinstance(item, (Observation, Calculation)) and item.id in rendered}
+            if gaps:
+                review_input["gaps"] = [{"id": item.id, "text": item.text} for item in gaps]
+                review_input["verified_items"] = [{"id": key, "rendered": text} for key, text in verified_items.items()]
             try:
                 check_active()
                 review = _json_value(call(_REVIEW, json.dumps(review_input, ensure_ascii=False, separators=(",", ":"))))
                 check_active()
                 rows = review["reviews"]
                 coverage = review["coverage"]
-                if (set(review) != {"reviews", "coverage"} or not isinstance(rows, list)
+                if (set(review) not in ({"reviews", "coverage"}, {"reviews", "coverage", "gap_reviews"}) or not isinstance(rows, list)
                         or len(rows) != len(inferences)
                         or {row["id"] for row in rows} != {item.id for item in inferences}
                         or any(set(row) != {"id", "supported", "reason"}
@@ -221,6 +264,9 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
                         or any(not isinstance(s, str) or not s.strip() or len(s) > 500 for s in coverage["missing"])
                         or coverage["complete"] != (not coverage["missing"])):
                     raise ValueError("invalid inference review")
+                dismissed_gaps = _dismissed_gaps(review, gaps, set(verified_items))
+                findings = [finding for finding in findings
+                            if not (finding.code == "declared_gap" and finding.item_id in dismissed_gaps)]
                 findings.extend(Finding("report", "required_content_missing", missing) for missing in coverage["missing"])
                 by_id = {row["id"]: row for row in rows}
                 for item in inferences:
@@ -236,7 +282,11 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
                 findings.append(Finding("review", "review_unavailable", "报告完整性及研判依据尚未完成核验"))
                 findings.extend(Finding("review", "review_unavailable", "该项研判尚未完成核验", item.id) for item in inferences)
                 attempts.append({"review_error_type": type(exc).__name__})
-        text = render_document(document, rendered, findings)
+        published_document = document.model_copy(update={
+            "items": [item for item in document.items if item.id not in dismissed_gaps]})
+        if dismissed_gaps and not published_document.items and not execution.records:
+            findings.append(Finding("report", "empty_report", "尚无可核实的报告内容"))
+        text = render_document(published_document, rendered, findings)
         result = verification_result(findings, report="partial" if findings else "complete",
                                      data="insufficient" if any(f.category == "data" for f in findings) else "available")
     findings.extend(execution.findings)

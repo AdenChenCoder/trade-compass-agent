@@ -2,6 +2,25 @@
 
 This project follows [Semantic Versioning](https://semver.org/) and records user-visible changes here.
 
+## 0.5.8
+
+- Review model-declared gaps against the requested task and verified report
+  content. Out-of-scope limitations and already-present information no longer
+  create false incomplete reports; real gaps and unavailable reviews stay visible.
+
+- Show the report composer one actual rendered fact so observation dates and
+  units supplied by the renderer are not mistaken for missing evidence. Unknown
+  observation times remain explicitly unknown; retrieval time is not promoted.
+
+- Start each scheduled execution with fresh model context so earlier same-day
+  answers and tool receipts cannot suppress current data acquisition. Preserve
+  daily session IDs and all prior messages, including after restart.
+- Apply the same execution boundary to native agent threads while retaining
+  normal interactive conversation continuation.
+- Complete the 0.5.6 recovery with the report transport and bounded repair fixes
+  from 0.5.7. Production acceptance of 0.5.7 exposed the continued-execution
+  defect; existing records remain readable without replaying business actions.
+
 ## [Unreleased]
 
 ## [0.5.7] - 2026-11-12
