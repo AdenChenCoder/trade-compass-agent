@@ -81,7 +81,8 @@ def test_malformed_sibling_cannot_erase_valid_observations(invalid):
     assert result.artifact["attempts"][0]["structure_errors"]
 
 
-def test_repair_uses_same_aliases_and_cannot_replace_verified_fact():
+@pytest.mark.parametrize("partial_repair", [False, True])
+def test_repair_uses_same_aliases_and_cannot_replace_verified_fact(partial_repair):
     calls = []
     def call(system, user):
         payload = json.loads(user)
@@ -95,9 +96,10 @@ def test_repair_uses_same_aliases_and_cannot_replace_verified_fact():
                 {"id": "bad", "type": "fact", "section": "market", "ref": "unknown"}]})
         assert payload["previous_document"]["items"][0]["ref"] == facts[0]["id"]
         assert payload["repair_evidence"] == [{"item_id": "bad", "facts": [], "refs_not_in_fact_catalog": ["unknown"]}]
-        return json.dumps({"schema_version": 1, "items": [
+        items = [
             {"id": "kept", "type": "fact", "section": "market", "ref": facts[-1]["id"]},
-            {"id": "bad", "type": "fact", "section": "market", "ref": facts[1]["id"]}]})
+            {"id": "bad", "type": "fact", "section": "market", "ref": facts[1]["id"]}]
+        return json.dumps({"schema_version": 1, "items": items[1:] if partial_repair else items})
     result = publish_report(task="列出首两日收盘价", draft="", tool_results=market_receipts()[:1], run_scope="repair", call=call)
     assert result.verification["status"] == "complete"
     assert "10.5" in result.text and "10.6" in result.text and "14.4" not in result.text

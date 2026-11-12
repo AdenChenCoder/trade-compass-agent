@@ -74,6 +74,11 @@ class ReportDocument(BaseModel):
     items: list[ReportItem] = Field(max_length=120)
 
 
+class ReportContentDocument(ReportDocument):
+    """Without execution records, an empty report cannot answer the task."""
+    items: list[ReportItem] = Field(min_length=1, max_length=120)
+
+
 @dataclass(frozen=True)
 class Finding:
     category: str

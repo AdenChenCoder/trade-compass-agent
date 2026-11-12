@@ -63,6 +63,49 @@ def test_maintenance_uses_closed_thinking_template_in_raw_endpoint(monkeypatch, 
     assert body["stream"] is True and body["max_tokens"] == 4096
 
 
+@pytest.mark.parametrize("channel", ["content", "reasoning_content"])
+def test_schema_maintenance_uses_chat_grammar_and_validates_misclassified_json(monkeypatch, tmp_path, channel):
+    from trade_compass_agent.runtime.report_contract import ReportDocument
+    requests = []
+    value = '{"schema_version":1,"items":[{"id":"p","section":"market","type":"fact","ref":"e1"}]}'
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, text=_sse({"index": 0, "delta": {channel: value}, "finish_reason": "stop"}),
+                              headers={"content-type": "text/event-stream"})
+    monkeypatch.setattr("trade_compass_agent.llm.providers._usage_http_client",
+                        lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    client = OpenAIChatClient(model="qwen3.6-35b-a3b", api_key="lmstudio", name="lmstudio",
+                             base_url="http://localhost:1234/v1", usage_db_path=tmp_path / "usage.db")
+    with llm_maintenance_mode(max_tokens=16384, response_model=ReportDocument):
+        result = client.complete([ChatMessage(role="user", content="报告")])
+    assert result.content == value
+    assert requests[0].url.path == "/v1/chat/completions"
+    body = json.loads(requests[0].content)
+    assert body["response_format"]["json_schema"]["schema"] == ReportDocument.model_json_schema()
+    assert body["max_tokens"] == 16384
+    from trade_compass_agent.llm.providers import _maintenance_response_model
+    assert _maintenance_response_model.get() is None
+
+
+@pytest.mark.parametrize("value,finish", [("private thoughts", "stop"), ('{"items":[]}', "stop"),
+                                        ('{"schema_version":1,"items":[]}', "length")])
+def test_schema_maintenance_never_promotes_thoughts_invalid_or_truncated_json(monkeypatch, tmp_path, value, finish):
+    from trade_compass_agent.runtime.report_contract import ReportDocument
+    from trade_compass_agent.runtime.exceptions import LLMIncompleteResponseError
+    calls = []
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, text=_sse({"index": 0, "delta": {"reasoning_content": value}, "finish_reason": finish}),
+                              headers={"content-type": "text/event-stream"})
+    monkeypatch.setattr("trade_compass_agent.llm.providers._usage_http_client",
+                        lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    client = OpenAIChatClient(model="qwen3.6-35b-a3b", api_key="lmstudio", name="lmstudio", max_retries=2,
+                             base_url="http://localhost:1234/v1", usage_db_path=tmp_path / "usage.db")
+    with llm_maintenance_mode(response_model=ReportDocument), pytest.raises(LLMIncompleteResponseError):
+        client.complete([ChatMessage(role="user", content="报告")])
+    assert len(calls) == 1
+
+
 @pytest.mark.parametrize("model", ["qwen3.5-35b-a3b", "qwen3.8-27b"])
 def test_local_timeout_is_not_replayed_by_sdk(monkeypatch, tmp_path, model):
     requests = []
@@ -475,7 +518,10 @@ def test_reasoning_only_finish_uses_one_readonly_finalization_without_replaying_
     AutonomousTradingStore(config.data_dir).set_enabled(True)
     reply = ScheduledAgentSession(config, job_id="autonomous_trading").run("买入000001100股", timeout=5)
     assert len(orders) == 1 and "actual-receipt" in reply
-    assert [r.url.path for r in requests] == ["/v1/chat/completions"] * 3 + ["/v1/completions", "/v1/chat/completions"]
+    assert [r.url.path for r in requests] == ["/v1/chat/completions"] * 5
+    composition = json.loads(requests[3].content)
+    assert composition["response_format"]["json_schema"]["schema"]["properties"]["items"]["maxItems"] == 120
+    assert composition["max_tokens"] == (8192 if model.startswith("qwen3.5") else 16384)
     finalization = json.loads(requests[2].content)
     assert all("tools" not in json.loads(request.content) for request in requests[2:])
     final_messages = json.dumps(finalization["messages"])

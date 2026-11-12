@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from trade_compass_agent.llm.providers import check_execution_active, llm_maintenance_mode
 from trade_compass_agent.runtime.exceptions import TurnInterruptedError
 from trade_compass_agent.runtime.report_contract import (
-    EvidenceCatalog, Finding, Inference, ReportDocument, render_document,
+    EvidenceCatalog, Finding, Inference, ReportDocument, ReportContentDocument, render_document,
     inference_evidence, validate_document, verification_result,
 )
 from trade_compass_agent.runtime.report_execution import execution_evidence
@@ -61,7 +61,8 @@ _REVIEW = (
 _REPAIR = (
     "这是结构修复轮次。previous_document中validation_errors指出的条目未通过程序校验。"
     "根据事实目录更正这些条目的引用或运算类型；不能照抄错误，不能猜测id。"
-    "未报错的条目必须原样保留。无可用依据的错误条目改为明确的gap。返回完整JSON文档。"
+    "程序会原样保留已核验条目，不必重复输出；只返回未完成条目的替换JSON文档。"
+    "无可用依据的错误条目改为明确的gap；整篇报告为空或结构错误时重新生成完整文档。"
     "repair_evidence展开出错条目引用的原始事实；refs_not_in_fact_catalog不是原始操作数，"
     "只有研判可以通过报告fact/calculation条目追溯依据。"
 )
@@ -91,10 +92,11 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
     """No business-tool callback is available anywhere in this pipeline."""
     catalog = EvidenceCatalog.build(tool_results, run_scope=run_scope)
     execution = execution_evidence(tool_results if current_tool_results is None else current_tool_results)
+    response_model = ReportDocument if execution.records else ReportContentDocument
     transport = ReportTransport(catalog)
     payload = {"task": task, "draft": draft, **transport.table,
                "execution_records": execution.records,
-               "schema": ReportDocument.model_json_schema()}
+               "schema": response_model.model_json_schema()}
     document = None
     findings, rendered, traces = [], {}, {}
     attempts, review, fixed_items = [], None, {}
@@ -104,7 +106,7 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
         try:
             # This pass only binds/serializes the draft. Semantic reasoning has
             # its own pass below; a thinking trace cannot substitute for JSON.
-            with llm_maintenance_mode(max_tokens=16384):
+            with llm_maintenance_mode(max_tokens=16384, response_model=response_model):
                 raw = call(_COMPOSE + (_REPAIR if attempts else ""), json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
             check_active()
             parsed = transport.decode_document(_json_value(raw))

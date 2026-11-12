@@ -12,6 +12,24 @@ RECEIPTS = [("get_bars", json.dumps({"symbol": "002415", "name": "海康威视",
     {"timestamp": "2026-11-09", "close": 6.60}, {"timestamp": "2026-11-10", "close": 7.46}]}))]
 
 
+@pytest.mark.parametrize("executed", [False, True])
+def test_generation_schema_allows_empty_items_only_with_owned_execution(executed):
+    receipts = [("place_paper_trade", json.dumps({"status": "executed", "trade_id": "owned",
+        "symbol": "000001", "side": "buy", "quantity": 100, "price": 10, "account": "short_stock",
+        "timestamp": "2026-11-10T10:00:00+08:00"}))] if executed else RECEIPTS
+    def call(system, user):
+        payload = json.loads(user)
+        if "schema" in payload:
+            from trade_compass_agent.llm.providers import _maintenance_response_model
+            assert _maintenance_response_model.get().model_json_schema() == payload["schema"]
+            assert payload["schema"]["properties"]["items"].get("minItems", 0) == (0 if executed else 1)
+            return '{"schema_version":1,"items":[]}'
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    result = publish_report(task="报告结果", draft="", tool_results=receipts, run_scope="empty", call=call)
+    assert (result.verification["status"] == "complete") == executed
+    assert ("owned" in result.text) == executed
+
+
 @pytest.mark.parametrize("metric,unit,accepted", [("pnl_pct", "%", True), ("change_pct", "%", True),
                                                  ("pnl_pct", "元", False), ("quantity", "股", False)])
 def test_percentage_plans_use_producer_types_without_accepting_wrong_units(metric, unit, accepted):
