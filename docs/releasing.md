@@ -46,6 +46,74 @@ attaches the installer, Python distributions, a CycloneDX SBOM, and
 
 ## Acceptance
 
+### Installed behavior gate
+
+CI, TestPyPI and production builds run `scripts/release_acceptance.py` with the
+candidate wheel's interpreter before publication. The script verifies every
+installed package file against that wheel, copies the selected consumer tests
+outside the checkout, isolates all writable roots, and runs them with explicit
+model/tool doubles. It covers report transport and repair, legitimate and invalid
+evidence, repeated scheduled execution, persisted API/session views, native
+continuation and cancellation. Source test success alone is insufficient.
+
+The gate rejects zero tests, skips, collection errors and assertion failures.
+It retains JUnit, logs, suite hashes and the exact wheel digest on failure as well
+as success. Production post-publication acceptance compares the PyPI installation
+to the wheel accepted before publication and reruns the same behavioral suite.
+Missing evidence is not a passing result.
+
+```bash
+/path/to/installed-venv/bin/python -I scripts/release_acceptance.py \
+  --wheel /path/to/candidate.whl --output /outside/checkout/new-acceptance-directory
+```
+
+Install the pinned CI pytest version into the isolated environment first. Each
+output directory is exclusive: preserve failures and use a new directory after
+fixing a defect. Keep the same scene and acceptance criteria when comparing a bad
+release with its fix. A collection error only proves rejection; use the targeted
+consumer regression separately to demonstrate the original behavioral failure.
+
+### Real model gate
+
+Deterministic doubles cannot establish whether a deployed model follows the wire
+protocol, chooses the right metric or fits its actual context window. Run
+`scripts/release_model_acceptance.py` with the exact installed wheel against the
+required LM Studio model. Its fixed scene plan uses synthetic dated receipts,
+real inference, isolated roots, no business writes, bounded calls and separate
+processes for first/continued execution. The model and service must already be
+available; the harness does not start, reconfigure or switch models.
+
+```bash
+/path/to/installed-venv/bin/python -I scripts/release_model_acceptance.py \
+  --wheel /path/to/candidate.whl --model MODEL_ID \
+  --output /outside/checkout/new-model-acceptance-directory
+```
+
+Availability and safety are separate requirements. Every normal scene must finish
+with a complete, correct report; a safely withheld normal answer still fails the
+availability gate. A deliberately missing-data scene must retain the true gap and
+valid available content. The independent oracle checks dated closing-price
+operands and arithmetic, not only the model's completeness verdict. Do not
+reclassify an unexpected failure as an expected negative after seeing results,
+drop a failed scene, increase budgets after a timeout, or retry until green.
+Changing a scene or threshold requires review and a new complete evidence set.
+
+Real-model execution requires an approved runner that can reach the required
+model. The local harness is not itself a GitHub publishing dependency: until that
+runner and required job are configured, automatic real-model enforcement remains
+an open release prerequisite. Do not present deterministic CI as that enforcement.
+Other providers need their own real-adapter acceptance; native protocol doubles
+do not certify vendor authentication or real inference.
+
+These gates cover the report incident class, not all product journeys. Expand
+consumer contracts with affected features: first/continued use, restart, upgrade
+and rollback with new records, real UI drafts and device authorization where
+applicable. Deployments still require a stopped-state backup, one production
+writer and an authorized read-only probe. Do not auto-restore older state after
+new trades or replay mutations to test a release. Define candidate/production
+failure criteria before cutover and retain the prior program for compatible
+program-only recovery.
+
 The installed-package smoke test verifies:
 
 - the importable version;
