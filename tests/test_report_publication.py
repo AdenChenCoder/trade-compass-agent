@@ -12,20 +12,23 @@ RECEIPTS = [("get_bars", json.dumps({"symbol": "002415", "name": "海康威视",
     {"timestamp": "2026-11-09", "close": 6.60}, {"timestamp": "2026-11-10", "close": 7.46}]}))]
 
 
+@pytest.mark.parametrize("reader_prose", [False, True])
 @pytest.mark.parametrize("executed", [False, True])
-def test_generation_schema_allows_empty_items_only_with_owned_execution(executed):
+def test_generation_schema_allows_empty_items_only_with_owned_execution(executed, reader_prose):
     receipts = [("place_paper_trade", json.dumps({"status": "executed", "trade_id": "owned",
         "symbol": "000001", "side": "buy", "quantity": 100, "price": 10, "account": "short_stock",
         "timestamp": "2026-11-10T10:00:00+08:00"}))] if executed else RECEIPTS
     def call(system, user):
         payload = json.loads(user)
         if "schema" in payload:
-            from trade_compass_agent.llm.providers import _maintenance_response_schema
-            assert _maintenance_response_schema.get() == payload["schema"]
+            from trade_compass_agent.llm.providers import _response_schema, _response_output_limit, _maintenance_mode
+            assert _response_schema.get() == (None if reader_prose else payload["schema"])
+            assert _maintenance_mode.get() is (not reader_prose)
+            assert _response_output_limit.get() == 16384
             assert payload["schema"]["properties"]["items"].get("minItems", 0) == (0 if executed else 1)
             return '{"schema_version":1,"items":[]}'
         return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
-    result = publish_report(task="报告结果", draft="", tool_results=receipts, run_scope="empty", call=call)
+    result = publish_report(task="报告结果", draft="", tool_results=receipts, run_scope="empty", call=call, reader_prose=reader_prose)
     assert (result.verification["status"] == "complete") == executed
     assert ("owned" in result.text) == executed
 

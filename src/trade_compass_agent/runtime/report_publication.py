@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from trade_compass_agent.llm.providers import check_execution_active, llm_maintenance_mode
+from trade_compass_agent.llm.providers import check_execution_active, llm_maintenance_mode, llm_response_contract
 from trade_compass_agent.runtime.exceptions import TurnInterruptedError
 from trade_compass_agent.runtime.report_contract import (
     EvidenceCatalog, Finding, Inference, Gap, Observation, Calculation, ReportDocument, ReportContentDocument, render_document,
@@ -260,9 +260,13 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
         check_active()
         raw, parsed, structure_errors = None, None, []
         try:
-            # This pass only binds/serializes the draft. Semantic reasoning has
-            # its own pass below; a thinking trace cannot substitute for JSON.
-            with llm_maintenance_mode(max_tokens=16384, response_schema=payload["schema"]):
+            # Writing natural sentences needs reasoning. Keep the application
+            # schema and bounded repair, without forcing a closed-thinking raw
+            # template or applying a JSON grammar to the reasoning stream.
+            # Internal evidence serialization retains its maintenance contract.
+            mode = (llm_response_contract(max_tokens=16384) if reader_prose else
+                    llm_maintenance_mode(max_tokens=16384, response_schema=payload["schema"]))
+            with mode:
                 raw = call(compose_prompt + (_REPAIR if attempts else ""), json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
             check_active()
             parsed = transport.decode_document(_json_value(raw))

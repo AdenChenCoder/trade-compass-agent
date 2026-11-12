@@ -26,6 +26,9 @@ in the linked regression tests, not in expanding prose exception lists.
   Material gaps and uncertain execution outcomes
   stay visible in the body. Legacy saved text remains readable without regeneration.
 
+- Natural paragraph writing uses the model's reasoning path, with bounded output
+  and application-side schema validation. Non-thinking maintenance is reserved
+  for internal evidence serialization, not sentence composition.
 - Report composition and review share a maximum of four model calls. Unused
   structural-repair capacity may fund one feedback revision and a fresh review.
   Preserve required gaps through revision; unavailable review must retain the

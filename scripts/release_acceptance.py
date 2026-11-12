@@ -27,6 +27,7 @@ SUITES = (
     "test_report_incident_annotations.py",
     "test_native_agents.py",
     "test_native_budgets.py",
+    "test_lmstudio_execution.py",
 )
 
 
