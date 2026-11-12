@@ -21,6 +21,7 @@ SUITES = (
     "test_report_transport.py",
     "test_report_publication.py",
     "test_report_reading.py",
+    "test_report_narrative.py",
     "test_report_scheduler_contract.py",
     "test_report_batch_contract.py",
     "test_report_incident_annotations.py",

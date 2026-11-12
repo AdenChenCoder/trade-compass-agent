@@ -91,8 +91,18 @@ def check_report(detail, artifact, receipt, *, missing):
     for value, timestamp in expected:
         require(value in detail["analysis"] and timestamp in detail["analysis"],
                 "dated closing prices are absent from the published report")
+    paragraphs = [item for item in artifact["document"]["items"] if item["type"] == "paragraph"]
+    require(bool(paragraphs), "normal answer was replaced with an evidence list")
+    approved = {row["id"] for row in artifact["review"]["reviews"] if row["supported"]}
+    require(all(item["id"] in approved for item in paragraphs), "final prose did not pass review")
+    require(artifact["published_text"] == detail["analysis"], "persisted body differs from published body")
+    require(bool(artifact["reader_body"]), "reader body missing")
+    required_calcs = {key for key, calc in artifact["calculations"].items() if calc.get("operation") == "change_pct"}
+    visible_calcs = {part["ref"] for paragraph in paragraphs for part in paragraph["parts"]
+                     if part["type"] == "value" and part["field"] == "value"}
+    require(bool(required_calcs & visible_calcs), "requested change percentage appears only in evidence, not the body")
     if not missing:
-        require("研判：" in detail["analysis"], "requested price-direction judgment is absent")
+        require(artifact["review_input"]["report"] == detail["analysis"], "reviewed body differs from final body")
 
 
 def worker(root, case, model):
@@ -194,6 +204,8 @@ def worker(root, case, model):
         require(response.status_code == 200, "run unavailable through API")
         detail = response.json()
         (root/f"{case}-run.json").write_text(json.dumps(detail, ensure_ascii=False, indent=2))
+        require(detail.get("status") in {"completed", "degraded"},
+                "scheduled task did not produce a report: " + str(detail.get("error") or detail.get("status")))
         require(tools == [expected_tool], "current run did not fetch its own evidence")
         for name, contents in previous.items():
             require((state/"data/agent_sessions"/name).read_bytes().startswith(contents), "history rewritten")

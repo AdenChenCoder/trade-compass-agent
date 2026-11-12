@@ -1,7 +1,7 @@
 import { test, expect, chromium } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 
-test('published reports retain readable tables, full copy and incomplete status on phones', async ({ page }, testInfo) => {
+test('published narrative retains sources, full copy and incomplete status on phones', async ({ page }, testInfo) => {
   const notices = JSON.parse(execFileSync('../../.venv/bin/python', ['-c', `
 import sys,json
 sys.path.insert(0, '../../tests')
@@ -34,15 +34,22 @@ print(json.dumps([dict(title='价格观察' + ('（资料不足）' if missing e
       await phone.getByRole('button', { name: `查看任务详情：${notice.title}`, exact: true }).click();
       const sheet = phone.getByRole('dialog', { name: notice.title, exact: true });
       await expect(sheet.locator('.result-badge')).toHaveText(notice.task_status === 'degraded' ? '结果不完整' : '任务结果');
-      await expect(sheet.getByRole('heading', { name: '市场', exact: true })).toHaveCount(1);
-      await expect(sheet.locator('table')).toContainText('10元/股');
-      await expect(sheet.locator('table')).toContainText('11元/股');
+      await expect(sheet.locator('.markdown > p').first()).toContainText('从10元/股升至11元/股');
+      await expect(sheet.locator('table')).toHaveCount(0);
+      const sources = sheet.locator('.report-sources');
+      await expect(sources).not.toHaveAttribute('open');
       for (const width of [320, 390]) {
         await phone.setViewportSize({ width, height: 844 });
-        expect(await sheet.locator('table').evaluate(table => table.scrollWidth <= table.clientWidth + 1)).toBe(true);
         expect(await sheet.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
         await phone.screenshot({ path: testInfo.outputPath(`report-${notice.task_status}-${width}.png`), animations: 'disabled' });
       }
+      await sheet.locator('a[data-footnote-ref]').click();
+      await expect(sources).toHaveAttribute('open');
+      await expect(sources).toContainText('2026-11-10');
+      await expect(sources).toContainText('2026-11-11');
+      await phone.screenshot({ path: testInfo.outputPath(`sources-${notice.task_status}.png`), animations: 'disabled' });
+      await sources.locator('a[data-footnote-backref]').click();
+      await expect(sheet.locator('a[data-footnote-ref]')).toBeFocused();
       await expect(sheet).toContainText('10.00%');
       await expect(sheet).toContainText('这两日收盘价上升');
       await sheet.getByRole('button', { name: '复制内容', exact: true }).click();

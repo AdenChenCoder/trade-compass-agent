@@ -675,6 +675,7 @@ class AgentLoop:
                 check_execution_active()
             publication = publish_report(task="仅保留拟保存记忆的含义和必要依据，不扩展结论范围：\n" + content,
                 draft=content, tool_results=evidence, current_tool_results=[],
+                reader_prose=False,
                 run_scope=f"{session.session_id}:memory:{uuid4().hex}", run_id=self.report_run_id,
                 call=read_only_report_call, check_active=active)
             publication.verification.update(persist_publication(self.config.data_dir, publication, check_active=active))
@@ -1026,9 +1027,6 @@ class AgentLoop:
                 quality.degraded |= incomplete(verification)
                 publication.verification = verification
                 publication.artifact["verification"] = verification
-                from trade_compass_agent.runtime.report_publication import persist_publication
-                verification.update(persist_publication(
-                    self.config.data_dir, publication, check_active=publication_active))
                 quality.warnings = list(dict.fromkeys([*quality.warnings, *(f["message"] for f in findings)]))
             if data_warnings:
                 final_text += "\n\n数据可用性：\n" + "\n".join(f"- {w}" for w in data_warnings)
@@ -1042,6 +1040,15 @@ class AgentLoop:
                 final_text += "\n\n" + incomplete_reason
             if publication is None:
                 final_text += "".join(build_report_evidence(final_text, data_tool_calls))
+            else:
+                # Save the actual consumer text, including runtime-owned notices.
+                # No model rewrites the approved paragraphs after review.
+                from trade_compass_agent.runtime.report_publication import persist_publication
+                publication.artifact["reader_body"] += final_text[len(publication.text):]
+                publication.text = final_text
+                publication.artifact["published_text"] = final_text
+                verification.update(persist_publication(
+                    self.config.data_dir, publication, check_active=publication_active))
             if publish_after_verification:
                 self._emit("delta", {"text": final_text})
 

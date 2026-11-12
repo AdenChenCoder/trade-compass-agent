@@ -19,7 +19,15 @@ def example_publication(*, missing=False):
         return json.dumps({"schema_version": 1, "items": [
             *[{"id": f"price{i}", "type": "fact", "section": "market", "ref": f["id"]} for i, f in enumerate(facts)],
             {"id": "change", "type": "calculation", "section": "market", "operation": "change_pct", "refs": [f["id"] for f in facts]},
-            {"id": "direction", "type": "inference", "section": "assessment", "text": "这两日收盘价上升。", "refs": ["change"]},
+            {"id": "direction", "type": "paragraph", "section": "assessment", "refs": ["change"], "parts": [
+                {"type": "value", "ref": facts[0]["id"], "field": "subject"},
+                {"type": "text", "text": "这两日收盘价上升，从"},
+                {"type": "value", "ref": facts[0]["id"], "field": "value"},
+                {"type": "text", "text": "升至"},
+                {"type": "value", "ref": facts[1]["id"], "field": "value"},
+                {"type": "text", "text": "，变动"},
+                {"type": "value", "ref": "change", "field": "value"},
+                {"type": "text", "text": "。这一变化不能说明后续走势。"}]},
             *([{"id": "gap", "type": "gap", "section": "gaps", "text": "缺少营收资料"}] if missing else []),
         ]})
 
@@ -63,9 +71,9 @@ def test_grouped_report_keeps_identity_dates_scope_and_invalid_outcomes():
         payload = json.loads(user)
         requests.append(payload)
         if "schema" not in payload:
-            # The audit presentation sent to the reviewer stays unchanged.
+            # Review sees the same reader renderer, including exact source notes.
             assert "2026-11-10T07:00:00+00:00" in payload["report"]
-            assert "数据来源与口径" not in payload["report"]
+            assert "数据来源与口径" in payload["report"]
             return json.dumps({"reviews": [{"id": "bad", "supported": False, "reason": "价格不能证明业绩改善"}],
                                "coverage": {"complete": True, "missing": []}})
         facts = [f for f in report_facts(payload) if f["metric"] == "close"]

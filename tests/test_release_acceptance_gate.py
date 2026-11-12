@@ -61,7 +61,12 @@ def valid_report():
                            for i, b in enumerate(receipt["bars"])],
                 "calculations": {"change": {"operation": "change_pct", "refs": ["0", "1"], "result": "10"}},
                 "document": {"items": [{"id": "observation", "type": "fact", "ref": "0"},
-                                       {"id": "change", "type": "calculation", "refs": ["0", "1"]}]}}
+                                       {"id": "change", "type": "calculation", "refs": ["0", "1"]},
+                                       {"id": "answer", "type": "paragraph", "parts": [
+                                           {"type": "value", "ref": "change", "field": "value"}]}]},
+                "review": {"reviews": [{"id": "answer", "supported": True}]},
+                "published_text": detail["analysis"], "reader_body": detail["analysis"],
+                "review_input": {"report": detail["analysis"]}}
     return detail, artifact, receipt
 
 
@@ -91,6 +96,7 @@ def test_real_gap_is_required_but_cannot_excuse_wrong_calculation():
 
     detail["status"] = "degraded"
     detail["analysis"] += " 缺少营收依据"
+    artifact["published_text"] = detail["analysis"]
     verification = detail["step_runs"][0]["data"]["verification"]
     verification.update(report="partial", findings=[{"code": "task_incomplete"}])
     MODEL["check_report"](detail, artifact, receipt, missing=True)

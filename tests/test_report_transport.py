@@ -123,7 +123,8 @@ def test_repair_uses_same_aliases_and_cannot_replace_verified_fact(repair_mode):
         assert payload["previous_document"]["items"][0]["ref"] == facts[0]["id"]
         assert payload["repair_evidence"] == [{"item_id": "bad", "facts": [], "refs_not_in_fact_catalog": ["unknown"]}]
         assert payload["schema"]["properties"]["items"]["maxItems"] == 1
-        assert all(d["properties"]["id"]["enum"] == ["bad"] for d in payload["schema"]["$defs"].values())
+        assert all(d["properties"]["id"]["enum"] == ["bad"] for d in payload["schema"]["$defs"].values()
+                   if "id" in d["properties"])
         items = [
             {"id": "kept", "type": "fact", "section": "market", "ref": facts[-1]["id"]},
             {"id": "bad", "type": "fact", "section": "market", "ref": facts[1]["id"]}]
@@ -208,9 +209,8 @@ def test_fact_rendering_example_matches_consumer_dates_and_missing_time(observed
         return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
 
     result = publish_report(task="报告事实及其可用时点", draft="", tool_results=receipts, run_scope="dates", call=call)
-    # The model still sees the full audit example. Public layout can differ,
-    # but must retain the selected identity/value and the same observation time.
-    assert examples[0]["rendered"] in reviews[0]
+    # Review the exact reader presentation, not a separate audit rendering.
+    assert reviews[0] == result.text
     assert "**002415**" in result.text
     assert ("收盘价 34.83元/股" if observed else "代码 002415") in result.text
     assert (observed if observed else "时点未提供") in result.text

@@ -7,6 +7,20 @@ in the linked regression tests, not in expanding prose exception lists.
 
 ## Report and market evidence
 
+- Evidence structure is not the reader's writing structure. Published paragraphs
+  may combine observations and judgments naturally. Explicit inline bindings keep
+  values, units, identity and dates runtime-owned; a semantic review checks their
+  use in the expanded sentence against original receipts and task scope. Reference
+  existence alone does not establish meaning, and prose keyword/regex rules are
+  not a substitute for this review.
+- Review the actual reader presentation. No model rewrites approved paragraphs
+  afterwards. Save the final consumer text alongside evidence and review; runtime
+  availability notices may be appended without changing reviewed prose. Sources
+  may be disclosed on demand. Task coverage is assessed from the reader body;
+  a requested result present only in source notes does not count as an answer.
+  Material gaps and uncertain execution outcomes
+  stay visible in the body. Legacy saved text remains readable without regeneration.
+
 - Validate typed facts against runtime-owned receipts. Preserve instrument and
   account identity, metric, sign, rounding, unit, category, period and source
   scope through nested research, dispatch, publication and persisted output.

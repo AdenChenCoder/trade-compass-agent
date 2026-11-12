@@ -1,8 +1,8 @@
 """Reader presentation of already validated report items.
 
-No model call, new claim, precision change or state mutation occurs here. The
-reviewer keeps the full audit presentation; readers get grouped observations
-and reusable source notes with the same values and exact context.
+No model call, new claim, precision change or state mutation occurs here.
+Review and publication use the same presentation. Narrative paragraphs retain
+their author-chosen order; legacy documents keep their readable fact layout.
 """
 from __future__ import annotations
 
@@ -11,7 +11,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from trade_compass_agent.runtime.report_contract import (
-    Calculation, Condition, Observation, SECTION_LABELS,
+    Calculation, Condition, Observation, Paragraph, Inference, SECTION_LABELS,
+    inference_evidence,
 )
 
 
@@ -38,12 +39,14 @@ def _date(fact) -> str:
     return fact.observed_at
 
 
-def render_readable_document(document, rendered, findings, catalog, *, execution=None):
+def render_readable_document(document, rendered, findings, catalog, *, execution=None, include_sources=True):
     """Preserve section/item order, merging recurring sections and fact blocks.
 
     Group only observations already present in ``rendered``. Failed items never
     acquire a rendered value by resolving their references in this layer.
     """
+    if any(isinstance(item, Paragraph) for item in document.items):
+        return _narrative(document, rendered, findings, catalog, execution=execution, include_sources=include_sources)
     sections = defaultdict(list)
     for item in document.items:
         sections[item.section].append(item)
@@ -122,7 +125,53 @@ def render_readable_document(document, rendered, findings, catalog, *, execution
             lines.append(execution.render(heading=False, include_table=False).strip())
     if execution and execution.trade_details:
         lines.append(execution.trade_details.strip())
-    if notes:
+    if notes and include_sources:
         lines.append("## 数据来源与口径")
         lines.extend(f"- 〔{number}〕{_plain(context)}" for context, number in notes.items())
     return "\n\n".join(lines)
+
+
+def _narrative(document, rendered, findings, catalog, *, execution, include_sources=True):
+    """Display approved prose, with independently navigable source footnotes.
+
+    Fact/calculation items are evidence definitions in this format. They are
+    not inserted between the writer's sentences. If no paragraph survives,
+    retain validated facts as a partial report, never as a successful answer.
+    """
+    blocks, notes = [], {}
+    approved = any(isinstance(item, Paragraph) and item.id in rendered for item in document.items)
+    by_item = defaultdict(list)
+    for finding in findings:
+        if finding.item_id:
+            by_item[finding.item_id].append(finding.message)
+    for item in document.items:
+        if isinstance(item, (Observation, Calculation)):
+            if item.id in by_item:
+                blocks.append("暂未形成可核实结论：" + "；".join(dict.fromkeys(by_item[item.id])))
+            if not approved and item.id in rendered:
+                blocks.append(rendered[item.id])
+            continue
+        if item.id not in rendered:
+            if item.id in by_item:
+                blocks.append("暂未形成可核实结论：" + "；".join(dict.fromkeys(by_item[item.id])))
+            continue
+        text = rendered[item.id]
+        if isinstance(item, (Paragraph, Inference)):
+            facts, calculations = inference_evidence(item, document, catalog)
+            sources = [fact.display() for fact in facts]
+            for calculation in calculations:
+                entry = next(entry for entry in document.items if entry.id == calculation["id"])
+                if entry.id in rendered:
+                    sources.append(rendered[entry.id])
+            if sources:
+                key = tuple(sources)
+                notes.setdefault(key, len(notes) + 1)
+                text += f"[^source-{notes[key]}]"
+        blocks.append(text)
+    if execution:
+        blocks.append(execution.render(include_table=False).strip())
+        blocks.append(execution.trade_details.strip())
+    if include_sources:
+        for sources, number in notes.items():
+            blocks.append(f"[^source-{number}]: " + "；".join(_plain(source) for source in sources))
+    return "\n\n".join(block for block in blocks if block)

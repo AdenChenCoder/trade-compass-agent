@@ -15,6 +15,7 @@ fi
   scripts/check_dist.py \
   scripts/release_acceptance.py \
   scripts/release_model_acceptance.py \
+  scripts/report_narrative_acceptance.py \
   tests/test_release_acceptance_gate.py \
   tests/test_report_batch_contract.py \
   scripts/mobile_probe.py \
@@ -40,6 +41,7 @@ fi
   src/trade_compass_agent/runtime/tool_receipts.py \
   tests/test_report_publication.py \
   tests/test_report_reading.py \
+  tests/test_report_narrative.py \
   tests/test_report_transport.py \
   tests/test_report_scheduler_contract.py \
   tests/test_report_incident_annotations.py \
