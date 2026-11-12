@@ -195,6 +195,7 @@ def test_fact_rendering_example_matches_consumer_dates_and_missing_time(observed
     receipts = [("get_bars", json.dumps({"symbol": "002415", "bars": [bar],
                  "_meta": {"timestamp": "2026-11-12T12:00:00"}}))]
     examples = []
+    reviews = []
 
     def call(system, user):
         payload = json.loads(user)
@@ -203,10 +204,17 @@ def test_fact_rendering_example_matches_consumer_dates_and_missing_time(observed
             examples.append(example)
             return json.dumps({"schema_version": 1, "items": [
                 {"id": "price", "type": "fact", "section": "market", "ref": example["ref"]}]})
+        reviews.append(payload["report"])
         return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
 
     result = publish_report(task="报告事实及其可用时点", draft="", tool_results=receipts, run_scope="dates", call=call)
-    assert examples[0]["rendered"] in result.text
+    # The model still sees the full audit example. Public layout can differ,
+    # but must retain the selected identity/value and the same observation time.
+    assert examples[0]["rendered"] in reviews[0]
+    assert "**002415**" in result.text
+    assert ("收盘价 34.83元/股" if observed else "代码 002415") in result.text
+    assert (observed if observed else "时点未提供") in result.text
+    assert "2026-11-12" not in result.text
     assert "2026-11-12" not in examples[0]["rendered"]
     assert (observed if observed else "时点未提供") in examples[0]["rendered"]
     assert "fact_rendering_example" not in result.text

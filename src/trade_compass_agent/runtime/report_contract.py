@@ -108,6 +108,10 @@ class Fact:
 
     def display(self) -> str:
         context = " · ".join(x for x in (self.subject, self.account) if x)
+        return f"{context + '：' if context else ''}{self.label} {self.value}{self.unit}（{self.context()}）"
+
+    def context(self) -> str:
+        """Exact observation context shared by audit and reader presentations."""
         stamp = self.observed_at or "时点未提供"
         details = json.loads(self.scope) if self.scope else {}
         labels = {"timeframe": "周期", "adjustment": "复权口径", "classification": "分类来源",
@@ -123,7 +127,7 @@ class Fact:
         if details.get("pnl_basis") == "fifo_after_entry_and_exit_fees":
             notes.append("FIFO净结算，已扣分摊买卖费用")
         scope = "；" + "；".join(notes) if notes else ""
-        return f"{context + '：' if context else ''}{self.label} {self.value}{self.unit}（{stamp}{scope}；{self.source}）"
+        return f"{stamp}{scope}；{self.source}"
 
 
 # These are producer field contracts, not phrases recognized in generated prose.

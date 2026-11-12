@@ -17,6 +17,7 @@ from trade_compass_agent.runtime.report_contract import (
     inference_evidence, validate_document, verification_result,
 )
 from trade_compass_agent.runtime.report_execution import execution_evidence
+from trade_compass_agent.runtime.report_reading import render_readable_document
 from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items
 
 
@@ -288,13 +289,14 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
             "items": [item for item in document.items if item.id not in dismissed_gaps]})
         if dismissed_gaps and not published_document.items and not execution.records:
             findings.append(Finding("report", "empty_report", "尚无可核实的报告内容"))
-        text = render_document(published_document, rendered, findings)
+        text = render_readable_document(published_document, rendered, findings, catalog, execution=execution)
         result = verification_result(findings, report="partial" if findings else "complete",
                                      data="insufficient" if any(f.category == "data" for f in findings) else "available")
     findings.extend(execution.findings)
     result = verification_result(findings, report=result["report"], data=result["data"],
                                  execution="unknown" if execution.findings else "completed")
-    text += execution.render()
+    if document is None:
+        text += execution.render()
     visible_ids = {item.id for item in document.items} if document else set()
     global_findings = [f.message for f in findings if not f.item_id or f.item_id not in visible_ids]
     if global_findings:

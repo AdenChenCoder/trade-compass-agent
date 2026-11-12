@@ -80,7 +80,7 @@ def unverified_execution_claim(text: str, tool_results: list[tuple[str, str]]) -
     return not ledger_facts or any(re.search(r"本轮|本次|刚刚", line) for line in claims)
 
 
-def trade_receipt_section(tool_results: list[tuple[str, str]]) -> str:
+def trade_receipt_section(tool_results: list[tuple[str, str]], *, compact: bool = False) -> str:
     """Render today's queried ledger facts and current executions without an LLM.
 
     A ledger query is not an order, and FIFO settlements are not executions.
@@ -118,6 +118,19 @@ def trade_receipt_section(tool_results: list[tuple[str, str]]) -> str:
 
     def cell(value):
         return str(value).replace("|", "\\|").replace("\n", " ")
+
+    if compact:
+        from trade_compass_agent.runtime.report_reading import _plain
+        lines = ["\n\n**成交核对**", "",
+                 "以下逐笔数据来自本轮成交回执或当日账本查询；账本记录不表示本轮新下单。"]
+        for identity, row in sorted(facts.items(), key=lambda pair: str(pair[1].get("timestamp", ""))):
+            source = "本轮回执" if identity in executed else "当日账本"
+            side = "买入" if row["side"] == "buy" else "卖出"
+            lines.append(f"\n- **{_plain(row['symbol'])} · {side}{_plain(row['quantity'])}股 · {_plain(row['price'])}元/股**  \n"
+                         f"  {source}；账户：{_plain(row['account'])}  \n"
+                         f"  时间：{_plain(row.get('timestamp') or '未提供')}  \n"
+                         f"  成交编号：{_plain(identity)}")
+        return "\n".join(lines)
 
     lines = ["\n\n**成交核对**", "", "以下逐笔数据来自本轮成交回执或当日账本查询；账本记录不表示本轮新下单。",
              "", "| 依据 | 时间 | 账户 | 标的 | 方向 | 数量 | 价格 | 成交 ID |",
