@@ -100,17 +100,32 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
     document = None
     findings, rendered, traces = [], {}, {}
     attempts, review, fixed_items = [], None, {}
+    pending_items = None
     for _ in range(3):  # Initial composition, then at most two structural repairs.
         check_active()
         raw, parsed, structure_errors = None, None, []
         try:
             # This pass only binds/serializes the draft. Semantic reasoning has
             # its own pass below; a thinking trace cannot substitute for JSON.
-            with llm_maintenance_mode(max_tokens=16384, response_model=response_model):
+            with llm_maintenance_mode(max_tokens=16384, response_schema=payload["schema"]):
                 raw = call(_COMPOSE + (_REPAIR if attempts else ""), json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
             check_active()
             parsed = transport.decode_document(_json_value(raw))
-            document, structural_findings, structure_errors = parse_report_items(parsed)
+            candidate = parsed
+            if fixed_items and isinstance(parsed, dict) and isinstance(parsed.get("items"), list):
+                # Repairs own unresolved IDs only. Discard attempts to replace
+                # fixed items before parsing: repeated or malformed copies of
+                # an immutable observation cannot invalidate its saved value.
+                candidate = {**parsed, "items": [item for item in parsed["items"]
+                    if not isinstance(item, dict) or not isinstance(item.get("id"), str) or item["id"] not in fixed_items]}
+                if pending_items is not None:
+                    # A patch may replace an unresolved ID, not add unrelated
+                    # observations. Omission leaves the original error pending.
+                    replacements = [item for item in candidate["items"] if isinstance(item, dict)
+                                    and isinstance(item.get("id"), str) and item["id"] in pending_items]
+                    replaced = {item["id"] for item in replacements}
+                    candidate["items"] = [*replacements, *(item for key, item in pending_items.items() if key not in replaced)]
+            document, structural_findings, structure_errors = parse_report_items(candidate)
             payload["structure_errors"] = structure_errors
             if fixed_items:
                 # The runtime applies repairs only to unresolved items. A model
@@ -146,9 +161,22 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
         if document is not None and all(finding.item_id or finding.code == "invalid_structure" for finding in blocking):
             blocked = {finding.item_id for finding in blocking}
             fixed_items = {item.id: item.model_dump() for item in document.items if item.id not in blocked}
-        payload["previous_document"] = transport.encode_document(parsed)
+            pending_items = ({item["id"]: item for item in candidate["items"]
+                if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"] in blocked}
+                if all(0 < len(key) <= 80 for key in blocked) else None)
+        previous = ({"schema_version": 1, "items": [*fixed_items.values(), *pending_items.values()]}
+                    if pending_items is not None else parsed)
+        payload["previous_document"] = transport.encode_document(previous)
         payload["validation_errors"] = [asdict(f) for f in blocking]
         payload["repair_evidence"] = transport.repair_evidence(document, blocking)
+        payload["schema"] = response_model.model_json_schema()
+        if pending_items:
+            # Grammar and runtime share the same repair ownership boundary.
+            for definition in payload["schema"].get("$defs", {}).values():
+                identifier = definition.get("properties", {}).get("id")
+                if identifier is not None:
+                    identifier["enum"] = list(pending_items)
+            payload["schema"]["properties"]["items"].update(minItems=1, maxItems=len(pending_items))
     check_active()
     if document is None and fixed_items:
         document = ReportDocument.model_validate({"schema_version": 1, "items": list(fixed_items.values())})

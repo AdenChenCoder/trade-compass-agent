@@ -20,8 +20,8 @@ def test_generation_schema_allows_empty_items_only_with_owned_execution(executed
     def call(system, user):
         payload = json.loads(user)
         if "schema" in payload:
-            from trade_compass_agent.llm.providers import _maintenance_response_model
-            assert _maintenance_response_model.get().model_json_schema() == payload["schema"]
+            from trade_compass_agent.llm.providers import _maintenance_response_schema
+            assert _maintenance_response_schema.get() == payload["schema"]
             assert payload["schema"]["properties"]["items"].get("minItems", 0) == (0 if executed else 1)
             return '{"schema_version":1,"items":[]}'
         return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'

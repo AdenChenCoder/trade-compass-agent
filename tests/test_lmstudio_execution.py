@@ -76,15 +76,15 @@ def test_schema_maintenance_preserves_closed_thinking_template_and_enforces_gram
                         lambda: httpx.Client(transport=httpx.MockTransport(handler)))
     client = OpenAIChatClient(model=model, api_key="lmstudio", name="lmstudio",
                              base_url="http://localhost:1234/v1", usage_db_path=tmp_path / "usage.db")
-    with llm_maintenance_mode(max_tokens=16384, response_model=ReportContentDocument):
+    with llm_maintenance_mode(max_tokens=16384, response_schema=ReportContentDocument.model_json_schema()):
         result = client.complete([ChatMessage(role="user", content="报告")])
     assert result.content == value
     assert requests[0].url.path == "/v1/completions"
     body = json.loads(requests[0].content)
     assert body["response_format"]["json_schema"]["schema"] == ReportContentDocument.model_json_schema()
     assert body["max_tokens"] == 16384 and body["prompt"].endswith("</think>\n\n")
-    from trade_compass_agent.llm.providers import _maintenance_response_model
-    assert _maintenance_response_model.get() is None
+    from trade_compass_agent.llm.providers import _maintenance_response_schema
+    assert _maintenance_response_schema.get() is None
 
 
 @pytest.mark.parametrize("value,finish", [("unstructured output", "stop"), ('{"items":[]}', "stop"),

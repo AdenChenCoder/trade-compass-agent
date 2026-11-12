@@ -68,7 +68,7 @@ class ReportTransport:
         # A report item may not shadow a fact alias: otherwise an inference
         # could silently bind to a fact instead of the named calculation.
         if isinstance(document, dict) and isinstance(document.get("items"), list):
-            if any(isinstance(item, dict) and item.get("id") in self.references
+            if any(isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"] in self.references
                    for item in document["items"]):
                 raise ValueError("报告条目id不能与事实目录id相同")
         return self._map(document, self.references)

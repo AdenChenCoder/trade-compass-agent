@@ -55,6 +55,8 @@ def test_short_references_never_escape_to_artifacts_or_calculation_provenance():
 @pytest.mark.parametrize("invalid", [
     {"id": "bad", "type": "fact", "section": "invented", "ref": "unknown"},
     {"type": "fact", "section": "market", "ref": "unknown"},
+    {"id": [], "type": "fact", "section": "market", "ref": "unknown"},
+    {"id": {}, "type": "fact", "section": "market", "ref": "unknown"},
     42,
 ])
 def test_malformed_sibling_cannot_erase_valid_observations(invalid):
@@ -81,8 +83,8 @@ def test_malformed_sibling_cannot_erase_valid_observations(invalid):
     assert result.artifact["attempts"][0]["structure_errors"]
 
 
-@pytest.mark.parametrize("partial_repair", [False, True])
-def test_repair_uses_same_aliases_and_cannot_replace_verified_fact(partial_repair):
+@pytest.mark.parametrize("repair_mode", ["full", "partial", "duplicate_fixed", "invalid_fixed", "unrelated_duplicates"])
+def test_repair_uses_same_aliases_and_cannot_replace_verified_fact(repair_mode):
     calls = []
     def call(system, user):
         payload = json.loads(user)
@@ -96,13 +98,43 @@ def test_repair_uses_same_aliases_and_cannot_replace_verified_fact(partial_repai
                 {"id": "bad", "type": "fact", "section": "market", "ref": "unknown"}]})
         assert payload["previous_document"]["items"][0]["ref"] == facts[0]["id"]
         assert payload["repair_evidence"] == [{"item_id": "bad", "facts": [], "refs_not_in_fact_catalog": ["unknown"]}]
+        assert payload["schema"]["properties"]["items"]["maxItems"] == 1
+        assert all(d["properties"]["id"]["enum"] == ["bad"] for d in payload["schema"]["$defs"].values())
         items = [
             {"id": "kept", "type": "fact", "section": "market", "ref": facts[-1]["id"]},
             {"id": "bad", "type": "fact", "section": "market", "ref": facts[1]["id"]}]
-        return json.dumps({"schema_version": 1, "items": items[1:] if partial_repair else items})
+        if repair_mode == "partial":
+            items = items[1:]
+        elif repair_mode == "duplicate_fixed":
+            items.append({**items[0], "ref": facts[2]["id"]})
+        elif repair_mode == "invalid_fixed":
+            items[0] = {"id": "kept", "type": "invented"}
+        elif repair_mode == "unrelated_duplicates":
+            items.extend([{**items[0], "id": "unrequested"}, {**items[0], "id": "unrequested", "ref": facts[2]["id"]}])
+        return json.dumps({"schema_version": 1, "items": items})
     result = publish_report(task="列出首两日收盘价", draft="", tool_results=market_receipts()[:1], run_scope="repair", call=call)
     assert result.verification["status"] == "complete"
     assert "10.5" in result.text and "10.6" in result.text and "14.4" not in result.text
+
+
+def test_repair_cannot_clear_an_unresolved_item_by_omitting_it():
+    calls = []
+    def call(system, user):
+        payload = json.loads(user)
+        calls.append(payload)
+        if "inferences" in payload:
+            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        fact = next(f for f in report_facts(payload) if f["metric"] == "close")
+        if len(calls) == 1:
+            items = [{"id": "valid", "type": "fact", "section": "market", "ref": fact["id"]},
+                     {"id": "pending", "type": "fact", "section": "market", "ref": "unknown"}]
+        else:
+            items = [{"id": "new", "type": "fact", "section": "market", "ref": fact["id"]}]
+        return json.dumps({"schema_version": 1, "items": items})
+    result = publish_report(task="报告", draft="", tool_results=market_receipts()[:1], run_scope="pending", call=call)
+    assert result.verification["report"] == "partial"
+    assert any(f["item_id"] == "pending" and f["code"] == "invalid_evidence" for f in result.verification["findings"])
+    assert len(calls) == 4 and "10.5" in result.text
 
 
 def test_repair_expands_exact_sources_without_promoting_report_calculations():
