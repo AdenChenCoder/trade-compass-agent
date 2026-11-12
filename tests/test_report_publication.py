@@ -309,7 +309,7 @@ def test_judgment_can_use_verified_calculation_without_losing_original_evidence(
                            "coverage": {"complete": True, "missing": []}})
 
     result = publish_report(task="比较两日价格变化", draft="", tool_results=receipts, run_scope="derived", call=call)
-    assert len(calls) == 2 and "-1.67%" in result.text
+    assert len(calls) == (2 if supported else 4) and "-1.67%" in result.text
     assert (result.verification["status"] == "complete") is supported
     assert ("研判：收盘价" in result.text) is supported
     assert result.artifact["calculations"]["change"]["result"].startswith("-1.665")

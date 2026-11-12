@@ -102,7 +102,7 @@ def check_report(detail, artifact, receipt, *, missing):
                      if part["type"] == "value" and part["field"] == "value_with_unit"}
     require(bool(matched_calculations & visible_calcs), "requested change percentage appears only in evidence, not the body")
     if not missing:
-        require(artifact["review_input"]["report"] == detail["analysis"], "reviewed body differs from final body")
+        require(artifact["review_input"]["report"] == artifact["reader_body"], "reviewed body differs from final body")
 
 
 def worker(root, case, model):

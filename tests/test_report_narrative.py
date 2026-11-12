@@ -65,7 +65,7 @@ def test_final_natural_paragraph_is_reviewed_and_persisted_without_rewriting(tmp
     assert "10.00%" in report.text
     assert not report.text.startswith("#")
     assert "研判：" not in report.text and "| 指标 |" not in report.text
-    assert calls[-1]["report"] == report.text
+    assert calls[-1]["report"] == report.artifact["reader_body"]
     assert calls[-1]["inferences"][0]["text"] in report.text
     segments = calls[-1]["inferences"][0]["segments"]
     assert "".join(s["text"] for s in segments) == calls[-1]["inferences"][0]["text"]
@@ -218,8 +218,10 @@ def test_source_notes_cannot_substitute_for_answering_the_task_in_the_body():
             doc["items"][1]["refs"] = ["change"]
             return json.dumps(doc)
         seen.append(payload)
-        assert "10.00%" in payload["report"]
-        assert "10.00%" not in payload["reader_body"]
+        assert "10.00%" not in payload["report"]
+        assert "reader_body" not in payload  # One authoritative body, not two competing views.
+        assert "[^source-1]:" not in payload["report"]
+        assert payload["inferences"][0]["calculations"][0]["unit"] == "%"
         return json.dumps({"reviews": [{"id": "answer", "supported": True, "reason": ""}],
                            "coverage": {"complete": False, "missing": ["正文未回答收盘价变动比例"]}})
     result = publish_report(task="比较收盘价并给出变动比例", draft="", tool_results=RECEIPTS,
@@ -257,3 +259,107 @@ def test_numeric_display_is_atomic_and_cannot_omit_its_unit(raw_field):
     invalid, _ = publish(mutate=omit_unit)
     assert invalid.verification["report"] == "partial"
     assert not any(r["id"] == "answer" and r["supported"] for r in invalid.artifact["review"]["reviews"])
+
+
+def revision_case(*, gap=False, unavailable=False, cancel=False, max_calls=4):
+    from trade_compass_agent.runtime.exceptions import TurnInterruptedError
+    calls, cancelled = [], [False]
+    def active():
+        if cancelled[0]:
+            raise TurnInterruptedError()
+    def call(system, user):
+        payload = json.loads(user)
+        calls.append(payload)
+        if "schema" in payload:
+            doc = document(payload)
+            if "revision" not in payload:
+                doc["items"][1]["parts"] = [text("价格上升。")]
+                doc["items"][1]["refs"] = ["change"]
+                if gap:
+                    doc["items"].append({"id": "revenue", "type": "gap", "section": "gaps", "text": "缺少营收资料"})
+            else:
+                assert payload["revision"]["review"]["coverage"]["repairable"]
+                assert payload["facts"] == calls[0]["facts"]
+                assert payload["execution_records"] == calls[0]["execution_records"] == []
+                # Deliberately omit the gap: the runtime, not the writer, retains it.
+            return json.dumps(doc)
+        revised = len(calls) == 4
+        if revised and unavailable:
+            raise TimeoutError("second review unavailable")
+        if cancel:
+            cancelled[0] = True
+        response = {"reviews": [{"id": "answer", "supported": True, "reason": ""}],
+                    "coverage": {"complete": revised, "missing": [] if revised else ["正文未写日期、收盘价及比例"],
+                                 "repairable": not revised}}
+        if gap:
+            response["gap_reviews"] = [{"id": "revenue", "status": "outside_task" if revised else "required",
+                                        "refs": [], "reason": "试图删除缺口" if revised else ""}]
+        return json.dumps(response)
+    result = publish_report(task="比较两日收盘价及比例", draft="", tool_results=iter(RECEIPTS),
+                            run_scope="revision", call=call, check_active=active, max_calls=max_calls)
+    return result, calls
+
+
+def test_semantic_feedback_repairs_omission_then_reviews_the_final_body():
+    result, calls = revision_case()
+    assert len(calls) == result.artifact["model_calls"] == result.artifact["call_limit"] == 4
+    assert result.verification["status"] == "complete"
+    assert "10元/股升至11元/股" in result.artifact["reader_body"]
+    assert "10.00%" in result.artifact["reader_body"]
+    assert calls[-1]["report"] == result.artifact["reader_body"]
+    assert result.artifact["selected_attempt"] == 1
+    assert len(result.artifact["revision_attempts"]) == 2
+    assert result.artifact["revision_attempts"][0]["verification"]["status"] == "incomplete"
+
+
+def test_revision_cannot_delete_or_dismiss_a_preserved_real_gap():
+    result, calls = revision_case(gap=True)
+    assert len(calls) == 4
+    assert result.verification["report"] == "partial" and result.verification["data"] == "insufficient"
+    assert "缺少营收资料" in result.artifact["reader_body"]
+    assert "10.00%" in result.artifact["reader_body"]
+    assert any(i["id"] == "revenue" for i in result.artifact["document"]["items"])
+
+
+def test_unavailable_revision_retains_the_first_reviewed_evidence():
+    result, calls = revision_case(unavailable=True)
+    assert len(calls) == 4 and result.verification["report"] == "partial"
+    assert result.artifact["selected_attempt"] == 0
+    assert result.text == result.artifact["revision_attempts"][0]["published_text"]
+    assert "价格上升。" in result.artifact["reader_body"]
+    assert result.artifact["facts"] and result.artifact["calculations"]
+
+
+@pytest.mark.parametrize("budget", [2, 3])
+def test_revision_requires_budget_for_both_writing_and_review(budget):
+    result, calls = revision_case(max_calls=budget)
+    assert len(calls) == 2 and result.verification["report"] == "partial"
+    assert "revision_attempts" not in result.artifact
+
+
+def test_cancellation_prevents_semantic_revision():
+    from trade_compass_agent.runtime.exceptions import TurnInterruptedError
+    with pytest.raises(TurnInterruptedError):
+        revision_case(cancel=True)
+
+
+@pytest.mark.parametrize("invalid_gap_decision", [False, True])
+def test_real_data_gap_does_not_retry_or_discard_an_independently_valid_body(invalid_gap_decision):
+    calls = []
+    def call(system, user):
+        payload = json.loads(user)
+        calls.append(payload)
+        if "schema" in payload:
+            doc = document(payload)
+            doc["items"].append({"id": "revenue", "type": "gap", "section": "gaps", "text": "缺少营收资料"})
+            return json.dumps(doc)
+        return json.dumps({"reviews": [{"id": "answer", "supported": True, "reason": ""}],
+            "coverage": {"complete": False, "missing": ["缺少营收"], "repairable": False},
+            "gap_reviews": [{"id": "revenue", "status": "already_present" if invalid_gap_decision else "required",
+                             "refs": [], "reason": ""}]})
+    result = publish_report(task="比较价格和营收", draft="", tool_results=RECEIPTS, run_scope="gap", call=call)
+    assert len(calls) == 2 and result.verification["report"] == "partial"
+    assert "10元/股升至11元/股" in result.artifact["reader_body"]
+    assert "缺少营收资料" in result.artifact["reader_body"]
+    assert result.artifact["review_valid"]
+    assert any(a.get("gap_review_error_type") == "invalid_gap_review" for a in result.artifact["attempts"]) is invalid_gap_decision

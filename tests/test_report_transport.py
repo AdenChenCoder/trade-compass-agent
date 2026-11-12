@@ -210,7 +210,7 @@ def test_fact_rendering_example_matches_consumer_dates_and_missing_time(observed
 
     result = publish_report(task="报告事实及其可用时点", draft="", tool_results=receipts, run_scope="dates", call=call)
     # Review the exact reader presentation, not a separate audit rendering.
-    assert reviews[0] == result.text
+    assert reviews[0] == result.artifact["reader_body"]
     assert "**002415**" in result.text
     assert ("收盘价 34.83元/股" if observed else "代码 002415") in result.text
     assert (observed if observed else "时点未提供") in result.text

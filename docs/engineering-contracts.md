@@ -24,6 +24,13 @@ in the linked regression tests, not in expanding prose exception lists.
   Material gaps and uncertain execution outcomes
   stay visible in the body. Legacy saved text remains readable without regeneration.
 
+- Report composition and review share a maximum of four model calls. Unused
+  structural-repair capacity may fund one feedback revision and a fresh review.
+  Preserve required gaps through revision; unavailable review must retain the
+  first verified evidence. Invalid optional gap-dismissal metadata cannot remove
+  a gap or invalidate independently valid paragraph reviews. Preserve cancellation
+  and the parent deadline, and never replay business tools to repair prose.
+
 - Validate typed facts against runtime-owned receipts. Preserve instrument and
   account identity, metric, sign, rounding, unit, category, period and source
   scope through nested research, dispatch, publication and persisted output.

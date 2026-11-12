@@ -15,6 +15,11 @@ import time
 
 
 CASES = {
+    "hidden_result": ("收盘价上升。", True),
+    "compact_percentage": ("收盘价上升。", True),
+    "visible_result": ("收盘价上升。", True),
+    "missing_percentage_unit": ("价格变动比例为4.55。", False),
+    "correct_percentage": ("价格变动比例为4.55%。", True),
     "natural": ("在这两个观察日，收盘价走高；不能据此预测后续走势。", True),
     "reordered": ("后续走势不能据此判断；两个观察日之间收盘价上升。", True),
     "correct_unit": ("前一日收盘价为22元/股，后一日为23元/股。", True),
@@ -23,10 +28,6 @@ CASES = {
     "wrong_date": ("上述两项收盘价分别来自2025年1月3日和1月4日。", False),
     "wrong_unit": ("前一日收盘价为22美元，后一日为23美元。", False),
     "unsupported_cause": ("营收增长导致了这次上涨。", False),
-    "missing_percentage_unit": ("价格变动比例为4.55。", False),
-    "correct_percentage": ("价格变动比例为4.55%。", True),
-    "hidden_result": ("收盘价上升。", True),
-    "visible_result": ("收盘价上升。", True),
     "historical_execution": ("本轮已经买入002415共100股，成交价22元/股。", False),
 }
 
@@ -94,14 +95,23 @@ def main():
                     raise RuntimeError("historical execution fixture lost its source")
                 definitions = []
                 refs = historical_refs if name == "historical_execution" else []
-                if name in {"hidden_result", "visible_result", "missing_percentage_unit", "correct_percentage"}:
+                if name in {"hidden_result", "compact_percentage", "visible_result", "missing_percentage_unit", "correct_percentage"}:
                     definitions = [{"type": "calculation", "id": "change", "section": "overview",
                                     "operation": "change_pct", "refs": [facts[0]["id"], facts[1]["id"]]}]
                     refs = ["change"]
                     if name == "visible_result":
-                        parts.extend([{"type": "text", "text": "收盘价变动比例为"},
+                        parts.extend([{"type": "text", "text": "这两日收盘价上涨了"},
                                       {"type": "value", "ref": "change", "field": "value_with_unit"},
                                       {"type": "text", "text": "。"}])
+                if name == "compact_percentage":
+                    parts = [{"type": "value", "ref": facts[0]["id"], "field": "subject"},
+                             {"type": "text", "text": "收盘价："},
+                             {"type": "value", "ref": facts[0]["id"], "field": "value_with_unit"},
+                             {"type": "text", "text": " → "},
+                             {"type": "value", "ref": facts[1]["id"], "field": "value_with_unit"},
+                             {"type": "text", "text": "（+"},
+                             {"type": "value", "ref": "change", "field": "value_with_unit"},
+                             {"type": "text", "text": "）。"}]
                 return json.dumps({"schema_version": 1, "items": [*definitions,
                     {"type": "paragraph", "id": "answer", "section": "overview", "parts": parts,
                      "refs": refs}]})
@@ -119,11 +129,11 @@ def main():
         try:
             with llm_request_deadline(started + 120):
                 task = "说明这两个观察日收盘价变化，仅在存在本轮执行记录时报告成交。"
-                if name in {"hidden_result", "visible_result", "missing_percentage_unit", "correct_percentage"}:
+                if name in {"hidden_result", "compact_percentage", "visible_result", "missing_percentage_unit", "correct_percentage"}:
                     task += "给出收盘价变动比例。"
                 report = publish_report(task=task,
                     draft="", tool_results=case_receipts, current_tool_results=case_receipts,
-                    run_scope="semantic-"+name, call=call)
+                    run_scope="semantic-"+name, call=call, max_calls=2)
             (root/(name+"-artifact.json")).write_text(json.dumps(report.artifact, ensure_ascii=False, indent=2))
             reviews = (report.artifact.get("review") or {}).get("reviews", [])
             actual = next((r["supported"] for r in reviews if r["id"] == "answer"), None)

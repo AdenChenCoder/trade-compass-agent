@@ -77,7 +77,8 @@ _COMPOSE = (
     "share_pct为前项/后项，compare由程序确定大小关系。净结算直接引用账本事实。"
     "条件计划使用condition，阈值是计划值，不是市场观察或已执行指令。"
     "判断写在paragraph中并关联实际依据，不补充无来源事实。inference为兼容旧报告保留，新报告使用paragraph。"
-    "资料不足使用gap；不要用空报告、泛泛的摘要或无关事实代替任务要求。"
+    "资料不足使用gap，说明缺少什么业务资料及其影响，不复述工具名称或执行约束。"
+    "不要用空报告、泛泛的摘要或无关事实代替任务要求。"
     "保留任务所需各部分及真实缺口。原始草稿可能有错，不能作为证据。"
     "只写任务需要的业务结果，执行约束和开发指令不构成报告内容，不复述遵守了哪些要求。"
     "execution_records由程序直接显示，不再抄写到研判；仅需报告操作结果时items可以为空。"
@@ -102,11 +103,17 @@ _REVIEW = (
     "正文允许自然地结合数字、日期和判断，核对它们与evidence/calculations及原始回执的对应关系；"
     "不得因正文包含数值而拒绝。当前操作状态仅以execution_records为准，历史成交不是本次执行。"
     "execution_records为空不证明未发生操作，也不能凭读取历史账本声称本轮新成交。"
-    "coverage仅检查reader_body是否回应task要求的各项内容；来源明细和内部计算存在，不等于正文已回答。"
+    "report是唯一的读者正文视图，证据字段不属于正文。coverage只检查report是否回应task要求的各项内容。"
+    "来源明细和内部计算存在，不等于正文已回答；不能把evidence或calculations里的内容算入正文。"
     "例如任务要求变动比例，正文只有方向而比例仅出现在来源明细时仍属遗漏。不要自行增加任务要求。"
+    "coverage还要确认数字在正文中有明确的业务含义，不能要求读者靠内部指标名或猜测补全一句话。"
+    "含义确实不清的数值属于可修订的表达遗漏。上下文已明确含义的简洁写法可以接受，"
+    "不要求重复指标名或完整句式；同义改写均可，不限定关键词或句式。"
+    "任务答案或表达含义的遗漏写入coverage，不因此否定其他已受支持的事实陈述。"
+    "coverage.repairable表示是否有可用现有依据补齐的正文遗漏；真实数据缺口本身不可修订成已有数据。"
     "程序填入片段的原值不可因你的重算被改写；但整句对其含义、归属、时间和单位的陈述仍必须成立。"
     '只返回JSON {"reviews":[{"id":"原条目id","supported":true,"reason":""}],'
-    '"coverage":{"complete":true,"missing":[]}}。missing只列遗漏的任务要求，最多8项。'
+    '"coverage":{"complete":true,"missing":[],"repairable":false}}。missing只列遗漏的任务要求，最多8项。'
     "必须覆盖所有研判且各一次。支持时reason为空；不支持时说明具体缺口，不提供替换数字或改写报告。"
     "reviews只对应inferences数组中的id；数组为空时reviews必须为空。"
     "gaps非空时另返回gap_reviews，逐一判断模型声明的资料缺口是否真正影响task："
@@ -115,6 +122,12 @@ _REVIEW = (
     "refs必须列出对应条目id；outside_task表示缺口不属于任务要求（包括任务明确排除的目标），refs为空。"
     "already_present和outside_task必须说明理由。任务要求的数据确实缺失时不能因为已声明缺口就当作完成；"
     "已有来源也不能替代不存在的具体事实。未知时保留required。不能撤销程序判定的引用、单位、计算或执行错误。"
+)
+_REVISION = (
+    "这是一次依据审查反馈的正文修订。revision是上一版文档及核验结果，不是新证据。"
+    "修正不受支持的表达，补齐原始依据已有但正文遗漏的任务答案；保留已支持的内容。"
+    "不能为通过核验而删除任务要求、编造事实或改变真实数据缺口。"
+    "required_gaps由程序保留，无法靠改写或删除解除。修订后的完整正文仍须重新核验。"
 )
 _REPAIR = (
     "这是结构修复轮次。previous_document中validation_errors指出的条目未通过程序校验。"
@@ -174,12 +187,34 @@ def _dismissed_gaps(review, gaps, verified_ids):
 
 
 def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", current_tool_results=None,
-                   check_active=check_execution_active, reader_prose=True):
+                   check_active=check_execution_active, reader_prose=True, max_calls=4):
+    """Share one bounded call budget across structural and semantic repair."""
+    if type(max_calls) is not int or not 2 <= max_calls <= 4:
+        raise ValueError("report call budget must be between two and four")
+    remaining = max_calls
+    def bounded_call(system, user):
+        nonlocal remaining
+        check_active()
+        if remaining <= 0:
+            raise RuntimeError("report call budget exhausted")
+        remaining -= 1
+        return call(system, user)
+    result = _publish_report(task=task, draft=draft, tool_results=tuple(tool_results), run_scope=run_scope,
+        call=bounded_call, run_id=run_id,
+        current_tool_results=tuple(current_tool_results) if current_tool_results is not None else None,
+        check_active=check_active, reader_prose=reader_prose, remaining=lambda: remaining)
+    result.artifact["model_calls"] = max_calls - remaining
+    result.artifact["call_limit"] = max_calls
+    return result
+
+
+def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, current_tool_results,
+                    check_active, reader_prose, remaining, revision=None):
     """No business-tool callback is available anywhere in this pipeline."""
     catalog = EvidenceCatalog.build(tool_results, run_scope=run_scope)
     execution = execution_evidence(tool_results if current_tool_results is None else current_tool_results)
     response_model = ReportDocument if execution.records else ReportContentDocument
-    compose_prompt = _COMPOSE if reader_prose else _EVIDENCE_COMPOSE
+    compose_prompt = (_COMPOSE if reader_prose else _EVIDENCE_COMPOSE) + (_REVISION if revision else "")
     def response_schema():
         schema = response_model.model_json_schema()
         if not reader_prose:
@@ -207,14 +242,19 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
         payload.pop("fact_order", None)
     else:
         payload.pop("paragraph_rendering_example", None)
+    if revision:
+        payload["revision"] = revision
+    protected_gaps = {item["id"]: item for item in (revision or {}).get("required_gaps", [])}
     document = None
+    review_valid = False
     review_input = None
     reader_body = ""
     findings, rendered, traces = [], {}, {}
-    attempts, review, fixed_items = [], None, {}
+    attempts, review, fixed_items = [], None, dict(protected_gaps)
     dismissed_gaps = set()
     pending_items = None
-    for _ in range(3):  # Initial composition, then at most two structural repairs.
+    # Reserve a review call. Semantic revision may spend only the unused budget.
+    for _ in range(min(3, remaining() - 1)):
         check_active()
         raw, parsed, structure_errors = None, None, []
         try:
@@ -313,8 +353,7 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
             prose = {item.id: paragraph_text(item, document, catalog) if isinstance(item, Paragraph)
                      else "研判：" + item.text for item in inferences}
             preview = {**rendered, **prose}
-            review_input = {"task": task, "report": present(document, preview, findings),
-                "reader_body": present(document, preview, findings, include_sources=False),
+            review_input = {"task": task, "report": present(document, preview, findings, include_sources=False),
                 "execution_records": execution.records,
                 "receipts": review_receipts(catalog, source_facts),
                 "inferences": [{"id": item.id, "text": prose[item.id],
@@ -342,13 +381,20 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
                                or not isinstance(row["reason"], str)
                                or len(row["reason"]) > 500
                                or (not row["supported"] and not row["reason"].strip()) for row in rows)
-                        or set(coverage) != {"complete", "missing"}
+                        or set(coverage) not in ({"complete", "missing"}, {"complete", "missing", "repairable"})
+                        or ("repairable" in coverage and type(coverage["repairable"]) is not bool)
                         or type(coverage["complete"]) is not bool
                         or not isinstance(coverage["missing"], list) or len(coverage["missing"]) > 8
                         or any(not isinstance(s, str) or not s.strip() or len(s) > 500 for s in coverage["missing"])
                         or coverage["complete"] != (not coverage["missing"])):
                     raise ValueError("invalid inference review")
-                dismissed_gaps = _dismissed_gaps(review, gaps, set(verified_items))
+                try:
+                    dismissed_gaps = _dismissed_gaps(review, gaps, set(verified_items)) - protected_gaps.keys()
+                except (ValueError, TypeError, KeyError):
+                    # Gap-dismissal metadata owns only gap removal. A bad optional
+                    # decision cannot discard independently valid paragraph reviews.
+                    dismissed_gaps = set()
+                    attempts.append({"gap_review_error_type": "invalid_gap_review"})
                 findings = [finding for finding in findings
                             if not (finding.code == "declared_gap" and finding.item_id in dismissed_gaps)]
                 findings.extend(Finding("report", "required_content_missing", missing) for missing in coverage["missing"])
@@ -359,6 +405,7 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
                         rendered[item.id] = prose[item.id]
                     else:
                         findings.append(Finding("analysis", "insufficient_support", row["reason"], item.id, tuple(item.refs)))
+                review_valid = True
             except TurnInterruptedError:
                 raise
             except Exception as exc:
@@ -393,9 +440,30 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
                 "verification": result, "calculations": traces,
                 "receipts": catalog.receipts, "facts": [asdict(fact) for fact in catalog.facts.values()],
                 "execution_records": execution.records,
-                "review": review, "review_input": review_input, "reader_body": reader_body or text,
+                "review": review, "review_valid": review_valid, "review_input": review_input,
+                "revision_input": revision, "reader_body": reader_body or text,
                 "published_text": text, "attempts": attempts}
-    return Publication(text, result, artifact)
+    publication = Publication(text, result, artifact)
+    required_gaps = [item for item in document.items if isinstance(item, Gap) and item.id not in dismissed_gaps] if document else []
+    needs_revision = review_valid and (any(not row["supported"] for row in review["reviews"])
+        or (not review["coverage"]["complete"]
+            and (review["coverage"].get("repairable", False) or not required_gaps)))
+    if reader_prose and revision is None and remaining() >= 2 and needs_revision:
+        check_active()
+        revised = _publish_report(task=task, draft=draft, tool_results=tool_results, run_scope=run_scope,
+            call=call, run_id=run_id, current_tool_results=current_tool_results,
+            check_active=check_active, reader_prose=True, remaining=remaining,
+            revision={"previous_document": transport.encode_document(document.model_dump()),
+                      "reader_body": reader_body, "review": review,
+                      "required_gaps": [item.model_dump() for item in required_gaps]})
+        # An unavailable second attempt cannot erase the first verified evidence.
+        selected = revised if revised.artifact["review_valid"] else publication
+        keys = ("document", "verification", "review", "review_input", "revision_input", "attempts", "published_text")
+        history = [{key: attempt.artifact[key] for key in keys} for attempt in (publication, revised)]
+        selected.artifact["revision_attempts"] = history
+        selected.artifact["selected_attempt"] = int(selected is revised)
+        return selected
+    return publication
 
 
 def persist_publication(data_dir: Path, publication: Publication, *, check_active=check_execution_active):

@@ -71,9 +71,10 @@ def test_grouped_report_keeps_identity_dates_scope_and_invalid_outcomes():
         payload = json.loads(user)
         requests.append(payload)
         if "schema" not in payload:
-            # Review sees the same reader renderer, including exact source notes.
-            assert "2026-11-10T07:00:00+00:00" in payload["report"]
-            assert "数据来源与口径" in payload["report"]
+            # Review sees one reader body; raw provenance stays in evidence.
+            assert "2026-11-10" in payload["report"]
+            assert "数据来源与口径" not in payload["report"]
+            assert "2026-11-10T07:00:00+00:00" in payload["receipts"][0]["result"]
             return json.dumps({"reviews": [{"id": "bad", "supported": False, "reason": "价格不能证明业绩改善"}],
                                "coverage": {"complete": True, "missing": []}})
         facts = [f for f in report_facts(payload) if f["metric"] == "close"]
@@ -88,7 +89,7 @@ def test_grouped_report_keeps_identity_dates_scope_and_invalid_outcomes():
 
     report = publish_report(task="比较收盘价和营收", draft="", tool_results=receipts, run_scope="reader", call=call)
     text = report.text
-    assert len(requests) == 2
+    assert len(requests) == report.artifact["model_calls"] == 4
     assert text.count("## 市场\n") == 1
     assert "### 002415" in text and "### 000001" in text
     assert "| 收盘价 · 2026-11-10〔1〕 | 10元/股 |" in text
