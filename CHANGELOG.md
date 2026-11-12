@@ -19,9 +19,9 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 - Preserve valid report items when another item has an invalid structure. Keep
   unresolved items incomplete and retain composition inputs and failed model
   responses for reproducible, read-only diagnosis and repair.
-- Enforce the report schema during LM Studio generation. Handle Qwen's JSON
-  channel classification only after validating the complete typed response;
-  ordinary reasoning, truncated output and invalid evidence remain rejected.
+- Enforce the report schema during LM Studio generation while preserving
+  Qwen's non-thinking formatting template. Bounded repairs replace unresolved
+  items without rewriting verified content; invalid provider output is still rejected.
 
 ## [0.5.6] - 2026-11-11
 

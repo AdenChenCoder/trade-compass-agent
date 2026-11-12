@@ -650,7 +650,7 @@ class OpenAIChatClient:
         is_cancelled: Callable[[], bool] | None = None,
     ) -> ChatCompletion:
         response_model = _maintenance_response_model.get() if not tools and self.name.startswith("lmstudio") else None
-        if is_lmstudio_qwen(self.name, self.model) and _maintenance_mode.get() and not tools and response_model is None:
+        if is_lmstudio_qwen(self.name, self.model) and _maintenance_mode.get() and not tools:
             # LM Studio 0.4.x can silently ignore chat_template_kwargs for a
             # downloaded MLX model. Its raw completion endpoint applies no
             # template: render Qwen's non-thinking text format here.
@@ -671,6 +671,10 @@ class OpenAIChatClient:
             if self._preserve_reasoning_context:
                 summary_kwargs.update(temperature=0.7, top_p=0.8, presence_penalty=1.5)
                 summary_kwargs["extra_body"] = {"top_k": 20, "repeat_penalty": 1.0}
+            if response_model is not None:
+                summary_kwargs.setdefault("extra_body", {})["response_format"] = {
+                    "type": "json_schema", "json_schema": {"name": "maintenance_response", "strict": True,
+                                                           "schema": response_model.model_json_schema()}}
             return self._stream_api(summary_kwargs, operation="maintenance", raw=True,
                                     on_delta=on_delta, is_cancelled=is_cancelled)
 
@@ -690,8 +694,7 @@ class OpenAIChatClient:
             elif _request_deadline.get() is not None:
                 kwargs["max_tokens"] = 8192
         if response_model is not None:
-            # LM Studio enforces JSON grammars through chat completions. Raw
-            # Qwen formatting remains available to non-schema maintenance.
+            # Non-Qwen LM Studio models use their native chat template.
             kwargs["response_format"] = {"type": "json_schema", "json_schema": {
                 "name": "maintenance_response", "strict": True, "schema": response_model.model_json_schema()}}
             kwargs["max_tokens"] = min(_maintenance_output_limit.get(), self.response_token_limit or 4096)
@@ -776,7 +779,7 @@ class OpenAIChatClient:
                             delta = chunk.choices[0].delta
                             reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
                             reasoning_started = reasoning_started or bool(reasoning)
-                            if (self._preserve_reasoning_context or kwargs.get("response_format")) and isinstance(reasoning, str):
+                            if self._preserve_reasoning_context and isinstance(reasoning, str):
                                 reasoning_parts.append(reasoning)
                             if delta.tool_calls:
                                 for item in delta.tool_calls:
@@ -799,22 +802,6 @@ class OpenAIChatClient:
                         if is_cancelled and is_cancelled():
                             from trade_compass_agent.runtime.exceptions import TurnInterruptedError
                             raise TurnInterruptedError("".join(content_parts))
-                        if (self.name.startswith("lmstudio") and kwargs.get("response_format")
-                                and not any(content_parts) and not tool_calls_by_index):
-                            # Some Qwen templates classify grammar-constrained
-                            # JSON as reasoning. Accept only a complete value
-                            # validated by this request's explicit output model;
-                            # never promote ordinary thoughts or partial output.
-                            schema_model = _maintenance_response_model.get()
-                            if schema_model is not None:
-                                candidate = "".join(reasoning_parts)
-                                try:
-                                    schema_model.model_validate_json(candidate)
-                                except ValueError:
-                                    pass
-                                else:
-                                    content_parts.append(candidate)
-                                    reasoning_parts.clear()
                         if self.name.startswith("lmstudio") and not any(content_parts) and not tool_calls_by_index:
                             from trade_compass_agent.runtime.exceptions import LLMIncompleteResponseError
                             raise LLMIncompleteResponseError("模型未返回最终答案或工具调用")
