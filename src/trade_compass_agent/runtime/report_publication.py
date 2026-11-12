@@ -32,6 +32,8 @@ _COMPOSE = (
     "事实使用fact引用facts中的id，不抄写数值、不重命名字段。计算使用calculation和原始操作数引用，"
     "facts是表格，每行的列按fact_columns顺序排列。fact_dictionaries中的列使用从0开始的索引，"
     "读取这些列时用索引取回相应字典值；id和value始终是原文，不是索引。"
+    "fact_rendering_example是本目录中一个fact引用的实际输出，展示程序如何显示身份、数值、单位、"
+    "observed_at观测时点和口径；这些信息由引用自动呈现，不需要另建日期或单位条目。"
     "报告条目的id不能使用事实目录的id。"
     "事实、条件和计算的ref/refs必须逐字复制事实目录的id。研判还可以引用本报告的fact或calculation条目id，"
     "fact由程序还原到原始事实，calculation的运算及原始操作数由程序验证；条件计划和其他研判不能作为事实依据。"

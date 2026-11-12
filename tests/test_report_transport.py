@@ -163,3 +163,27 @@ def test_ambiguous_identity_or_envelope_is_still_rejected(fault):
     assert result.verification["report"] == "unavailable"
     assert result.verification["execution"] == "completed"
     assert len(result.artifact["attempts"]) == 3
+
+
+@pytest.mark.parametrize("observed", [None, "2026-11-10"])
+def test_fact_rendering_example_matches_consumer_dates_and_missing_time(observed):
+    bar = {"close": 34.83, **({"timestamp": observed} if observed else {})}
+    receipts = [("get_bars", json.dumps({"symbol": "002415", "bars": [bar],
+                 "_meta": {"timestamp": "2026-11-12T12:00:00"}}))]
+    examples = []
+
+    def call(system, user):
+        payload = json.loads(user)
+        if "schema" in payload:
+            example = payload["fact_rendering_example"]
+            examples.append(example)
+            return json.dumps({"schema_version": 1, "items": [
+                {"id": "price", "type": "fact", "section": "market", "ref": example["ref"]}]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+
+    result = publish_report(task="报告事实及其可用时点", draft="", tool_results=receipts, run_scope="dates", call=call)
+    assert examples[0]["rendered"] in result.text
+    assert "2026-11-12" not in examples[0]["rendered"]
+    assert (observed if observed else "时点未提供") in examples[0]["rendered"]
+    assert "fact_rendering_example" not in result.text
+    assert "fact_rendering_example" not in ReportTransport(EvidenceCatalog.build([], run_scope="empty")).table

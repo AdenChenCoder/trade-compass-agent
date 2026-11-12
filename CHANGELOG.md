@@ -4,6 +4,10 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## 0.5.8
 
+- Show the report composer one actual rendered fact so observation dates and
+  units supplied by the renderer are not mistaken for missing evidence. Unknown
+  observation times remain explicitly unknown; retrieval time is not promoted.
+
 - Start each scheduled execution with fresh model context so earlier same-day
   answers and tool receipts cannot suppress current data acquisition. Preserve
   daily session IDs and all prior messages, including after restart.
