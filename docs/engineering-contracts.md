@@ -132,6 +132,9 @@ Regression entry points:
   concurrent cold sessions without serializing their model execution.
   Concurrency tests wait for owned workers and durable terminal records rather
   than arbitrary short sleeps; release blocked workers before removing model mocks.
+- Each scheduled execution starts with fresh model context, including native
+  adapters. Daily session IDs and append-only user-visible history remain stable;
+  previous receipts or answers cannot replace the current execution's evidence.
 - Tool-sequence reasoning is transient operational context. Account for its input
   tokens separately from recent-source protection; exclude it from public session
   records and factual summary inputs.

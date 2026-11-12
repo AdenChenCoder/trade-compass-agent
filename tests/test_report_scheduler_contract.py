@@ -91,3 +91,63 @@ def test_job_coverage_uses_business_task_and_preserves_real_gaps(tmp_path, monke
     assert bool(verification["findings"]) is missing
     if missing:
         assert run.error == "缺少营收依据"
+
+
+def test_repeated_job_reacquires_evidence_and_keeps_complete_history(tmp_path, monkeypatch):
+    """A prior tool receipt must not satisfy a later scheduled execution."""
+    class Client:
+        name = model = "mock"
+
+        def stream_complete(self, messages, **kwargs):
+            result = report_reply(messages, metrics={"close"})
+            if result:
+                return result
+            if any(m.role == "tool" for m in messages):
+                return ChatCompletion(content="已取得收盘价。")
+            return ChatCompletion(content="", tool_calls=[ToolCall(
+                "bars", "get_bars", '{"symbol":"002415","limit":1}')])
+
+        complete = stream_complete
+
+    config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory",
+                       data_provider="sample", agent=AgentConfig(learning_enabled=False))
+    monkeypatch.setattr("trade_compass_agent.runtime.loop.create_chat_client", lambda _: Client())
+    monkeypatch.setattr("trade_compass_agent.ops.delivery.DeliveryRouter.deliver", lambda *_: None)
+    calls = []
+
+    def execute(self, name, arguments):
+        assert name == "get_bars"
+        calls.append(name)
+        return json.dumps({"symbol": "002415", "bars": [
+            {"timestamp": "2026-11-11", "close": 30 + len(calls)}]})
+
+    monkeypatch.setattr("trade_compass_agent.runtime.tools.registry.ToolRegistry.execute", execute)
+    jobs = PromptJobStore(config.data_dir / "scheduler.db")
+    job = jobs.create(name="重复查询", prompt="列出本次读取的收盘价。", schedule="sat 23:59", delivery_channels=())
+    monkeypatch.setattr("trade_compass_agent.web.api.load_app_config", lambda: config)
+    monkeypatch.setattr("trade_compass_agent.web.agent_api.load_app_config", lambda: config)
+    from trade_compass_agent.web.app import create_app
+    previous = []
+    run_ids = []
+    session_ids = []
+    for index in range(3):
+        # Reopen stores/executor/API to cover continuation after restart.
+        runs = SqliteRunStore(config.data_dir / "scheduler.db")
+        PromptJobExecutor(config, runs).execute(job)
+        run = runs.recent_runs(job_id=f"custom:{job.id}")[0]
+        api = TestClient(create_app())
+        detail = api.get(f"/api/jobs/runs/{run.id}").json()
+        assert calls == ["get_bars"] * (index + 1)
+        assert detail["status"] == "completed"
+        assert str(31 + index) in detail["analysis"]
+        sid = detail["step_runs"][0]["data"]["session_id"]
+        session_ids.append(sid)
+        messages = api.get(f"/api/agent/sessions/{sid}").json()["messages"]
+        assert messages[:len(previous)] == previous
+        assert len(messages) > len(previous)
+        previous = messages
+        run_ids.append(run.id)
+    assert len(set(session_ids)) == 1
+    assert len(set(run_ids)) == 3
+    for rid in run_ids:
+        assert api.get(f"/api/jobs/runs/{rid}").json()["status"] == "completed"

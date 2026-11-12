@@ -580,3 +580,25 @@ def test_health_uses_native_authentication_instead_of_api_key(client, native_con
     assert response.status_code == 200
     assert response.json()['status'] == expected
     assert response.json()['checks']['llm'] == ('ok' if expected == 'ok' else connection_status)
+
+
+def test_fresh_execution_context_keeps_history_without_resuming_native_thread(native_config, monkeypatch):
+    from trade_compass_agent.llm.native_session import NativeConversation
+
+    monkeypatch.setattr(AgentLoop, "_maybe_background_review", lambda *a, **kw: None)
+    first = AgentLoop.from_config(native_config).run_turn("previous execution")
+    store = AgentLoop.from_config(native_config).session_store
+    before = list(store.load(first.session_id).messages)
+    old_thread = NativeConversation(native_config.data_dir, first.session_id, []).record["thread_id"]
+    protocol = native_config.data_dir / "fresh-protocol.jsonl"
+    monkeypatch.setenv("FAKE_PROTOCOL", str(protocol))
+    AgentLoop.from_config(native_config).run_turn("new execution", session_id=first.session_id, fresh_context=True)
+    events = [json.loads(line) for line in protocol.read_text().splitlines()]
+    assert any(event.get("method") == "thread/start" for event in events)
+    assert not any(event.get("method") == "thread/resume" for event in events)
+    turns = [event for event in events if event.get("method") == "turn/start"]
+    assert "previous execution" not in json.dumps(turns)
+    assert NativeConversation(native_config.data_dir, first.session_id, []).record["thread_id"] != old_thread
+    after = store.load(first.session_id).messages
+    assert after[:len(before)] == before
+    assert any(message.content == "new execution" for message in after)

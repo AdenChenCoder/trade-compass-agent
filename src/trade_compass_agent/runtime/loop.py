@@ -409,6 +409,7 @@ class AgentLoop:
         turn_id: str | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         report_task: str | None = None,
+        fresh_context: bool = False,
     ) -> TurnResponse:
         from contextlib import nullcontext
         from trade_compass_agent.llm.native_session import native_session_guard
@@ -429,6 +430,7 @@ class AgentLoop:
                 turn_id=turn_id,
                 is_cancelled=is_cancelled,
                 report_task=report_task,
+                fresh_context=fresh_context,
             )
 
     def _run_turn(
@@ -440,6 +442,7 @@ class AgentLoop:
         turn_id: str | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         report_task: str | None = None,
+        fresh_context: bool = False,
     ) -> TurnResponse:
         from trade_compass_agent.llm.native import NativeAgentClient
 
@@ -488,7 +491,10 @@ class AgentLoop:
         )
         if native_images:
             enriched += "\n\n" + "\n".join(f"[附件·图片 {i + 1}]" for i in range(len(native_images)))
-        history = [m.to_chat_message() for m in self.session_store.load_context(session)]
+        # Scheduled executions own their evidence and decisions. Keep the full
+        # transcript for readers, but do not let a previous run satisfy this one.
+        model_history = [] if fresh_context else self.session_store.load_context(session)
+        history = [m.to_chat_message() for m in model_history]
         if not isinstance(client, NativeAgentClient):
             # A provider switch must retain access to native-uploaded evidence
             # through the existing vision tools, including text-only backends.
@@ -711,7 +717,7 @@ class AgentLoop:
                     # native turn instead of retaining stale vendor history.
                     native_conversation = NativeConversation(
                         self.config.data_dir, session.session_id, session.messages,
-                        context=self.session_store.load_context(session),
+                        context=[] if fresh_context else self.session_store.load_context(session),
                     )
             finally:
                 # Stopping preflight work must not discard the submitted question.
