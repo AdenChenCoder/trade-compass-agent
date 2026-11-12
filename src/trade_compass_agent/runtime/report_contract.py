@@ -36,7 +36,10 @@ class Observation(Item):
 
 class Calculation(Item):
     type: Literal["calculation"]
-    operation: Literal["sum", "difference", "change_pct", "share_pct", "compare"]
+    operation: Literal["sum", "difference", "change_pct", "share_pct", "compare"] = Field(description=(
+        "sum:同指标、时点、口径且不重复的标的/账户；difference/compare:同标的、账户、时点和兼容指标；"
+        "change_pct:同标的先后有序的价格；share_pct:同账户同一时点的market_value/account_capital或capital，"
+        "或同回执的total_market_value/total_account_capital。所有操作数必须是原始事实，不能引用报告中的合计。"))
     refs: list[str] = Field(min_length=2, max_length=30, description="仅引用事实目录id，不引用报告条目id")
 
 
@@ -53,7 +56,7 @@ class Condition(Item):
 class Inference(Item):
     type: Literal["inference"]
     text: str = Field(min_length=1, max_length=2500)
-    refs: list[str] = Field(min_length=1, max_length=20, description="引用事实目录id或本报告中calculation条目的id；条件和其他研判不是证据")
+    refs: list[str] = Field(min_length=1, max_length=20, description="引用事实目录id或本报告中fact/calculation条目的id；条件和其他研判不是证据")
 
 
 class Gap(Item):
@@ -69,6 +72,11 @@ class ReportDocument(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     schema_version: Literal[1]
     items: list[ReportItem] = Field(max_length=120)
+
+
+class ReportContentDocument(ReportDocument):
+    """Without execution records, an empty report cannot answer the task."""
+    items: list[ReportItem] = Field(min_length=1, max_length=120)
 
 
 @dataclass(frozen=True)
@@ -441,7 +449,7 @@ def calculate(item: Calculation, catalog: EvidenceCatalog) -> tuple[str, dict]:
 
 
 def inference_evidence(item: Inference, document: ReportDocument, catalog: EvidenceCatalog):
-    """Resolve judgments to source facts and runtime-verified calculations.
+    """Resolve judgments to source observations and verified calculations.
 
     Calculations keep their raw-fact-only operand contract. Revalidating them
     here makes resolution independent of document order and rejects cycles,
@@ -454,6 +462,11 @@ def inference_evidence(item: Inference, document: ReportDocument, catalog: Evide
             if ref in items:
                 raise ValueError("报告条目ID与事实ID冲突，引用含义不明确")
             fact = catalog.resolve(ref)
+            facts[fact.id] = fact
+        elif isinstance(items.get(ref), Observation):
+            # An observation is only a direct alias for one owned fact. Do not
+            # recurse through report items or accept prose as source evidence.
+            fact = catalog.resolve(items[ref].ref)
             facts[fact.id] = fact
         elif isinstance(items.get(ref), Calculation):
             calculation = items[ref]
@@ -482,7 +495,7 @@ def validate_document(document: ReportDocument, catalog: EvidenceCatalog):
                 rendered[item.id], traces[item.id] = calculate(item, catalog)
             elif isinstance(item, Condition):
                 fact = catalog.resolve(item.ref)
-                if fact.unit != item.unit or fact.kind not in {"price", "moving_average", "indicator", "ratio"}:
+                if fact.unit != item.unit or fact.kind not in {"price", "moving_average", "indicator", "ratio", "percentage"}:
                     raise ValueError("计划阈值与参考指标的单位或类型不一致")
                 threshold = _number(item.threshold)
                 op = {"lt": "低于", "le": "不高于", "gt": "高于", "ge": "不低于"}[item.comparison]

@@ -28,6 +28,7 @@ _request_deadline: ContextVar[float | None] = ContextVar("llm_request_deadline",
 _request_cancelled: ContextVar[Callable[[], bool] | None] = ContextVar("llm_request_cancelled", default=None)
 _maintenance_mode: ContextVar[bool] = ContextVar("llm_maintenance_mode", default=False)
 _maintenance_output_limit: ContextVar[int] = ContextVar("llm_maintenance_output_limit", default=4096)
+_maintenance_response_schema: ContextVar[dict[str, Any] | None] = ContextVar("llm_maintenance_response_schema", default=None)
 
 
 class LLMExecutionCancelled(BaseException):
@@ -82,15 +83,17 @@ def llm_request_deadline(deadline: float, *, is_cancelled: Callable[[], bool] | 
 
 
 @contextmanager
-def llm_maintenance_mode(*, max_tokens: int = 4096):
+def llm_maintenance_mode(*, max_tokens: int = 4096, response_schema: dict[str, Any] | None = None):
     """Use non-thinking generation only for factual compression or formatting."""
     token = _maintenance_mode.set(True)
     limit_token = _maintenance_output_limit.set(max_tokens)
+    schema_token = _maintenance_response_schema.set(response_schema)
     try:
         yield
     finally:
         _maintenance_mode.reset(token)
         _maintenance_output_limit.reset(limit_token)
+        _maintenance_response_schema.reset(schema_token)
 
 
 def _remaining_request_time() -> float | None:
@@ -644,6 +647,7 @@ class OpenAIChatClient:
         on_delta: Callable[[str], None] | None = None,
         is_cancelled: Callable[[], bool] | None = None,
     ) -> ChatCompletion:
+        response_schema = _maintenance_response_schema.get() if not tools and self.name.startswith("lmstudio") else None
         if is_lmstudio_qwen(self.name, self.model) and _maintenance_mode.get() and not tools:
             # LM Studio 0.4.x can silently ignore chat_template_kwargs for a
             # downloaded MLX model. Its raw completion endpoint applies no
@@ -665,6 +669,10 @@ class OpenAIChatClient:
             if self._preserve_reasoning_context:
                 summary_kwargs.update(temperature=0.7, top_p=0.8, presence_penalty=1.5)
                 summary_kwargs["extra_body"] = {"top_k": 20, "repeat_penalty": 1.0}
+            if response_schema is not None:
+                summary_kwargs.setdefault("extra_body", {})["response_format"] = {
+                    "type": "json_schema", "json_schema": {"name": "maintenance_response", "strict": True,
+                                                           "schema": response_schema}}
             return self._stream_api(summary_kwargs, operation="maintenance", raw=True,
                                     on_delta=on_delta, is_cancelled=is_cancelled)
 
@@ -683,6 +691,11 @@ class OpenAIChatClient:
                 kwargs["max_tokens"] = self.response_token_limit
             elif _request_deadline.get() is not None:
                 kwargs["max_tokens"] = 8192
+        if response_schema is not None:
+            # Non-Qwen LM Studio models use their native chat template.
+            kwargs["response_format"] = {"type": "json_schema", "json_schema": {
+                "name": "maintenance_response", "strict": True, "schema": response_schema}}
+            kwargs["max_tokens"] = min(_maintenance_output_limit.get(), self.response_token_limit or 4096)
         return self._stream_api(kwargs, operation="chat_stream", on_delta=on_delta, is_cancelled=is_cancelled)
 
     def _stream_api(

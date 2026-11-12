@@ -63,6 +63,51 @@ def test_maintenance_uses_closed_thinking_template_in_raw_endpoint(monkeypatch, 
     assert body["stream"] is True and body["max_tokens"] == 4096
 
 
+@pytest.mark.parametrize("model", ["qwen3.6-35b-a3b", "qwen3.8-27b"])
+def test_schema_maintenance_preserves_closed_thinking_template_and_enforces_grammar(monkeypatch, tmp_path, model):
+    from trade_compass_agent.runtime.report_contract import ReportContentDocument
+    requests = []
+    value = '{"schema_version":1,"items":[{"id":"p","section":"market","type":"fact","ref":"e1"}]}'
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, text=_sse({"index": 0, "text": value, "finish_reason": "stop"}),
+                              headers={"content-type": "text/event-stream"})
+    monkeypatch.setattr("trade_compass_agent.llm.providers._usage_http_client",
+                        lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    client = OpenAIChatClient(model=model, api_key="lmstudio", name="lmstudio",
+                             base_url="http://localhost:1234/v1", usage_db_path=tmp_path / "usage.db")
+    with llm_maintenance_mode(max_tokens=16384, response_schema=ReportContentDocument.model_json_schema()):
+        result = client.complete([ChatMessage(role="user", content="报告")])
+    assert result.content == value
+    assert requests[0].url.path == "/v1/completions"
+    body = json.loads(requests[0].content)
+    assert body["response_format"]["json_schema"]["schema"] == ReportContentDocument.model_json_schema()
+    assert body["max_tokens"] == 16384 and body["prompt"].endswith("</think>\n\n")
+    from trade_compass_agent.llm.providers import _maintenance_response_schema
+    assert _maintenance_response_schema.get() is None
+
+
+@pytest.mark.parametrize("value,finish", [("unstructured output", "stop"), ('{"items":[]}', "stop"),
+                                        ('{"schema_version":1,"items":[]}', "length")])
+def test_report_still_rejects_nonconforming_or_truncated_provider_output(monkeypatch, tmp_path, value, finish):
+    from trade_compass_agent.runtime.report_publication import publish_report
+    calls = []
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, text=_sse({"index": 0, "text": value, "finish_reason": finish}),
+                              headers={"content-type": "text/event-stream"})
+    monkeypatch.setattr("trade_compass_agent.llm.providers._usage_http_client",
+                        lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    client = OpenAIChatClient(model="qwen3.6-35b-a3b", api_key="lmstudio", name="lmstudio", max_retries=2,
+                             base_url="http://localhost:1234/v1", usage_db_path=tmp_path / "usage.db")
+    def call(system, user):
+        return client.complete([ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]).content
+    result = publish_report(task="报告价格", draft="", tool_results=[], run_scope="invalid", call=call)
+    assert result.verification["report"] == "unavailable"
+    assert len(calls) == (1 if finish == "length" else 3)
+    assert all("tools" not in json.loads(request.content) for request in calls)
+
+
 @pytest.mark.parametrize("model", ["qwen3.5-35b-a3b", "qwen3.8-27b"])
 def test_local_timeout_is_not_replayed_by_sdk(monkeypatch, tmp_path, model):
     requests = []
@@ -476,6 +521,9 @@ def test_reasoning_only_finish_uses_one_readonly_finalization_without_replaying_
     reply = ScheduledAgentSession(config, job_id="autonomous_trading").run("买入000001100股", timeout=5)
     assert len(orders) == 1 and "actual-receipt" in reply
     assert [r.url.path for r in requests] == ["/v1/chat/completions"] * 3 + ["/v1/completions", "/v1/chat/completions"]
+    composition = json.loads(requests[3].content)
+    assert composition["response_format"]["json_schema"]["schema"]["properties"]["items"]["maxItems"] == 120
+    assert composition["max_tokens"] == (8192 if model.startswith("qwen3.5") else 16384)
     finalization = json.loads(requests[2].content)
     assert all("tools" not in json.loads(request.content) for request in requests[2:])
     final_messages = json.dumps(finalization["messages"])

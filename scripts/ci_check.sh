@@ -35,12 +35,14 @@ fi
   tests/test_report_nested_receipts.py \
   src/trade_compass_agent/runtime/tool_receipts.py \
   tests/test_report_publication.py \
+  tests/test_report_transport.py \
   tests/test_report_scheduler_contract.py \
   tests/test_report_incident_annotations.py \
   tests/report_contract_helpers.py \
   src/trade_compass_agent/runtime/report_contract.py \
   src/trade_compass_agent/runtime/report_execution.py \
   src/trade_compass_agent/runtime/report_publication.py \
+  src/trade_compass_agent/runtime/report_transport.py \
   tests/test_tool_evidence_boundaries.py \
   tests/test_learning_archive.py \
   tests/test_review_nudge_persistence.py \
