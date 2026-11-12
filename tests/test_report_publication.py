@@ -398,3 +398,69 @@ def test_observation_alias_does_not_accept_unowned_or_recursive_evidence(target)
     result = publish_report(task='列出价格', draft='', tool_results=RECEIPTS, run_scope='invalid-observation', call=call)
     assert not reviewed and result.verification['status'] == 'incomplete'
     assert '研判：不应发布' not in result.text
+
+
+@pytest.mark.parametrize("decision,refs,reason,complete", [
+    ("already_present", ["price"], "日期已随已核实价格显示", True),
+    ("outside_task", [], "任务明确排除预测，缺少预测不影响本次历史比较", True),
+    ("required", [], "缺少任务要求的营收事实", False),
+    ("already_present", ["missing"], "无法找到依据", False),
+    ("already_present", [], "没有可引用条目", False),
+    ("outside_task", [], "", False),
+    (None, [], "旧版审核未给出缺口判定", False),
+])
+def test_gap_review_checks_task_scope_without_releasing_unsupported_evidence(decision, refs, reason, complete):
+    from report_contract_helpers import report_facts
+    calls = []
+
+    def call(system, user):
+        payload = json.loads(user)
+        calls.append(payload)
+        if "schema" in payload:
+            fact = next(f for f in report_facts(payload) if f["metric"] == "close")
+            return json.dumps({"schema_version": 1, "items": [
+                {"id": "price", "type": "fact", "section": "market", "ref": fact["id"]},
+                {"id": "gap", "type": "gap", "section": "gaps", "text": "模型声明的资料缺口"}]})
+        assert payload["gaps"] == [{"id": "gap", "text": "模型声明的资料缺口"}]
+        assert payload["verified_items"][0]["id"] == "price"
+        assert "2026-11-10" in payload["verified_items"][0]["rendered"]
+        review = {"reviews": [], "coverage": {"complete": True, "missing": []}}
+        if decision:
+            review["gap_reviews"] = [{"id": "gap", "status": decision, "refs": refs, "reason": reason}]
+        return json.dumps(review)
+
+    result = publish_report(task="报告日期与收盘价，不预测未来", draft="", tool_results=[(
+        "get_bars", json.dumps({"symbol": "002415", "bars": [{"timestamp": "2026-11-10", "close": 34.83}]}))],
+        run_scope="gap-review", call=call)
+    assert len(calls) == 2
+    assert (result.verification["status"] == "complete") is complete
+    assert ("模型声明的资料缺口" not in result.text) is complete
+    assert "34.83" in result.text and "2026-11-10" in result.text
+    assert result.artifact["document"]["items"][-1]["text"] == "模型声明的资料缺口"
+    assert result.artifact["attempts"][0]["findings"][0]["code"] == "declared_gap"
+    if not complete:
+        assert any(f["code"] == "declared_gap" for f in result.verification["findings"])
+
+
+def test_gap_review_cannot_clear_deterministic_failure_or_publish_empty_report():
+    def call(system, user):
+        payload = json.loads(user)
+        if "schema" in payload:
+            return json.dumps({"schema_version": 1, "items": [
+                {"id": "bad", "type": "fact", "section": "market", "ref": "unknown"},
+                {"id": "gap", "type": "gap", "section": "gaps", "text": "不预测未来"}]})
+        return json.dumps({"reviews": [], "coverage": {"complete": True, "missing": []},
+            "gap_reviews": [{"id": "gap", "status": "outside_task", "refs": [], "reason": "不属于任务目标"}]})
+    result = publish_report(task="报告价格", draft="", tool_results=[], run_scope="invalid", call=call)
+    assert result.verification["status"] == "incomplete"
+    assert any(f["code"] == "invalid_evidence" for f in result.verification["findings"])
+    assert "暂未形成可核实结论" in result.text
+
+    def empty_call(system, user):
+        payload = json.loads(user)
+        if "schema" in payload:
+            return '{"schema_version":1,"items":[{"id":"gap","type":"gap","section":"gaps","text":"不预测"}]}'
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]},"gap_reviews":[{"id":"gap","status":"outside_task","refs":[],"reason":"不属于任务目标"}]}'
+    result = publish_report(task="报告价格", draft="", tool_results=[], run_scope="empty", call=empty_call)
+    assert result.verification["report"] == "partial"
+    assert any(f["code"] == "empty_report" for f in result.verification["findings"])

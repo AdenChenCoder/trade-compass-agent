@@ -4,6 +4,10 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## 0.5.8
 
+- Review model-declared gaps against the requested task and verified report
+  content. Out-of-scope limitations and already-present information no longer
+  create false incomplete reports; real gaps and unavailable reviews stay visible.
+
 - Show the report composer one actual rendered fact so observation dates and
   units supplied by the renderer are not mistaken for missing evidence. Unknown
   observation times remain explicitly unknown; retrieval time is not promoted.
