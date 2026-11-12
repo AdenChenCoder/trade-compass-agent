@@ -602,3 +602,14 @@ def test_fresh_execution_context_keeps_history_without_resuming_native_thread(na
     after = store.load(first.session_id).messages
     assert after[:len(before)] == before
     assert any(message.content == "new execution" for message in after)
+
+    # A later interactive question needs the full application transcript, not
+    # a vendor thread that saw only the most recent scheduled execution.
+    protocol.write_text("")
+    AgentLoop.from_config(native_config).run_turn("continue interactively", session_id=first.session_id)
+    events = [json.loads(line) for line in protocol.read_text().splitlines()]
+    assert any(event.get("method") == "thread/start" for event in events)
+    assert not any(event.get("method") == "thread/resume" for event in events)
+    turns = [event for event in events if event.get("method") == "turn/start"]
+    assert "previous execution" in json.dumps(turns)
+    assert "new execution" in json.dumps(turns)

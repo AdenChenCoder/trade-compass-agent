@@ -472,6 +472,7 @@ class AgentLoop:
             ),
         )
         session = self.session_store.get_or_create(session_id)
+        context_start = len(session.messages)
         from trade_compass_agent.llm.native_session import NativeConversation
         native_conversation = None
         publish_after_verification = session.session_id.startswith("scheduler-") or self.verify_report_grounding
@@ -1069,7 +1070,12 @@ class AgentLoop:
             )
             published_response = response
             if native_conversation:
-                native_conversation.commit(session.messages, context=self.session_store.load_context(session))
+                # A fresh native execution saw only this turn. Do not label its
+                # cursor as covering older visible history: an interactive
+                # continuation must rebuild that full context before resuming.
+                native_conversation.commit(session.messages, context=(
+                    session.messages[context_start:] if fresh_context
+                    else self.session_store.load_context(session)))
             if not quality.degraded:
                 from trade_compass_agent.llm.providers import llm_request_deadline
                 try:
