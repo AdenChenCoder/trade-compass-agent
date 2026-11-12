@@ -2,6 +2,14 @@
 
 This project follows [Semantic Versioning](https://semver.org/) and records user-visible changes here.
 
+## 0.5.9
+
+- Preserve full history when an interactive follow-up switches from a scheduled
+  native execution. Resume cursors now describe the context actually supplied;
+  narrower native history cannot silently stand in for the complete transcript.
+- Includes the report recovery changes prepared in 0.5.8. That release workflow
+  was stopped before publication when this native continuation case was found.
+
 ## 0.5.8
 
 - Review model-declared gaps against the requested task and verified report
