@@ -151,3 +151,54 @@ def test_repeated_job_reacquires_evidence_and_keeps_complete_history(tmp_path, m
     assert len(set(run_ids)) == 3
     for rid in run_ids:
         assert api.get(f"/api/jobs/runs/{rid}").json()["status"] == "completed"
+
+
+@pytest.mark.parametrize("scope,requested", [(None, "get_bars"), (set(), "get_bars"),
+                                            ({"get_bars"}, "get_bars"), ({"get_bars"}, "place_paper_trade")])
+def test_prompt_executor_capabilities_reach_model_and_execution_boundary(tmp_path, monkeypatch, scope, requested):
+    observed, executed = [], []
+
+    class Client:
+        name = model = "mock"
+
+        def stream_complete(self, messages, *, tools=None, **kwargs):
+            reply = report_reply(messages, metrics={"close"})
+            if reply:
+                return reply
+            if not observed:
+                observed.append({tool["function"]["name"] for tool in tools or []})
+                # Deliberately request an unavailable tool even when the model
+                # received an empty schema list. No business write may execute.
+                return ChatCompletion(content="", tool_calls=[ToolCall("request", requested, '{"symbol":"002415","limit":1}')])
+            return ChatCompletion(content="已结束查询。")
+
+        complete = stream_complete
+
+    config = AppConfig(data_dir=tmp_path/"data", memory_dir=tmp_path/"memory",
+                       data_provider="sample", agent=AgentConfig(learning_enabled=False))
+    monkeypatch.setattr("trade_compass_agent.runtime.loop.create_chat_client", lambda _: Client())
+    monkeypatch.setattr("trade_compass_agent.ops.delivery.DeliveryRouter.deliver", lambda *_: None)
+
+    def execute(self, name, arguments):
+        executed.append(name)
+        assert name == "get_bars"
+        return json.dumps({"symbol": "002415", "bars": [{"timestamp": "2025-01-01", "close": 22}]})
+
+    # Keep the actual registry guard; freeze only the operation behind it.
+    monkeypatch.setattr("trade_compass_agent.runtime.tools.registry.ToolRegistry._execute", execute)
+    jobs = PromptJobStore(config.data_dir/"scheduler.db")
+    job = jobs.create(name="受限查询", prompt="列出收盘价。", schedule="sat 23:59", delivery_channels=())
+    runs = SqliteRunStore(config.data_dir/"scheduler.db")
+    granted = set(scope) if scope is not None else None
+    executor = PromptJobExecutor(config, runs, tool_whitelist=granted)
+    if granted is not None:
+        granted.add("place_paper_trade")
+    executor.execute(job)
+    if scope is None:
+        assert "get_bars" in observed[0] and "place_paper_trade" in observed[0]
+    else:
+        assert observed == [scope]
+    denied = scope is not None and requested not in scope
+    assert executed == ([] if denied else ["get_bars"])
+    run = runs.recent_runs(job_id="custom:"+job.id)[0]
+    assert run.status == ("degraded" if denied else "completed")

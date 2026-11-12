@@ -82,6 +82,10 @@ required LM Studio model. Its fixed scene plan uses synthetic dated receipts,
 real inference, isolated roots, no business writes, bounded calls and separate
 processes for first/continued execution. The model and service must already be
 available; the harness does not start, reconfigure or switch models.
+The executor explicitly grants only the scene's frozen query tool through the
+existing scheduler capability boundary. Both the model schema and operation
+guard enforce that scope; prompt wording is not a permission boundary. Ordinary
+prompt-job executors retain their default tool availability.
 
 ```bash
 /path/to/installed-venv/bin/python -I scripts/release_model_acceptance.py \

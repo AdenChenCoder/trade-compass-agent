@@ -151,6 +151,9 @@ def worker(root, case, model):
         def stream_complete(self, messages, **kwargs):
             require(len(calls) < 8, "fixed model-call budget exceeded")
             row = {"tools_available": bool(kwargs.get("tools"))}
+            if row["tools_available"]:
+                row["granted_tools"] = [tool["function"]["name"] for tool in kwargs["tools"]]
+                require(row["granted_tools"] == [expected_tool], "executor capability scope was not applied")
             calls.append(row)
             answer = real.stream_complete(messages, **kwargs)
             row.update(content=answer.content, tool_calls=[{"name": t.name, "arguments": t.arguments} for t in answer.tool_calls])
@@ -184,7 +187,7 @@ def worker(root, case, model):
          patch("trade_compass_agent.web.agent_api.load_app_config", lambda: config), \
          llm_request_deadline(time.monotonic()+240):
         runs = SqliteRunStore(config.data_dir/"scheduler.db")
-        PromptJobExecutor(config, runs).execute(job)
+        PromptJobExecutor(config, runs, tool_whitelist={expected_tool}).execute(job)
         run = runs.recent_runs(job_id="custom:"+job.id)[0]
         api = TestClient(create_app())
         response = api.get("/api/jobs/runs/"+run.id)
@@ -230,6 +233,7 @@ def main():
     verify = runpy.run_path(str(Path(__file__).with_name("release_acceptance.py")))["verify_installed_wheel"]
     result = {"passed": False, "mode": "real-model", "provider": "lmstudio", "model": args.model,
               "cases": [], "case_plan": list(CASES), "retries": 0, "business_tools": "synthetic frozen",
+              "capability_profile": "executor whitelist: only each case's frozen query tool",
               "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
     try:
         result.update(verify(wheel))
