@@ -15,21 +15,26 @@ class ReportTransport:
         self.references = {f"e{i}": key for i, key in enumerate(catalog.facts)}
         self.aliases = {value: key for key, value in self.references.items()}
         table = catalog.model_table()
-        columns = table["fact_columns"]
-        # Literal values and IDs stay literal. Other columns are dictionary
-        # encoded independently; null dates and unknown units remain distinct.
-        dictionaries = {}
-        for index, column in enumerate(columns):
-            if column in {"id", "value"}:
-                continue
-            values = list(dict.fromkeys(row[index] for row in table["facts"]))
-            dictionaries[column] = values
-            indexes = {value: i for i, value in enumerate(values)}
-            for row in table["facts"]:
-                row[index] = indexes[row[index]]
-        for row in table["facts"]:
-            row[0] = self.aliases[row[0]]
-        self.table = {**table, "fact_dictionaries": dictionaries}
+        original_columns = table["fact_columns"]
+        original_rows = [dict(zip(original_columns, row, strict=True)) for row in table["facts"]]
+        self._fact_details = {self.aliases[row["id"]]: {**row, "id": self.aliases[row["id"]]}
+                              for row in original_rows}
+        columns = ["id", "value", "observed_at"]
+        shared = [column for column in original_columns if column not in columns]
+        groups = []
+        by_context = {}
+        for original in original_rows:
+            context = tuple(original[column] for column in shared)
+            if context not in by_context:
+                group = {column: original[column] for column in shared}
+                group["rows"] = []
+                by_context[context] = group
+                groups.append(group)
+            by_context[context]["rows"].append([self.aliases[original["id"]], original["value"], original["observed_at"]])
+        # Sharing literal context removes numeric dictionary joins altogether.
+        # Keep exact null dates, values, units and provenance; an explicit order
+        # table restores the input sequence independently of grouped presentation.
+        self.table = {"fact_columns": columns, "facts": groups, "fact_order": list(self.references)}
         # Show the actual consumer rendering contract once, not a second copy
         # of the catalogue. Observation dates/units are already in fact output.
         sample = next((fact for fact in catalog.facts.values() if fact.observed_at),
@@ -52,8 +57,6 @@ class ReportTransport:
         if document is None:
             return []
         blocked = {finding.item_id for finding in findings}
-        columns = self.table["fact_columns"]
-        rows = {row[0]: row for row in self.table["facts"]}
         result = []
         for item in document.items:
             if item.id not in blocked:
@@ -62,13 +65,11 @@ class ReportTransport:
             facts, unknown = [], []
             for ref in refs:
                 alias = self.aliases.get(ref, ref)
-                if alias not in rows:
+                if alias not in self._fact_details:
                     if ref:
                         unknown.append(ref)
                     continue
-                facts.append({column: self.table["fact_dictionaries"][column][value]
-                              if column in self.table["fact_dictionaries"] else value
-                              for column, value in zip(columns, rows[alias], strict=True)})
+                facts.append(dict(self._fact_details[alias]))
             result.append({"item_id": item.id, "facts": facts, "refs_not_in_fact_catalog": unknown})
         return result
 

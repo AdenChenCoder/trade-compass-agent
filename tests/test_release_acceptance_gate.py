@@ -62,7 +62,9 @@ def valid_report():
     artifact = {"facts": [{"id": str(i), "subject": "002415", "metric": "close",
                             "value": str(b["close"]), "observed_at": b["timestamp"]}
                            for i, b in enumerate(receipt["bars"])],
-                "calculations": {"change": {"operation": "change_pct", "refs": ["0", "1"], "result": "10"}}}
+                "calculations": {"change": {"operation": "change_pct", "refs": ["0", "1"], "result": "10"}},
+                "document": {"items": [{"id": "observation", "type": "fact", "ref": "0"},
+                                       {"id": "change", "type": "calculation", "refs": ["0", "1"]}]}}
     return detail, artifact, receipt
 
 
@@ -89,6 +91,7 @@ def test_real_gap_is_required_but_cannot_excuse_wrong_calculation():
     detail, artifact, receipt = valid_report()
     with pytest.raises(RuntimeError):
         MODEL["check_report"](detail, artifact, receipt, missing=True)
+
     detail["status"] = "degraded"
     detail["analysis"] += " 缺少营收依据"
     verification = detail["step_runs"][0]["data"]["verification"]
@@ -98,6 +101,13 @@ def test_real_gap_is_required_but_cannot_excuse_wrong_calculation():
     with pytest.raises(RuntimeError):
         MODEL["check_report"](detail, artifact, receipt, missing=True)
 
+
+def test_correct_requested_calculation_cannot_hide_an_extra_foreign_observation():
+    detail, artifact, receipt = valid_report()
+    artifact["facts"].append({**artifact["facts"][0], "id": "foreign", "subject": "000005"})
+    artifact["document"]["items"].append({"id": "extra", "type": "fact", "ref": "foreign"})
+    with pytest.raises(RuntimeError, match="another instrument"):
+        MODEL["check_report"](detail, artifact, receipt, missing=False)
 
 @pytest.mark.parametrize("filename,build_job", [
     ("release.yml", "build"), ("test-publish.yml", "verify-and-build"), ("ci.yml", "wheel-smoke"),

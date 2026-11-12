@@ -70,6 +70,12 @@ def check_report(detail, artifact, receipt, *, missing):
                 and not verification["findings"], "normal report failed availability criterion")
     bars = receipt["bars"][-2:]
     facts = {f["id"]: f for f in artifact["facts"]}
+    for item in artifact["document"]["items"]:
+        if item["type"] == "fact":
+            require(facts[item["ref"]]["subject"] == "002415", "published observation belongs to another instrument")
+        if item["type"] == "calculation":
+            require(all(facts[ref]["subject"] == "002415" for ref in item["refs"]),
+                    "published calculation belongs to another instrument")
     expected = [(str(b["close"]), b["timestamp"]) for b in bars]
     found = False
     for calc in artifact["calculations"].values():
