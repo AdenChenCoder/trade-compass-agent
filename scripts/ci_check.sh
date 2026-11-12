@@ -13,6 +13,10 @@ fi
 "$PYTHON" -m ruff check \
   scripts/check_assets.py \
   scripts/check_dist.py \
+  scripts/release_acceptance.py \
+  scripts/release_model_acceptance.py \
+  tests/test_release_acceptance_gate.py \
+  tests/test_report_batch_contract.py \
   scripts/mobile_probe.py \
   src/trade_compass_agent/llm/native.py \
   src/trade_compass_agent/llm/codex_transport.py \

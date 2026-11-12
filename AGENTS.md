@@ -79,6 +79,17 @@ domain's history for an unrelated task.
 
 ## Verification and completion
 
+- Changes affecting project task execution, Agent loops or runtime architecture
+  must pass the local [execution protection acceptance](docs/development-production.md#执行链路变更的防护验收)
+  before the Agent marks work complete, makes a PR ready, merges or releases it.
+  This includes indirect changes to scheduling, tool permissions, model adapters,
+  prompts/Skills, report evidence, shared configuration and state lifecycle.
+  Define the affected scenes and pass criteria before implementation; run the
+  applicable deterministic, installed-package and real-model checks and retain
+  exact-artifact evidence. A missing check, unavailable model or failed normal
+  scene blocks completion; record the blocker instead of substituting green CI,
+  a mock or a reclassified failure. No dedicated CI runner is required.
+
 - Turn defects into regression checks at the practical consumer boundary.
   Pair invalid-input rejection with legitimate-output acceptance. Vary wording
   and ordering without changing meaning, and evidence validity without relying

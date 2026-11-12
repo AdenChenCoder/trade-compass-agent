@@ -190,9 +190,13 @@ class PromptJobStore:
 class PromptJobExecutor:
     """Execute a PromptJob by running its prompt through AgentLoop."""
 
-    def __init__(self, config: AppConfig, run_store: SqliteRunStore) -> None:
+    def __init__(self, config: AppConfig, run_store: SqliteRunStore, *, tool_whitelist: set[str] | None = None) -> None:
         self.config = config
         self.run_store = run_store
+        # Executor-owned capability scope. None retains ordinary prompt-job
+        # behavior; an explicit empty set grants no tools. Never infer grants
+        # from prompt text or let a caller mutate them while a job is running.
+        self._tool_whitelist = frozenset(tool_whitelist) if tool_whitelist is not None else None
 
     def execute(self, job: PromptJob, *, trigger: str = "scheduler") -> None:
         job_key = f"custom:{job.id}"
@@ -210,6 +214,7 @@ class PromptJobExecutor:
                 self.config,
                 job_id=f"prompt-{job.id}",
                 run_id=run.id,
+                **({"tool_whitelist": set(self._tool_whitelist)} if self._tool_whitelist is not None else {}),
             )
             text = session.run(job.prompt)
             verification = dict(getattr(session, "verification", {}) or {})

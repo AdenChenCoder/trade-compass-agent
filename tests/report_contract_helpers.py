@@ -6,9 +6,16 @@ from trade_compass_agent.llm.providers import ChatCompletion
 
 def report_facts(payload):
     dictionaries = payload.get("fact_dictionaries", {})
-    return [{column: dictionaries[column][value] if column in dictionaries else value
-             for column, value in zip(payload["fact_columns"], row, strict=True)}
-            for row in payload["facts"]]
+    result = []
+    for group in payload["facts"]:
+        identity = {key: value for key, value in group.items() if key != "rows"} if isinstance(group, dict) else {}
+        rows = group["rows"] if isinstance(group, dict) else [group]
+        result.extend({**identity, **{column: dictionaries[column][value] if column in dictionaries else value
+                       for column, value in zip(payload["fact_columns"], row, strict=True)}} for row in rows)
+    if "fact_order" in payload:
+        by_id = {row["id"]: row for row in result}
+        return [by_id[ref] for ref in payload["fact_order"]]
+    return result
 
 
 def report_reply(messages, *, metrics=None, gap=None, inference=None, invalid_ref=False):

@@ -290,6 +290,13 @@ class EvidenceCatalog:
                 or value.get("has_real_fundamentals") is False):
             return
         context = {**inherited}
+        parts = path.split("/")
+        compact_bar = (tool == "batch_get_bars" and len(parts) == 5
+                       and parts[1] == "results" and parts[3] == "bars" and parts[4].isdigit())
+        if compact_bar:
+            # A row's date belongs to that bar; a missing date must not inherit
+            # the batch's newest observation time.
+            context.pop("observed_at", None)
         if tool in PORTFOLIO_OPERATIONS | {"analyze_portfolio"} and "/account_balances/" in path:
             context["account"] = value.get("id", context.get("account", ""))
         for key in ("symbol", "name", "account", "timeframe", "volume_unit", "price_unit", "url", "adjustment", "classification"):
@@ -314,7 +321,8 @@ class EvidenceCatalog:
             pointer = f"{path}/{_pointer(key)}"
             if key in _NON_OBSERVATIONS:
                 continue
-            descriptor = FIELDS.get(key)
+            metric = {"O": "open", "H": "high", "L": "low", "C": "close", "V": "volume"}.get(key, key) if compact_bar else key
+            descriptor = FIELDS.get(metric)
             if path.endswith("/ma") and key.startswith("MA") and key[2:].isdigit():
                 descriptor = (key, "元/股", "moving_average")
             if descriptor and isinstance(item, (str, int, float)) and not isinstance(item, bool):
@@ -361,7 +369,7 @@ class EvidenceCatalog:
                 # Quotations retain their exact content and origin; they are not
                 # parsed into numeric observations by the report composer.
                 self.facts[fid] = Fact(fid, rid, pointer, subject, context.get("account", ""),
-                    key, label, str(item), unit, context.get("observed_at"), kind, tool,
+                    metric, label, str(item), unit, context.get("observed_at"), kind, tool,
                     context.get("symbol") or context.get("name", ""), context.get("timeframe", ""),
                     json.dumps(scope, ensure_ascii=False) if scope else "")
             if isinstance(item, (dict, list)):

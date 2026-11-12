@@ -33,6 +33,30 @@ def test_full_large_catalog_fits_without_losing_values_or_scopes():
     assert [asdict(f) for f in catalog.facts.values()] == original
 
 
+def test_fact_groups_bind_literal_identity_without_reordering_equal_values():
+    receipts = [("get_bars", json.dumps({"symbol": symbol, "account": account,
+        "bars": [{"timestamp": "2025-01-29", "close": 50},
+                 {"timestamp": "2025-01-30", "close": 51}]}))
+        for symbol, account in [("000005", "a"), ("002415", "a"), ("002415", "b"), ("000005", "a")]]
+    catalog = EvidenceCatalog.build(receipts, run_scope="identity")
+    transport = ReportTransport(catalog)
+    assert "subject" not in transport.table["fact_columns"]
+    assert "fact_dictionaries" not in transport.table
+    assert transport.table["fact_columns"] == ["id", "value", "observed_at"]
+    # Series use literal identities, metrics and units. The explicit order table
+    # preserves receipt/fact order even when series share equal numeric values.
+    groups = transport.table["facts"]
+    assert all(isinstance(group["metric"], str) and isinstance(group["unit"], str) for group in groups)
+    assert {(group["subject"], group["account"]) for group in groups} == {
+        (fact.subject, fact.account) for fact in catalog.facts.values()}
+    assert transport.table["fact_order"] == [transport.aliases[fact.id] for fact in catalog.facts.values()]
+    decoded = report_facts(transport.table)
+    columns = catalog.model_table()["fact_columns"]
+    for actual, fact in zip(decoded, catalog.facts.values(), strict=True):
+        actual["id"] = transport.references[actual["id"]]
+        assert actual == {column: getattr(fact, column) for column in columns}
+
+
 def test_short_references_never_escape_to_artifacts_or_calculation_provenance():
     receipts = market_receipts()
     def call(system, user):

@@ -46,6 +46,13 @@ attaches the installer, Python distributions, a CycloneDX SBOM, and
 
 ## Acceptance
 
+Before an Agent merges or releases changes affecting execution behavior, it must
+complete the local [execution protection acceptance](development-production.md#执行链路变更的防护验收).
+This is a repository Agent completion requirement, not an additional GitHub CI
+job or self-hosted runner dependency. The existing CI and release workflows
+remain unchanged. Local acceptance does not replace the normal release checks
+or authorize deployment by itself.
+
 The installed-package smoke test verifies:
 
 - the importable version;
