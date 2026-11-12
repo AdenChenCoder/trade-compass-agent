@@ -137,8 +137,55 @@ jobs:
           path: release-assets/
           if-no-files-found: error
 
-  publish:
+  model-acceptance:
     needs: build
+    # Missing configuration deliberately runs the fail-fast check on a hosted
+    # runner. It must never silently skip the real-model publishing dependency.
+    runs-on: ${{ vars.RELEASE_MODEL_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 25
+    concurrency:
+      group: release-model-acceptance
+      cancel-in-progress: false
+    steps:
+      - name: Require the approved model environment
+        env:
+          RELEASE_MODEL_RUNNER: ${{ vars.RELEASE_MODEL_RUNNER }}
+          RELEASE_MODEL_ID: ${{ vars.RELEASE_MODEL_ID }}
+        run: |
+          test -n "$RELEASE_MODEL_RUNNER" || { echo 'Configure the approved RELEASE_MODEL_RUNNER before publishing.'; exit 1; }
+          test -n "$RELEASE_MODEL_ID" || { echo 'Configure the required RELEASE_MODEL_ID before publishing.'; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-distributions
+          path: dist
+      - name: Accept the exact wheel with real inference
+        env:
+          RELEASE_MODEL_ID: ${{ vars.RELEASE_MODEL_ID }}
+        run: |
+          acceptance_root="$RUNNER_TEMP/model-acceptance-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$acceptance_root"
+          python -m venv "$acceptance_root/venv"
+          "$acceptance_root/venv/bin/python" -m pip install dist/*.whl
+          "$acceptance_root/venv/bin/python" -I scripts/release_model_acceptance.py \
+            --wheel dist/*.whl --model "$RELEASE_MODEL_ID" --output "$acceptance_root/evidence"
+      - name: Preserve real-model acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: real-model-acceptance
+          path: |
+            ${{ runner.temp }}/model-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/evidence/*.json
+            ${{ runner.temp }}/model-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/evidence/*.log
+          if-no-files-found: error
+
+  publish:
+    needs: [build, model-acceptance]
     runs-on: ubuntu-latest
     environment:
       name: pypi

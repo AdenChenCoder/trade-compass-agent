@@ -1,7 +1,9 @@
 """Release evidence must reject missing coverage and falsely 'complete' reports."""
 from copy import deepcopy
 from pathlib import Path
+import os
 import runpy
+import subprocess
 import zipfile
 
 import pytest
@@ -107,5 +109,27 @@ def test_installed_acceptance_is_mandatory_before_publish(filename, build_job):
     assert "if" not in gate and not gate.get("continue-on-error")
     assert "--wheel dist/*.whl" in gate["run"]
     if "publish" in jobs:
-        assert jobs["publish"]["needs"] == build_job
+        needs = jobs["publish"]["needs"]
+        assert build_job in ([needs] if isinstance(needs, str) else needs)
         assert "if" not in jobs["publish"]
+
+
+def test_real_model_failure_or_missing_configuration_blocks_production_publish():
+    jobs = yaml.safe_load((ROOT/".github/workflows/release.yml").read_text())["jobs"]
+    assert "model-acceptance" in jobs["publish"]["needs"]
+    gate = jobs["model-acceptance"]
+    assert gate["needs"] == "build"
+    assert "if" not in gate and not gate.get("continue-on-error")
+    assert "ubuntu-latest" in gate["runs-on"]  # Fail fast when no runner was chosen.
+    preflight = gate["steps"][0]
+    for variable in ("RELEASE_MODEL_RUNNER", "RELEASE_MODEL_ID"):
+        assert f'test -n "${variable}"' in preflight["run"]
+    assert "exit 1" in preflight["run"]
+    base_env = {k: v for k, v in os.environ.items() if not k.startswith("RELEASE_MODEL_")}
+    for variables, expected in [({}, False), ({"RELEASE_MODEL_RUNNER": "isolated"}, False),
+                                ({"RELEASE_MODEL_RUNNER": "isolated", "RELEASE_MODEL_ID": "required-model"}, True)]:
+        result = subprocess.run(["bash", "-e", "-c", preflight["run"]],
+                                env={**base_env, **variables}, capture_output=True, text=True)
+        assert (result.returncode == 0) is expected
+    model = next(s for s in gate["steps"] if "scripts/release_model_acceptance.py" in s.get("run", ""))
+    assert "if" not in model and not model.get("continue-on-error")

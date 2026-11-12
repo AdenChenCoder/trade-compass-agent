@@ -98,12 +98,22 @@ reclassify an unexpected failure as an expected negative after seeing results,
 drop a failed scene, increase budgets after a timeout, or retry until green.
 Changing a scene or threshold requires review and a new complete evidence set.
 
-Real-model execution requires an approved runner that can reach the required
-model. The local harness is not itself a GitHub publishing dependency: until that
-runner and required job are configured, automatic real-model enforcement remains
-an open release prerequisite. Do not present deterministic CI as that enforcement.
+The production `publish` job depends on `model-acceptance`. Configure repository
+variables `RELEASE_MODEL_RUNNER` (an approved runner label) and `RELEASE_MODEL_ID`
+(the required LM Studio model ID). With either missing, a hosted runner fails
+preflight; absence of a local runner/model never skips acceptance or permits
+publication. The approved runner must have LM Studio reachable on its loopback
+interface and capacity reserved for acceptance. Use an isolated runner account
+without production state, credentials or supervision privileges; never expose
+this runner to pull-request jobs. The harness does not install/register a runner
+or change repository variables. Until that infrastructure is approved and ready,
+production releases are intentionally blocked. TestPyPI remains a deterministic
+artifact preview, not permission to deploy to the stable service.
+
 Other providers need their own real-adapter acceptance; native protocol doubles
-do not certify vendor authentication or real inference.
+do not certify vendor authentication or real inference. A model profile change
+requires a new complete fixed-plan evidence set. The fixed small suite is a
+regression gate, not a statistical guarantee of future model reliability.
 
 These gates cover the report incident class, not all product journeys. Expand
 consumer contracts with affected features: first/continued use, restart, upgrade
