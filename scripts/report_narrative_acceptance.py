@@ -35,6 +35,24 @@ CASES = {
 }
 
 
+# Scope changes must be rejected even when the copied number is correct. The
+# identical sector sentence is also accepted when its source actually says it.
+_company = [("get_fundamentals", json.dumps({"symbol": "600928", "name": "西安银行",
+             "as_of": "2025-01-02", "pb": 0.8}))]
+_sector = [("fetch_url", json.dumps({"url": "https://example.invalid/frozen-sector",
+            "title": "冻结的行业统计样本", "content": "银行板块整体的市净率为0.8倍。该指标适用于整个板块，不是单一银行。"}))]
+SCOPE_CASES = {
+    "individual_scope": ("600928 西安银行的市净率为0.8倍。", True, _company, "说明资料中的市净率及其适用主体。"),
+    "company_as_sector": ("银行板块整体的市净率为0.8倍。", False, _company, "说明资料中的市净率及其适用主体。"),
+    "sector_source_same_words": ("银行板块整体的市净率为0.8倍。", True, _sector, "说明资料中的市净率及其适用主体。"),
+    "absence_as_nonexecution": ("本轮未执行新的买卖操作，因为没有本轮交易回执。", False, _company,
+                                "说明现有资料能否确认本轮买卖执行情况。"),
+    "absence_as_unknown": ("提供的资料中没有本轮交易回执，无法据此确认本轮是否执行了买卖。", True, _company,
+                          "说明现有资料能否确认本轮买卖执行情况。"),
+}
+CASES.update({name: (prose, expected) for name, (prose, expected, _, _) in SCOPE_CASES.items()})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", type=Path, required=True)
@@ -75,7 +93,7 @@ def main():
             "timestamp": "2024-12-31T14:00:00+08:00"}]})),
     ]
     for name, (prose, expected) in CASES.items():
-        case_receipts = list(receipts)
+        case_receipts = list(SCOPE_CASES[name][2] if name in SCOPE_CASES else receipts)
         if name == "changed_direction_evidence":
             changed = json.loads(case_receipts[0][1])
             changed["bars"][0]["close"], changed["bars"][1]["close"] = 23, 22
@@ -84,6 +102,10 @@ def main():
         def call(system, user):
             payload = json.loads(user)
             if "schema" in payload:
+                if name in SCOPE_CASES:
+                    refs = [row[0] for group in payload["facts"] for row in group["rows"]]
+                    return json.dumps({"schema_version": 1, "items": [{"id": "answer", "section": "overview",
+                        "type": "paragraph", "parts": [{"type": "text", "text": prose}], "refs": refs}]}, ensure_ascii=False)
                 facts = [dict(zip(payload["fact_columns"], row, strict=True))
                          for group in payload["facts"] if group["metric"] == "close" for row in group["rows"]]
                 parts = [{"type": "value", "ref": facts[0]["id"], "field": "subject"},
@@ -132,7 +154,8 @@ def main():
         started = time.monotonic()
         try:
             with llm_request_deadline(started + 120):
-                task = "说明这两个观察日收盘价变化，仅在存在本轮执行记录时报告成交。"
+                task = (SCOPE_CASES[name][3] if name in SCOPE_CASES else
+                        "说明这两个观察日收盘价变化，仅在存在本轮执行记录时报告成交。")
                 if name in {"hidden_result", "compact_percentage", "visible_result", "missing_percentage_unit", "correct_percentage",
                             "unit_in_body_context", "explicit_ratio_scale", "percentage_as_price"}:
                     task += "给出收盘价变动比例。"

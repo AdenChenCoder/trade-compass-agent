@@ -37,7 +37,7 @@ def document(payload, reverse=False):
     return {"schema_version": 1, "items": list(reversed(items)) if reverse else items}
 
 
-def publish(*, reverse=False, mutate=None, verdict=True, unavailable=False, receipts=RECEIPTS, run_id=""):
+def publish(*, reverse=False, mutate=None, verdict=True, unavailable=False, receipts=RECEIPTS, run_id="", reason="价格资料不能支持该结论"):
     calls = []
     def call(system, user):
         payload = json.loads(user)
@@ -50,7 +50,7 @@ def publish(*, reverse=False, mutate=None, verdict=True, unavailable=False, rece
         if unavailable:
             raise TimeoutError("review unavailable")
         return json.dumps({"reviews": [{"id": p["id"], "supported": verdict,
-                           "reason": "" if verdict else "价格资料不能支持该结论"} for p in payload["inferences"]],
+                           "reason": "" if verdict else reason} for p in payload["inferences"]],
                            "coverage": {"complete": True, "missing": []}})
     return publish_report(task="比较两日收盘价", draft="", tool_results=receipts,
                           run_scope="narrative", run_id=run_id, call=call), calls
@@ -178,7 +178,8 @@ def test_unresolved_definition_remains_visible_beside_a_valid_paragraph():
     report, _ = publish(mutate=mutate)
     assert "10元/股升至11元/股" in report.text
     assert report.verification["report"] == "partial"
-    assert "引用不属于本轮可核验资料" in report.text
+    assert "市场部分尚未完成，相关结论暂无法确认。" in report.text
+    assert any(row["message"] == "引用不属于本轮可核验资料" for row in report.verification["findings"])
 
 def test_review_batch_view_preserves_full_instrument_rows_and_explicit_omissions():
     from dataclasses import replace
@@ -391,3 +392,22 @@ def test_real_data_gap_does_not_retry_or_discard_an_independently_valid_body(inv
     assert "缺少营收资料" in result.artifact["reader_body"]
     assert result.artifact["review_valid"]
     assert any(a.get("gap_review_error_type") == "invalid_gap_review" for a in result.artifact["attempts"]) is invalid_gap_decision
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_reader_incomplete_notice_does_not_repeat_internal_review_or_false_claims(missing):
+    reason = "segments中author新增的‘该公司已经获批注册证’没有receipts支持，schema字段不可作为依据。"
+    def mutate(doc):
+        doc["items"].append({**doc["items"][1], "id": "second"})
+        if missing:
+            doc["items"].append({"id": "gap", "type": "gap", "section": "gaps", "text": "缺少营收资料，无法比较营收变化。"})
+    report, _ = publish(verdict=False, reason=reason, mutate=mutate)
+    assert reason not in report.text
+    assert "注册证" not in report.text and "receipts" not in report.text
+    assert report.text.count("研判部分尚未完成，相关结论暂无法确认。") == 1
+    assert ("缺少营收资料" in report.text) is missing
+    assert report.verification["report"] == "partial"
+    assert report.verification["execution"] == "completed"
+    assert report.verification["data"] == ("insufficient" if missing else "available")
+    assert any(row["message"] == reason for row in report.verification["findings"])
+    assert report.artifact["review"]["reviews"][0]["reason"] == reason

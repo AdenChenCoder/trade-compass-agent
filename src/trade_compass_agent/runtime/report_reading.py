@@ -140,20 +140,25 @@ def _narrative(document, rendered, findings, catalog, *, execution, include_sour
     """
     blocks, notes = [], {}
     approved = any(isinstance(item, Paragraph) and item.id in rendered for item in document.items)
-    by_item = defaultdict(list)
-    for finding in findings:
-        if finding.item_id:
-            by_item[finding.item_id].append(finding.message)
+    unresolved = {finding.item_id for finding in findings if finding.item_id}
+    incomplete_sections = set()
+
+    def incomplete_notice(item):
+        # Review diagnostics may quote rejected claims or internal field names.
+        # Keep them in the artifact; the reader needs the unfinished business area.
+        if item.section not in incomplete_sections:
+            incomplete_sections.add(item.section)
+            blocks.append(f"{SECTION_LABELS[item.section]}部分尚未完成，相关结论暂无法确认。")
     for item in document.items:
         if isinstance(item, (Observation, Calculation)):
-            if item.id in by_item:
-                blocks.append("暂未形成可核实结论：" + "；".join(dict.fromkeys(by_item[item.id])))
+            if item.id in unresolved:
+                incomplete_notice(item)
             if not approved and item.id in rendered:
                 blocks.append(rendered[item.id])
             continue
         if item.id not in rendered:
-            if item.id in by_item:
-                blocks.append("暂未形成可核实结论：" + "；".join(dict.fromkeys(by_item[item.id])))
+            if item.id in unresolved:
+                incomplete_notice(item)
             continue
         text = rendered[item.id]
         if isinstance(item, (Paragraph, Inference)):
