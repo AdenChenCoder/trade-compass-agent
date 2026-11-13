@@ -1089,7 +1089,8 @@ class AgentLoop:
                     with llm_request_deadline(time.monotonic() + self.config.llm.timeout,
                                               is_cancelled=is_cancelled):
                         _check_cancelled()
-                        curate_turn_insight(config=self.config, user_message=message, response=response)
+                        curate_turn_insight(config=self.config, user_message=message, response=response,
+                            report_run_id=self.report_run_id, report_call=read_only_report_call)
                         _check_cancelled()
                 except LLMExecutionCancelled:
                     _check_cancelled()  # User stop is distinct from parent workflow expiry.

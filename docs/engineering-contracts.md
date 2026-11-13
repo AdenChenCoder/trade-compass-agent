@@ -125,6 +125,13 @@ Regression entry points:
 
 ## Memory and learning lifecycle
 
+- Automatic learning from verified task reports reopens the run-owned evidence
+  artifact, checks its digest and completion state, and curates against original
+  receipts through the bounded, read-only internal report contract. Human prose
+  is context, never a replacement for receipts. Only complete curated results
+  enter the searchable archive; failed attempts remain report diagnostics linked
+  to the source turn. Missing evidence must not fall back to prose-only learning.
+  This does not certify legacy interactive learning or later free-text compaction.
 - Explicit dates constrain recall without deleting history. Exact phrase matches
   must reach the matching record before loose search matches. Repeated recalled
   content must not crowd out independent evidence; verify returned content after

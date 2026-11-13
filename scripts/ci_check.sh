@@ -16,6 +16,8 @@ fi
   scripts/release_acceptance.py \
   scripts/release_model_acceptance.py \
   scripts/report_narrative_acceptance.py \
+  scripts/report_learning_acceptance.py \
+  tests/test_report_learning.py \
   tests/test_release_acceptance_gate.py \
   tests/conftest.py \
   tests/test_unit_model_isolation.py \
