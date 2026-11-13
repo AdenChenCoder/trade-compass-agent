@@ -108,13 +108,20 @@ def worker(args):
             from trade_compass_agent.memory.tree.storage import MemoryTreeStore
             original_provider = learning.create_llm_provider
             selection_calls = []
+            result["compaction"] = {"calls": selection_calls}
             def recorded_provider(**kwargs):
                 provider = original_provider(**kwargs)
                 complete = provider.complete
                 def recorded(request):
-                    answer = complete(request)
-                    selection_calls.append({"input": request.prompt, "output": answer.text})
-                    return answer
+                    record = {"input": request.prompt}
+                    selection_calls.append(record)
+                    try:
+                        answer = complete(request)
+                        record["output"] = answer.text
+                        return answer
+                    except Exception as exc:
+                        record["error_type"] = type(exc).__name__
+                        raise
                 provider.complete = recorded
                 return provider
             records = MemoryTreeStore(config.memory_dir).recent_chunks(limit=20, max_chars=6000,
@@ -123,11 +130,17 @@ def worker(args):
                 compacted = learning.compact_memory_summary(config)
             require(compacted is not None and len(selection_calls) == 1, "real compaction did not select records")
             selection = json.loads(selection_calls[0]["output"])
-            require(set(selection) == {"selected"} and 0 < len(selection["selected"]) <= 3,
+            require(set(selection) == {"selected"} and isinstance(selection["selected"], list)
+                    and 0 < len(selection["selected"]) <= 3
+                    and all(key in {f"m{i}" for i in range(len(records))} for key in selection["selected"])
+                    and len(set(selection["selected"])) == len(selection["selected"]),
                     "compaction fell back from invalid model output")
             content = compacted.read_text()
             require(all(records[int(key[1:])].content in content for key in selection["selected"]),
                     "compaction changed or truncated a selected record")
+            require(all(record.path.relative_to(config.memory_dir).as_posix() not in content
+                        for i, record in enumerate(records) if f"m{i}" not in selection["selected"]),
+                    "compaction added unselected records")
             require(all(Path(p).read_bytes() == data for p, data in before.items()), "compaction changed existing history")
             result["compaction"] = {"calls": selection_calls, "path": str(compacted), "content": content}
         result["passed"] = True
