@@ -32,6 +32,7 @@ dependencies = [
   "pandas>=2.2,<4",
   "numpy>=2.0,<3",
   "akshare>=1.15,<2",
+  "soupsieve>=4,<5",
   "baostock>=0.8,<1",
   "python-dotenv>=1.0,<2",
   "questionary>=2.1,<3",
