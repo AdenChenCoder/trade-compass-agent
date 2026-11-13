@@ -19,7 +19,7 @@ from trade_compass_agent.runtime.report_contract import (
     inference_evidence, validate_document, verification_result, Paragraph, paragraph_text, paragraph_segments,
 )
 from trade_compass_agent.runtime.report_execution import execution_evidence
-from trade_compass_agent.runtime.report_body import BODY_MEANING, validate_body_meaning
+from trade_compass_agent.runtime.report_body import BODY_MEANING, validate_body_meaning, runtime_bound_quantity_issue
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
 from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts
 
@@ -323,7 +323,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     review_input = None
     coverage_review_input = factual_review_input = factual_response = factual_review = None
     body_review_input = body_response = body_meaning = None
-    execution_projections, body_quantity_issues = {}, {}
+    execution_projections, body_quantity_issues, bound_quantity_checks = {}, {}, {}
     reader_body = ""
     findings, rendered, traces = [], {}, {}
     attempts, review, fixed_items = [], None, dict(protected_gaps)
@@ -459,6 +459,16 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                                                                       separators=(",", ":")))
                     check_active()
                     body_meaning, body_quantity_issues = validate_body_meaning(_json_value(body_response), prose)
+                    for row in review_input["inferences"]:
+                        issues = body_quantity_issues.get(row["id"], [])
+                        owned = [issue for issue in issues if runtime_bound_quantity_issue(issue, row["segments"])]
+                        if owned:
+                            bound_quantity_checks[row["id"]] = owned
+                            remaining_issues = [issue for issue in issues if issue not in owned]
+                            if remaining_issues:
+                                body_quantity_issues[row["id"]] = remaining_issues
+                            else:
+                                body_quantity_issues.pop(row["id"])
                     preview_findings = list(findings)
                     for identifier, parts in body_meaning.items():
                         current = [part for part in parts if part["kind"] == "current_outcome"]
@@ -613,6 +623,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "coverage_review_input": coverage_review_input,
                 "body_review_input": body_review_input, "body_response": body_response, "body_meaning": body_meaning,
                 "execution_projections": execution_projections, "body_quantity_issues": body_quantity_issues,
+                "bound_quantity_checks": bound_quantity_checks,
                 "factual_review_input": factual_review_input, "factual_response": factual_response,
                 "factual_review": factual_review,
                 "revision_input": revision, "reader_body": reader_body or text,
@@ -643,7 +654,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                          and has_verified_prose(publication) and not has_verified_prose(revised))
         selected = revised if revised.artifact["review_valid"] and not lost_analysis else publication
         keys = ("document", "verification", "review", "review_input", "revision_input", "attempts", "published_text",
-                "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues",
+                "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues", "bound_quantity_checks",
                 "coverage_review_input", "factual_review_input", "factual_response", "factual_review")
         history = [{key: attempt.artifact[key] for key in keys} for attempt in (publication, revised)]
         selected.artifact["revision_attempts"] = history

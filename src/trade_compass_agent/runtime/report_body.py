@@ -54,3 +54,26 @@ def validate_body_meaning(value, paragraphs):
             raise ValueError("invalid quantity meaning issue")
         by_id.setdefault(issue["id"], []).append(issue)
     return result, by_id
+
+
+def runtime_bound_quantity_issue(issue, segments):
+    """Locate a quoted span in owned output; never classify author words.
+
+    A model's missing-unit allegation cannot override an explicit value_with_unit
+    binding. If the quote also occurs in author prose, its location is ambiguous
+    and the allegation remains. This proves unit presence only, never sentence
+    meaning, factual scope, or the correctness of an author's quantity.
+    """
+    text = "".join(segment["text"] for segment in segments)
+    boundaries, offset = [], 0
+    for segment in segments:
+        end = offset + len(segment["text"])
+        if (segment["origin"] == "evidence" and segment.get("field") == "value_with_unit"
+                and segment.get("quantity_unit") and segment["quantity_unit"] != "单位未提供"):
+            boundaries.append((offset, end))
+        offset = end
+    cursor, locations = 0, []
+    while (start := text.find(issue["text"], cursor)) >= 0:
+        locations.append((start, start + len(issue["text"])))
+        cursor = start + 1
+    return bool(locations) and all(any(a <= start and end <= b for a, b in boundaries) for start, end in locations)

@@ -57,6 +57,11 @@ in the linked regression tests, not in expanding prose exception lists.
   missing convention or override that finding. Explicit shared units and
   dimensionless valuation multiples remain valid; this is a semantic assessment,
   not a punctuation or keyword rule. A bounded revision may clarify the body.
+  Runtime-owned value-with-unit spans establish unit presence independently of
+  the model. Locating a quoted issue wholly within those spans may clear only
+  the missing-unit allegation, never sentence truth or scope. A matching quote
+  in author text cannot borrow another occurrence's binding. Persist this check
+  and still require factual entailment for the complete sentence.
   Current execution assertions are removed from AI analysis before coverage and
   factual review. The runtime renders actual mutation receipts separately. Without
   current receipts, such assertions remain unconfirmed and the report incomplete;

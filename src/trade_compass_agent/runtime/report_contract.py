@@ -532,21 +532,25 @@ def paragraph_segments(item: Paragraph, document: ReportDocument, catalog: Evide
             segments.append({"origin": "author", "text": part.text})
             continue
         ref = part.ref
+        unit = ""
         entry = entries.get(ref)
         if isinstance(entry, Calculation):
             if part.field != "value_with_unit":
                 raise ValueError("计算仅提供带单位的结果，身份和日期须引用原始事实")
             _, trace = calculate(entry, catalog)
+            unit = trace.get("unit", "")
             value = (format(Decimal(trace["result"]).quantize(Decimal("0.01")), "f") + trace["unit"]
                      if "unit" in trace else trace["result"])
         else:
             fact = catalog.resolve(entry.ref if isinstance(entry, Observation) else ref)
+            unit = fact.unit if part.field == "value_with_unit" else ""
             value = {"value_with_unit": fact.value + fact.unit, "subject": fact.subject,
                      "account": fact.account, "date": _date(fact) if fact.observed_at else "",
                      "label": fact.label}[part.field]
             if not value:
                 raise ValueError("引用的事实未提供所需身份、账户、日期或单位")
-        segments.append({"origin": "evidence", "ref": part.ref, "field": part.field, "text": _plain(value)})
+        segments.append({"origin": "evidence", "ref": part.ref, "field": part.field, "text": _plain(value),
+                         "quantity_unit": unit})
     return segments
 
 

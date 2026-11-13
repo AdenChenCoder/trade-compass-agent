@@ -550,3 +550,56 @@ def test_quantity_clarification_revision_is_rechecked_and_bounded():
     first, revised = result.artifact["revision_attempts"]
     assert first["body_quantity_issues"] and not revised["body_quantity_issues"]
     assert first["verification"]["status"] == "incomplete"
+
+
+@pytest.mark.parametrize("author_duplicate", [True, False])
+@pytest.mark.parametrize("verdict", ["entailed", "contradicted"])
+def test_bound_unit_presence_cannot_override_sentence_truth_or_author_quantity(author_duplicate, verdict):
+    def writer(system, user):
+        payload = json.loads(user)
+        if "schema" in payload:
+            facts = [f for f in report_facts(payload) if f["metric"] == "close"]
+            parts = [{"type": "text", "text": "价格变动比例为"},
+                     {"type": "value", "ref": "change", "field": "value_with_unit"},
+                     {"type": "text", "text": "。"}]
+            if author_duplicate:
+                parts.append({"type": "text", "text": "另一期间的变动比例为4.55。"})
+            return json.dumps({"schema_version": 1, "items": [
+                {"id": "change", "type": "calculation", "section": "market", "operation": "change_pct",
+                 "refs": [f["id"] for f in facts]},
+                {"id": "answer", "type": "paragraph", "section": "market", "parts": parts, "refs": []}]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    factual = []
+    def checker(system, user):
+        payload = json.loads(user)
+        if "paragraphs" in payload:
+            result = body_reply(payload)
+            # Exact candidate32 false positive; the same quote may also exist
+            # in author prose and must not borrow the other occurrence's unit.
+            result["quantity_issues"] = [{"id": "answer", "text": "4.55" if author_duplicate else "4.55%",
+                                          "reason": "Missing unit or ratio scale in the reader body"}]
+            return json.dumps(result)
+        factual.append(payload)
+        assert payload["statements"][0]["text"] == "价格变动比例为4.55%。"
+        return json.dumps(assess(payload, verdict))
+    result = publish_report(task="给出变动比例", draft="", tool_results=RECEIPTS, run_scope="owned-quantity",
+                            call=writer, fact_review_call=checker, max_calls=2)
+    assert bool(factual) is not author_duplicate
+    assert bool(result.artifact["bound_quantity_checks"]) is not author_duplicate
+    assert bool(result.artifact["body_quantity_issues"]) is author_duplicate
+    supported = not author_duplicate and verdict == "entailed"
+    assert (result.verification["status"] == "complete") is supported
+    assert result.artifact["review"]["reviews"][0]["supported"] is supported
+    if not author_duplicate:
+        assert result.artifact["factual_model_calls"] == 1
+    assert "另一期间的变动比例为4.55。" not in result.text
+
+
+@pytest.mark.parametrize("origin,field,unit", [
+    ("author", "value_with_unit", "%"), ("evidence", "subject", "%"),
+    ("evidence", "value_with_unit", ""), ("evidence", "value_with_unit", "单位未提供"),
+])
+def test_unit_presence_requires_runtime_quantity_binding(origin, field, unit):
+    from trade_compass_agent.runtime.report_body import runtime_bound_quantity_issue
+    segments = [{"origin": origin, "field": field, "quantity_unit": unit, "text": "4.55%"}]
+    assert not runtime_bound_quantity_issue({"text": "4.55%"}, segments)
