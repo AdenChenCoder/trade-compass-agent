@@ -222,8 +222,9 @@ def worker(root, case, model, fact_model=""):
         messages = api.get("/api/agent/sessions/"+sid).json()["messages"]
         require(messages[-1]["content"] == detail["analysis"], "session and report disagree")
         return {"case": case, "passed": True, "run_id": run.id, "status": detail["status"],
-                "model_calls": len(calls) + artifact.get("factual_model_calls", 0),
+                "model_calls": len(calls) + artifact.get("factual_model_calls", 0) + artifact.get("body_review_model_calls", 0),
                 "factual_model_calls": artifact.get("factual_model_calls", 0),
+                "body_model_calls": artifact.get("body_review_model_calls", 0),
                 "tools": tools, "real_business_calls": 0, "profile": profile}
 
 

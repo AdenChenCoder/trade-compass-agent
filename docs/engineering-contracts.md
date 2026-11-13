@@ -49,8 +49,16 @@ in the linked regression tests, not in expanding prose exception lists.
   instructions, drafts and coverage decisions are not its evidence. Each statement
   must be entailed; contradictory or unknown statements are withheld. Missing,
   malformed or unavailable assessments cannot fall back to writer approval.
-  Original and revised bodies share at most two such calls, making at most six
-  model calls in total. The parent deadline, cancellation and no-tools boundary
+  Before evidence review, the same local model independently partitions and types
+  the body without task instructions, receipts or other source evidence. Exact
+  text reconstruction is required; omission or rewriting fails this contract.
+  Current execution assertions are removed from AI analysis before coverage and
+  factual review. The runtime renders actual mutation receipts separately. Without
+  current receipts, such assertions remain unconfirmed and the report incomplete;
+  model approval cannot turn empty receipts into proof of non-execution. Historical
+  statements, plans and uncertainty remain eligible for factual review.
+  Original and revised bodies share at most two body-meaning and two entailment
+  calls, making at most eight model calls in total. The parent deadline, cancellation and no-tools boundary
   still apply. Record both review inputs/results and actual total calls. Choosing
   a model is not certification: the exact configured path must pass semantic,
   full-task, long-report and downstream learning acceptance before activation.

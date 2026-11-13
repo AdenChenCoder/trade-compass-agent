@@ -141,7 +141,7 @@ def _narrative(document, rendered, findings, catalog, *, execution, include_sour
     retain validated facts as a partial report, never as a successful answer.
     """
     blocks, notes = [], {}
-    approved = any(isinstance(item, Paragraph) and item.id in rendered for item in document.items)
+    approved = any(isinstance(item, Paragraph) and rendered.get(item.id, "").strip() for item in document.items)
     unresolved = {finding.item_id for finding in findings if finding.item_id}
     incomplete_sections = set()
 
@@ -179,6 +179,8 @@ def _narrative(document, rendered, findings, catalog, *, execution, include_sour
                 incomplete_notice(item)
             continue
         text = rendered[item.id]
+        if not text.strip():
+            continue
         if isinstance(item, (Paragraph, Inference)):
             facts, calculations = inference_evidence(item, document, catalog)
             sources = [fact.display() for fact in facts]

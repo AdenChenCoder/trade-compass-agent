@@ -19,6 +19,7 @@ from trade_compass_agent.runtime.report_contract import (
     inference_evidence, validate_document, verification_result, Paragraph, paragraph_text, paragraph_segments,
 )
 from trade_compass_agent.runtime.report_execution import execution_evidence
+from trade_compass_agent.runtime.report_body import BODY_MEANING, validate_body_meaning
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
 from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts
 
@@ -235,6 +236,7 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
     remaining = max_calls
     fact_remaining = 2 if fact_review_call is not None else 0
     fact_limit = fact_remaining
+    body_remaining = body_limit = 2 if fact_review_call is not None else 0
     def bounded_call(system, user):
         nonlocal remaining
         check_active()
@@ -249,19 +251,28 @@ def publish_report(*, task, draft, tool_results, run_scope, call, run_id="", cur
             raise RuntimeError("factual review call budget exhausted")
         fact_remaining -= 1
         return fact_review_call(system, user)
+    def bounded_body_call(system, user):
+        nonlocal body_remaining
+        check_active()
+        if body_remaining <= 0:
+            raise RuntimeError("body meaning call budget exhausted")
+        body_remaining -= 1
+        return fact_review_call(system, user)
     result = _publish_report(task=task, draft=draft, tool_results=tuple(tool_results), run_scope=run_scope,
         call=bounded_call, run_id=run_id,
         current_tool_results=tuple(current_tool_results) if current_tool_results is not None else None,
         check_active=check_active, reader_prose=reader_prose, remaining=lambda: remaining,
-        fact_call=bounded_fact_call if fact_review_call is not None else None, report_context=report_context)
-    result.artifact["model_calls"] = max_calls - remaining + fact_limit - fact_remaining
-    result.artifact["call_limit"] = max_calls + fact_limit
+        fact_call=bounded_fact_call if fact_review_call is not None else None,
+        body_call=bounded_body_call if fact_review_call is not None else None, report_context=report_context)
+    result.artifact["model_calls"] = max_calls - remaining + fact_limit - fact_remaining + body_limit - body_remaining
+    result.artifact["call_limit"] = max_calls + fact_limit + body_limit
     result.artifact["factual_model_calls"] = fact_limit - fact_remaining
+    result.artifact["body_review_model_calls"] = body_limit - body_remaining
     return result
 
 
 def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, current_tool_results,
-                    check_active, reader_prose, remaining, report_context, revision=None, fact_call=None):
+                    check_active, reader_prose, remaining, report_context, revision=None, fact_call=None, body_call=None):
     """No business-tool callback is available anywhere in this pipeline."""
     catalog = EvidenceCatalog.build(tool_results, run_scope=run_scope)
     execution = execution_evidence(tool_results if current_tool_results is None else current_tool_results)
@@ -311,6 +322,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     review_valid = False
     review_input = None
     coverage_review_input = factual_review_input = factual_response = factual_review = None
+    body_review_input = body_response = body_meaning = None
+    execution_projections = {}
     reader_body = ""
     findings, rendered, traces = [], {}, {}
     attempts, review, fixed_items = [], None, dict(protected_gaps)
@@ -437,6 +450,39 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 review_input["verified_items"] = [{"id": key, "rendered": text} for key, text in verified_items.items()]
             try:
                 check_active()
+                forced_reviews = {}
+                if body_call and inferences:
+                    # First interpret the author's words without task, draft,
+                    # source data or receipts that could bias that interpretation.
+                    body_review_input = {"paragraphs": [{"id": key, "text": value} for key, value in prose.items()]}
+                    body_response = body_call(BODY_MEANING, json.dumps(body_review_input, ensure_ascii=False,
+                                                                      separators=(",", ":")))
+                    check_active()
+                    body_meaning = validate_body_meaning(_json_value(body_response), prose)
+                    preview_findings = list(findings)
+                    for identifier, parts in body_meaning.items():
+                        current = [part for part in parts if part["kind"] == "current_outcome"]
+                        if not current:
+                            continue
+                        # ExecutionEvidence alone renders mutation outcomes. Do
+                        # not ask another model to turn missing receipts into a
+                        # proof, or publish a duplicate AI-written outcome.
+                        prose[identifier] = "".join(part["text"] for part in parts if part["kind"] != "current_outcome")
+                        execution_projections[identifier] = {"removed": current, "text": prose[identifier],
+                                                            "has_execution_records": bool(execution.records)}
+                        if not execution.records:
+                            reason = "正文声称本轮操作结果，但尚无可核实的本轮执行回执。"
+                            forced_reviews[identifier] = {"id": identifier, "supported": False, "reason": reason}
+                            preview_findings.append(Finding("analysis", "execution_claim_unconfirmed", reason, identifier))
+                        elif not prose[identifier].strip():
+                            forced_reviews[identifier] = {"id": identifier, "supported": True,
+                                                          "reason": "执行结果由程序依据本轮回执单独展示。"}
+                    preview = {**rendered, **{key: value for key, value in prose.items()
+                                             if key not in forced_reviews or forced_reviews[key]["supported"]}}
+                    review_input["report"] = present(document, preview, preview_findings, include_sources=False)
+                    review_input["inferences"] = [{**row, "text": prose[row["id"]],
+                        "segments": [{"origin": "author", "text": part["text"]} for part in body_meaning[row["id"]]
+                                     if part["kind"] != "current_outcome"]} for row in review_input["inferences"]]
                 # Keep task completeness separate from entailment when a local
                 # specialist is configured. The writer's task/draft and coverage
                 # decisions cannot become factual evidence for that specialist.
@@ -462,11 +508,12 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         or any(not isinstance(s, str) or not s.strip() or len(s) > 500 for s in coverage["missing"])
                         or coverage["complete"] != (not coverage["missing"])):
                     raise ValueError("invalid inference review")
-                if fact_call and inferences:
+                factual_items = [item for item in inferences if item.id not in forced_reviews]
+                if fact_call and factual_items:
                     factual_review_input = {
                         "report_context": report_context,
                         "statements": [{key: value for key, value in item.items() if key != "segments"}
-                                       for item in review_input["inferences"]],
+                                       for item in review_input["inferences"] if item["id"] not in forced_reviews],
                         "receipts": review_input["receipts"], "execution_records": execution.records,
                     }
                     factual_response = fact_call(_FACT_REVIEW, json.dumps(factual_review_input, ensure_ascii=False,
@@ -475,16 +522,18 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     factual_review = _json_value(factual_response)
                     assessments = factual_review["assessments"]
                     if (set(factual_review) != {"assessments"} or not isinstance(assessments, list)
-                            or len(assessments) != len(inferences)
+                            or len(assessments) != len(factual_items)
                             or any(not isinstance(row, dict) or set(row) != {"id", "comparison", "verdict"}
                                    or not isinstance(row["id"], str)
                                    or row["verdict"] not in {"entailed", "contradicted", "unknown"}
                                    or not isinstance(row["comparison"], str) or not row["comparison"].strip()
                                    or len(row["comparison"]) > 5000 for row in assessments)
-                            or {row["id"] for row in assessments} != {item.id for item in inferences}):
+                            or {row["id"] for row in assessments} != {item.id for item in factual_items}):
                         raise ValueError("invalid factual review")
                     rows = [{"id": row["id"], "supported": row["verdict"] == "entailed",
                              "reason": row["comparison"]} for row in assessments]
+                if fact_call:
+                    rows = [*rows, *forced_reviews.values()]
                     review = {**review, "reviews": rows}
                 try:
                     dismissed_gaps = _dismissed_gaps(review, gaps, set(verified_items)) - protected_gaps.keys()
@@ -540,6 +589,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "execution_records": execution.records,
                 "review": review, "review_valid": review_valid, "review_input": review_input,
                 "coverage_review_input": coverage_review_input,
+                "body_review_input": body_review_input, "body_response": body_response, "body_meaning": body_meaning,
+                "execution_projections": execution_projections,
                 "factual_review_input": factual_review_input, "factual_response": factual_response,
                 "factual_review": factual_review,
                 "revision_input": revision, "reader_body": reader_body or text,
@@ -553,7 +604,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
         check_active()
         revised = _publish_report(task=task, draft=draft, tool_results=tool_results, run_scope=run_scope,
             call=call, run_id=run_id, current_tool_results=current_tool_results,
-            check_active=check_active, reader_prose=True, remaining=remaining, fact_call=fact_call,
+            check_active=check_active, reader_prose=True, remaining=remaining, fact_call=fact_call, body_call=body_call,
             report_context=report_context,
             revision={"previous_document": transport.encode_document(document.model_dump()),
                       "reader_body": reader_body, "review": review,
@@ -561,6 +612,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
         # An unavailable second attempt cannot erase the first verified evidence.
         selected = revised if revised.artifact["review_valid"] else publication
         keys = ("document", "verification", "review", "review_input", "revision_input", "attempts", "published_text",
+                "body_review_input", "body_response", "body_meaning", "execution_projections",
                 "coverage_review_input", "factual_review_input", "factual_response", "factual_review")
         history = [{key: attempt.artifact[key] for key in keys} for attempt in (publication, revised)]
         selected.artifact["revision_attempts"] = history

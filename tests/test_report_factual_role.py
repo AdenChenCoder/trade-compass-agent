@@ -31,6 +31,12 @@ def assess(payload, verdict="entailed"):
                             for row in payload["statements"]]}
 
 
+def body_reply(payload):
+    assert set(payload) == {"paragraphs"}
+    return {"paragraphs": [{"id": row["id"], "parts": [{"text": row["text"], "kind": "other",
+        "outcome": "none", "extent": "none"}]} for row in payload["paragraphs"]]}
+
+
 def publish(fact_reply, *, max_calls=2, coverage_missing=False, check_active=lambda: None, reference_date=None):
     primary, factual = [], []
     def writer(system, user):
@@ -45,6 +51,8 @@ def publish(fact_reply, *, max_calls=2, coverage_missing=False, check_active=lam
             "missing": ["正文仍需补充任务答案"] if missing else [], "repairable": missing}})
     def checker(system, user):
         payload = json.loads(user)
+        if "paragraphs" in payload:
+            return json.dumps(body_reply(payload))
         factual.append(payload)
         assert set(payload) == {"statements", "receipts", "execution_records", "report_context"}
         assert payload["receipts"][0]["result"] == RECEIPTS[0][1]
@@ -61,8 +69,9 @@ def publish(fact_reply, *, max_calls=2, coverage_missing=False, check_active=lam
 def test_only_supported_final_body_reaches_reader_and_reopened_artifact(tmp_path, verdict):
     result, primary, factual = publish(lambda payload, _: assess(payload, verdict))
     assert len(primary) == 2 and len(factual) == 1
-    assert result.artifact["model_calls"] == 3 and result.artifact["factual_model_calls"] == 1
-    assert result.artifact["call_limit"] == 4
+    assert result.artifact["model_calls"] == 4 and result.artifact["factual_model_calls"] == 1
+    assert result.artifact["body_review_model_calls"] == 1
+    assert result.artifact["call_limit"] == 6
     assert (result.verification["status"] == "complete") is (verdict == "entailed")
     assert ("22元/股升至23元/股" in result.text) is (verdict == "entailed")
     assert result.verification["execution"] == "completed"
@@ -73,6 +82,141 @@ def test_only_supported_final_body_reaches_reader_and_reopened_artifact(tmp_path
     assert saved["coverage_review_input"] == primary[-1]
     assert saved["factual_review_input"] == factual[0]
     assert saved["factual_review"]["assessments"][0]["verdict"] == verdict
+    assert set(saved["body_review_input"]) == {"paragraphs"}
+    assert saved["body_meaning"]["answer"][0]["text"] == factual[0]["statements"][0]["text"]
+
+
+@pytest.mark.parametrize("receipt_status", [None, "executed", "rejected", "unknown"])
+def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path, receipt_status):
+    prefix = "002415在2025年1月1日和1月2日的收盘价分别为22元/股和23元/股。"
+    # The author is wrong even beside a valid receipt: it must not survive in
+    # analysis merely because another model would approve the whole paragraph.
+    claim = "本轮未执行新的买卖操作。" if receipt_status is None else "本轮已买入300股。"
+    rows = list(RECEIPTS)
+    if receipt_status == "executed":
+        receipt = {"status": "executed", "trade_id": "owned-test", "symbol": "002415", "account": "test",
+                   "side": "buy", "quantity": 100, "price": 22, "timestamp": "2025-01-02T10:00:00+08:00"}
+    else:
+        receipt = {"trade_rejected": True, "error": "可用资金不足"} if receipt_status == "rejected" else {"error": "断开连接"}
+    if receipt_status is not None:
+        rows.append(("place_paper_trade", json.dumps(receipt)))
+    coverage_inputs, factual_inputs = [], []
+    def writer(system, user):
+        payload = json.loads(user)
+        if "schema" in payload:
+            refs = [f["id"] for f in report_facts(payload) if f["metric"] == "close"]
+            return json.dumps({"schema_version": 1, "items": [{"id": "answer", "section": "market", "type": "paragraph",
+                "parts": [{"type": "text", "text": prefix+claim}], "refs": refs}]})
+        coverage_inputs.append(payload)
+        assert claim not in payload["report"]
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if "paragraphs" in payload:
+            assert payload == {"paragraphs": [{"id": "answer", "text": prefix+claim}]}
+            return json.dumps({"paragraphs": [{"id": "answer", "parts": [
+                {"text": prefix, "kind": "other", "outcome": "none", "extent": "none"},
+                {"text": claim, "kind": "current_outcome", "outcome": "not_performed" if receipt_status is None else "performed",
+                 "extent": "whole_run" if receipt_status is None else "operation"}]}]})
+        factual_inputs.append(payload)
+        assert payload["statements"][0]["text"] == prefix
+        return json.dumps(assess(payload))  # This permissive double cannot overrule missing execution evidence.
+    publication = publish_report(task="说明价格与执行结果", draft="", tool_results=rows, current_tool_results=rows,
+        run_scope="execution-ownership", run_id="owned", call=writer, fact_review_call=checker, max_calls=2)
+    assert claim not in publication.text and claim not in publication.artifact["reader_body"]
+    assert len(coverage_inputs) == 1
+    assert publication.artifact["body_review_model_calls"] == 1
+    assert publication.artifact["factual_model_calls"] == int(receipt_status is not None)
+    assert len(factual_inputs) == int(receipt_status is not None)
+    if receipt_status is None:
+        assert publication.verification["status"] == "incomplete"
+        assert publication.artifact["review"]["reviews"][0]["supported"] is False
+    elif receipt_status == "executed":
+        assert publication.verification["status"] == "complete"
+        assert "买入100股" in publication.text and "买入300股" not in publication.text
+    elif receipt_status == "rejected":
+        assert publication.verification["status"] == "complete"
+        assert "本次未成交：可用资金不足" in publication.text
+    else:
+        assert publication.verification["execution"] == "unknown"
+        assert publication.verification["status"] == "incomplete"
+    ref = persist_publication(tmp_path, publication)
+    saved = json.loads((tmp_path/"report_artifacts"/(ref["artifact_id"]+".json")).read_text())
+    assert saved["published_text"] == publication.text
+    assert saved["execution_projections"]["answer"]["removed"][0]["text"] == claim
+
+
+@pytest.mark.parametrize("fault", ["omit", "rewrite", "duplicate", "wrong_id", "wrong_kind", "timeout"])
+def test_missing_or_unfaithful_body_interpretation_cannot_reach_coverage_or_fact_approval(fault):
+    calls = []
+    def writer(system, user):
+        payload = json.loads(user)
+        assert "schema" in payload
+        return json.dumps(compose(payload))
+    def checker(system, user):
+        payload = json.loads(user)
+        calls.append(payload)
+        assert set(payload) == {"paragraphs"}
+        if fault == "timeout":
+            raise TimeoutError("body interpretation unavailable")
+        result = body_reply(payload)
+        row = result["paragraphs"][0]
+        if fault == "omit":
+            row["parts"][0]["text"] = row["parts"][0]["text"][:-1]
+        elif fault == "rewrite":
+            row["parts"][0]["text"] += "额外限定"
+        elif fault == "duplicate":
+            result["paragraphs"].append(row)
+        elif fault == "wrong_id":
+            row["id"] = "other"
+        else:
+            row["parts"][0]["kind"] = "approved"
+        return json.dumps(result)
+    result = publish_report(task="比较收盘价", draft="", tool_results=RECEIPTS, run_scope="invalid-body",
+                            call=writer, fact_review_call=checker, max_calls=2)
+    assert len(calls) == 1 and result.artifact["factual_model_calls"] == 0
+    assert result.verification["status"] == "incomplete"
+    assert "22元/股升至23元/股" not in result.text
+
+
+def test_execution_only_report_uses_receipt_without_empty_prose_or_source_marker():
+    claim = "本轮买入300股。"
+    receipt = {"status": "executed", "trade_id": "owned-fill", "symbol": "002415", "account": "test",
+               "side": "buy", "quantity": 100, "price": 22, "timestamp": "2025-01-02T10:00:00+08:00"}
+    def writer(system, user):
+        payload = json.loads(user)
+        if "schema" in payload:
+            return json.dumps({"schema_version": 1, "items": [{"id": "outcome", "type": "paragraph", "section": "execution",
+                "parts": [{"type": "text", "text": claim}], "refs": [f["id"] for f in report_facts(payload)]}]})
+        assert "买入100股" in payload["report"] and claim not in payload["report"]
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        assert set(json.loads(user)) == {"paragraphs"}
+        return json.dumps({"paragraphs": [{"id": "outcome", "parts": [{"text": claim, "kind": "current_outcome",
+            "outcome": "performed", "extent": "operation"}]}]})
+    result = publish_report(task="报告成交结果", draft="", tool_results=[("place_paper_trade", json.dumps(receipt))],
+                            run_scope="execution-only", call=writer, fact_review_call=checker, max_calls=2)
+    assert result.verification["status"] == "complete"
+    assert result.artifact["factual_model_calls"] == 0 and result.artifact["body_review_model_calls"] == 1
+    assert "买入100股" in result.text and "300" not in result.text and "[^source-" not in result.text
+
+
+def test_cancellation_after_body_interpretation_stops_before_coverage_and_evidence_review():
+    stopped = False
+    def active():
+        if stopped:
+            raise TurnInterruptedError("")
+    def writer(system, user):
+        payload = json.loads(user)
+        assert "schema" in payload
+        return json.dumps(compose(payload))
+    def checker(system, user):
+        nonlocal stopped
+        stopped = True
+        return json.dumps(body_reply(json.loads(user)))
+    with pytest.raises(TurnInterruptedError):
+        publish_report(task="比较价格", draft="", tool_results=RECEIPTS, run_scope="cancel-body",
+                       call=writer, fact_review_call=checker, check_active=active)
 
 
 @pytest.mark.parametrize("reference_date", [None, "2025-01-02", "2025-01-03"])
@@ -121,11 +265,12 @@ def test_malformed_or_unavailable_local_review_never_falls_back_to_writer_approv
     assert any(f["code"] == "review_unavailable" for f in result.verification["findings"])
 
 
-def test_one_revision_shares_six_call_limit_and_reviews_actual_final_text_again():
+def test_one_revision_shares_eight_call_limit_and_reviews_actual_final_text_again():
     result, primary, factual = publish(lambda payload, n: assess(payload, "unknown" if n == 1 else "entailed"), max_calls=4)
     assert result.verification["status"] == "complete"
     assert len(primary) == 4 and len(factual) == 2
-    assert result.artifact["model_calls"] == result.artifact["call_limit"] == 6
+    assert result.artifact["model_calls"] == result.artifact["call_limit"] == 8
+    assert result.artifact["body_review_model_calls"] == 2
     assert result.artifact["selected_attempt"] == 1
     assert len(result.artifact["revision_attempts"]) == 2
     assert factual[-1]["statements"][0]["text"] in result.artifact["reader_body"]
@@ -140,7 +285,7 @@ def test_failed_revision_cannot_erase_first_fact_checked_body():
     assert len(factual) == 2 and result.artifact["selected_attempt"] == 0
     assert "22元/股升至23元/股" in result.text
     assert result.verification["report"] == "partial"
-    assert result.artifact["model_calls"] == 6
+    assert result.artifact["model_calls"] == 8
 
 
 def test_cancellation_after_fact_call_prevents_publication_or_revision():
@@ -219,7 +364,7 @@ def test_scheduled_api_uses_configured_factual_role_and_never_replays_business_t
     from trade_compass_agent.ops.run_store import SqliteRunStore
     from trade_compass_agent.web.app import create_app
 
-    factory_configs, queries, checks = [], [], []
+    factory_configs, queries, checks, body_checks = [], [], [], []
     class Writer:
         name = model = "mock-writer"
         def stream_complete(self, messages, **kwargs):
@@ -241,6 +386,11 @@ def test_scheduled_api_uses_configured_factual_role_and_never_replays_business_t
         def stream_complete(self, messages, **kwargs):
             assert kwargs["tools"] is None
             payload = json.loads(messages[-1].content)
+            if "paragraphs" in payload:
+                body_checks.append(payload)
+                if verdict == "unavailable":
+                    raise AgentTurnError("local model is not available")
+                return ChatCompletion(content=json.dumps(body_reply(payload)))
             checks.append(payload)
             if verdict == "unavailable":
                 raise AgentTurnError("local model is not available")
@@ -270,12 +420,14 @@ def test_scheduled_api_uses_configured_factual_role_and_never_replays_business_t
     detail = TestClient(create_app()).get(f"/api/jobs/runs/{run.id}").json()
     verification = detail["step_runs"][0]["data"]["verification"]
     assert queries == ["get_bars"] and len(factory_configs) == 1
-    assert len(checks) == (2 if verdict == "unknown" else 1)
+    assert len(checks) == (2 if verdict == "unknown" else 0 if verdict == "unavailable" else 1)
+    assert len(body_checks) == (2 if verdict == "unknown" else 1)
     assert detail["status"] == ("completed" if verdict == "entailed" else "degraded")
     assert ("22元/股升至23元/股" in detail["analysis"]) is (verdict == "entailed")
     assert verification["execution"] == "completed"
     artifact = json.loads((config.data_dir/"report_artifacts"/(verification["artifact_id"]+".json")).read_text())
     assert artifact["published_text"] == detail["analysis"]
     assert artifact["factual_model_calls"] == len(checks)
+    assert artifact["body_review_model_calls"] == len(body_checks)
     assert artifact["report_context"]["reference_date"] == detail["step_runs"][0]["data"]["session_id"][-10:]
     assert all(row["report_context"] == artifact["report_context"] for row in checks)

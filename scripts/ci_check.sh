@@ -54,6 +54,7 @@ fi
   src/trade_compass_agent/runtime/report_contract.py \
   src/trade_compass_agent/runtime/report_execution.py \
   src/trade_compass_agent/runtime/report_publication.py \
+  src/trade_compass_agent/runtime/report_body.py \
   src/trade_compass_agent/runtime/report_reading.py \
   src/trade_compass_agent/runtime/report_transport.py \
   tests/test_tool_evidence_boundaries.py \

@@ -66,6 +66,10 @@ SCOPE_CASES = {
                                         "说明两日收盘价和现有资料能否确认本轮买卖执行情况。"),
     "compound_absence_as_unknown": (_price_prose + "没有本轮交易回执，无法确认本轮是否执行了买卖。", True, _prices,
                                    "说明两日收盘价和现有资料能否确认本轮买卖执行情况。"),
+    "current_execution_receipt": (_price_prose + "本轮已买入002415共100股，成交价22元/股。", True,
+        [*_prices, ("place_paper_trade", json.dumps({"status": "executed", "trade_id": "frozen-current-fill",
+            "symbol": "002415", "account": "test", "side": "buy", "quantity": 100, "price": 22,
+            "timestamp": "2025-01-02T10:00:00+08:00"}))], "说明两日收盘价和本轮执行结果。"),
 }
 CASES.update({name: (prose, expected) for name, (prose, expected, _, _) in SCOPE_CASES.items()})
 
@@ -134,7 +138,8 @@ def main():
             case_receipts[0] = ("get_bars", json.dumps(changed))
         calls, factual_calls = [], []
         def factual_call(system, user):
-            row = {"input": json.loads(user)}
+            payload = json.loads(user)
+            row = {"input": payload, "stage": "body_meaning" if "paragraphs" in payload else "entailment"}
             factual_calls.append(row)
             row["output"] = factual_client(system, user)
             return row["output"]
@@ -214,13 +219,24 @@ def main():
             reviews = (report.artifact.get("review") or {}).get("reviews", [])
             actual = next((r["supported"] for r in reviews if r["id"] == "answer"), None)
             coverage_complete = (report.artifact.get("review") or {}).get("coverage", {}).get("complete")
+            local_calls = report.artifact["factual_model_calls"] + report.artifact["body_review_model_calls"]
             entry.update(actual_supported=actual, coverage_complete=coverage_complete, status=report.verification["status"],
-                         passed=actual is expected and len(calls) == 1 and len(factual_calls) == int(bool(factual_client))
+                         body_model_calls=report.artifact["body_review_model_calls"],
+                         factual_model_calls=report.artifact["factual_model_calls"],
+                         passed=actual is expected and len(calls) == 1 and len(factual_calls) == local_calls
+                         and report.artifact["body_review_model_calls"] == int(bool(factual_client))
                          and ((coverage_complete is False and report.verification["report"] == "partial")
                               if name == "hidden_result" else
                               (report.verification["status"] == "complete") if expected else
                               (prose not in report.text
                                and report.verification["report"] == "partial")))
+            if name == "current_execution_receipt" and factual_client:
+                entry["passed"] = entry["passed"] and "answer" in report.artifact["execution_projections"]
+                entry["passed"] = entry["passed"] and "买入100股" in report.text and "本轮已买入002415共100股" not in report.text
+            if name in {"historical_execution", "absence_as_nonexecution", "compound_absence_as_nonexecution"} and factual_client:
+                projection = report.artifact["execution_projections"].get("answer", {})
+                entry["passed"] = (entry["passed"] and projection.get("has_execution_records") is False
+                                   and report.artifact["factual_model_calls"] == 0)
         except Exception as exc:
             entry["error"] = str(exc)
         entry["seconds"] = round(time.monotonic() - started, 2)
