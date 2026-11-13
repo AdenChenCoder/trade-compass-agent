@@ -49,6 +49,7 @@ _prices = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars
 _position_prose = "600928 西安银行持有1000股，成本10元/股，估值11元/股，浮动盈亏1000元。"
 _price_prose = "002415在2025年1月1日和1月2日的收盘价分别为22元/股和23元/股。"
 SCOPE_CASES = {
+    "holding_observation": (_position_prose, True, _holding, "说明当前持仓观察。"),
     "currency_missing": ("002415在2025年1月1日的收盘价为22。", False, _prices, "说明前一日收盘价。"),
     "currency_shared_unit": ("以下价格均以元/股计。002415在2025年1月1日的收盘价为22。", True, _prices, "说明前一日收盘价。"),
     "dimensionless_valuation": ("600928 西安银行的市净率为0.8。", True, _company, "说明资料中的市净率。"),

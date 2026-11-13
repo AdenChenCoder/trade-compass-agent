@@ -62,6 +62,8 @@ in the linked regression tests, not in expanding prose exception lists.
   the missing-unit allegation, never sentence truth or scope. A matching quote
   in author text cannot borrow another occurrence's binding. Persist this check
   and still require factual entailment for the complete sentence.
+  Execution assertions concern an actor's state-changing operation (orders or
+  memory writes), not observations of price movement, returns or holdings.
   Current execution assertions are removed from AI analysis before coverage and
   factual review. The runtime renders actual mutation receipts separately. Without
   current receipts, such assertions remain unconfirmed and the report incomplete;
