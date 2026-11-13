@@ -1,6 +1,23 @@
 import { useId, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+
+// Stable component types preserve native details/focus state during background polls.
+const readerComponents: Components = {
+  img: () => <span>[图片请在电脑查看]</span>,
+  a: ({ node, children, ...props }) => node?.properties.dataFootnoteRef !== undefined || node?.properties.dataFootnoteBackref !== undefined
+    ? <a {...props}>{children}</a> : <span className="link-text">{children}</span>,
+  section: ({ node, children, ...props }) => node?.properties.dataFootnotes !== undefined
+    ? <details className="report-sources"><summary>数据来源</summary>{children}</details>
+    : <section {...props}>{children}</section>,
+};
+const previewComponents: Components = {
+  ...readerComponents,
+  a: ({ children }) => <span className="link-text">{children}</span>,
+  section: ({ node, children, ...props }) => node?.properties.dataFootnotes !== undefined
+    ? <div hidden>{children}</div> : <section {...props}>{children}</section>,
+};
 
 export function Markdown({ text, interactive = true }: { text: string; interactive?: boolean }) {
   const root = useRef<HTMLDivElement>(null);
@@ -21,15 +38,6 @@ export function Markdown({ text, interactive = true }: { text: string; interacti
   }}>
     <ReactMarkdown remarkPlugins={[remarkGfm]}
       remarkRehypeOptions={{ clobberPrefix: prefix, footnoteLabel: '数据来源', footnoteBackLabel: '返回正文引用' }}
-      components={{
-        img: () => <span>[图片请在电脑查看]</span>,
-        a: ({ node, children, ...props }) => interactive && (node?.properties.dataFootnoteRef !== undefined || node?.properties.dataFootnoteBackref !== undefined)
-          ? <a {...props}>{children}</a> : <span className="link-text">{children}</span>,
-        section: ({ node, children, ...props }) => node?.properties.dataFootnotes !== undefined
-          ? interactive
-            ? <details className="report-sources"><summary>数据来源</summary>{children}</details>
-            : <div hidden>{children}</div>
-          : <section {...props}>{children}</section>,
-      }}>{text}</ReactMarkdown>
+      components={interactive ? readerComponents : previewComponents}>{text}</ReactMarkdown>
   </div>;
 }

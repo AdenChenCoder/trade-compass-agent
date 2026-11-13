@@ -27,11 +27,27 @@ it('opens only the selected message source, retains prose and keeps previews non
     expect(first.open).toBe(false); expect(second.open).toBe(true);
     expect(document.activeElement).toBe(readers[1].querySelector('li'));
     expect(scroll).toHaveBeenCalled();
+    // A notification poll rerenders the same message while its source is open.
+    await act(async () => root.render(createElement('div', null,
+      createElement(Markdown, { text }), createElement(Markdown, { text }),
+      createElement(Markdown, { text, interactive: false }))));
+    expect(readers[1].querySelector('details')).toBe(second);
+    expect(second.open).toBe(true);
+    expect(document.activeElement).toBe(readers[1].querySelector('li'));
+
     const back = readers[1].querySelector<HTMLAnchorElement>('a[data-footnote-backref]')!;
     await act(async () => back.click());
     expect(document.activeElement).toBe(links[1]);
     expect(readers[2].querySelector('a, details, button')).toBeNull();
     expect(readers[1].textContent).toContain('价格走高，后续方向仍不确定');
+    const updated = text.replace('后续方向仍不确定', '仍需补充营收资料');
+    await act(async () => root.render(createElement('div', null,
+      createElement(Markdown, { text }), createElement(Markdown, { text: updated }),
+      createElement(Markdown, { text: updated, interactive: false }))));
+    expect(readers[1].textContent).toContain('仍需补充营收资料');
+    expect(readers[1].textContent).not.toContain('后续方向仍不确定');
+    expect(readers[1].querySelector('details')).toBe(second);
+    expect(second.open).toBe(true);
   } finally {
     await act(async () => root.unmount()); element.remove(); vi.unstubAllGlobals();
     delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;

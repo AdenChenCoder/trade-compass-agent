@@ -26,6 +26,10 @@ def test_generation_schema_allows_empty_items_only_with_owned_execution(executed
             assert _maintenance_mode.get() is (not reader_prose)
             assert _response_output_limit.get() == 16384
             assert payload["schema"]["properties"]["items"].get("minItems", 0) == (0 if executed else 1)
+            kinds = payload["schema"]["properties"]["items"]["items"]["discriminator"]["mapping"]
+            assert ("fact" in kinds) is (not reader_prose)
+            assert ("inference" in kinds) is (not reader_prose)
+            assert ("paragraph" in kinds) is reader_prose
             return '{"schema_version":1,"items":[]}'
         return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
     result = publish_report(task="报告结果", draft="", tool_results=receipts, run_scope="empty", call=call, reader_prose=reader_prose)

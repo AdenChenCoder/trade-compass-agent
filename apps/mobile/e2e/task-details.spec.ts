@@ -45,6 +45,9 @@ print(json.dumps([dict(title='价格观察' + ('（资料不足）' if missing e
       }
       await sheet.locator('a[data-footnote-ref]').click();
       await expect(sources).toHaveAttribute('open');
+      // Wait for an actual background poll while reading the expanded source.
+      await phone.waitForResponse(response => response.url().includes('/notifications?limit=100'));
+      await expect(sources).toHaveAttribute('open');
       await expect(sources).toContainText('2026-11-10');
       await expect(sources).toContainText('2026-11-11');
       await phone.screenshot({ path: testInfo.outputPath(`sources-${notice.task_status}.png`), animations: 'disabled' });
