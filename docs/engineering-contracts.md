@@ -7,6 +7,13 @@ in the linked regression tests, not in expanding prose exception lists.
 
 ## Report and market evidence
 
+- Reading acceptance permits minor awkward wording, redundancy or ellipsis when
+  the surrounding body makes the business meaning unambiguous. Polished prose
+  is not a completion gate. Preserve factual identity, dates, values, units,
+  scale, direction and execution state; ambiguity that changes their meaning is
+  not a cosmetic defect. Verify downstream consumers separately: original
+  receipts and typed results remain authoritative, while narrative supplied to
+  later reasoning or learning must not silently become a new factual source.
 - Evidence structure is not the reader's writing structure. Published paragraphs
   may combine observations and judgments naturally. Explicit inline bindings keep
   values, units, identity and dates runtime-owned; a semantic review checks their

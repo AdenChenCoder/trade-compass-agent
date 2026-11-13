@@ -37,7 +37,7 @@ def document(payload, reverse=False):
     return {"schema_version": 1, "items": list(reversed(items)) if reverse else items}
 
 
-def publish(*, reverse=False, mutate=None, verdict=True, unavailable=False, receipts=RECEIPTS):
+def publish(*, reverse=False, mutate=None, verdict=True, unavailable=False, receipts=RECEIPTS, run_id=""):
     calls = []
     def call(system, user):
         payload = json.loads(user)
@@ -53,7 +53,35 @@ def publish(*, reverse=False, mutate=None, verdict=True, unavailable=False, rece
                            "reason": "" if verdict else "价格资料不能支持该结论"} for p in payload["inferences"]],
                            "coverage": {"complete": True, "missing": []}})
     return publish_report(task="比较两日收盘价", draft="", tool_results=receipts,
-                          run_scope="narrative", call=call), calls
+                          run_scope="narrative", run_id=run_id, call=call), calls
+
+
+def test_wording_variants_preserve_reopened_downstream_evidence(tmp_path):
+    """Explicit review doubles isolate transport invariance, not model accuracy."""
+    from trade_compass_agent.ops.job_definition import StepOutput
+    from trade_compass_agent.runtime.report_contract import EvidenceCatalog
+    from trade_compass_agent.runtime.report_publication import upstream_evidence
+
+    evidence_versions, fact_versions, bodies = [], [], []
+    for reverse in (False, True):
+        report, _ = publish(reverse=reverse, run_id="owned-report")
+        reference = {**report.verification, **persist_publication(tmp_path, report)}
+        upstream = {"analysis": StepOutput(message=report.text, data={
+            "analysis": report.text, "verification": reference})}
+        # The next step reopens the persisted artifact via its normal ownership
+        # checks; it must not derive numbers or direction from the prose style.
+        receipts, findings = upstream_evidence(tmp_path, upstream, "owned-report")
+        assert not findings and receipts == RECEIPTS
+        evidence_versions.append(receipts)
+        facts = EvidenceCatalog.build(receipts, run_scope="next-step").facts
+        fact_versions.append(list(facts.values()))
+        bodies.append(report.text)
+    assert bodies[0] != bodies[1]
+    assert evidence_versions[0] == evidence_versions[1]
+    assert fact_versions[0] == fact_versions[1]
+    assert [(fact.value, fact.unit, fact.observed_at) for fact in fact_versions[0]
+            if fact.metric == "close"] == [
+        ("10", "元/股", "2026-11-10"), ("11", "元/股", "2026-11-11")]
 
 
 @pytest.mark.parametrize("reverse", [False, True])
