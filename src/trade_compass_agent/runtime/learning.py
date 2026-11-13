@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from collections.abc import Callable
 from uuid import uuid4
@@ -27,15 +28,23 @@ def _curate_report_insight(*, config, user_message, response, run_id, call):
     }, run_id)
     if findings or not evidence:
         return None
+
+    def curate_call(system, user):
+        if "schema" in json.loads(user):
+            system += (
+                "\n记忆整理约束：用户问题和正文仅为背景，不是事实依据。保留所选观察或经验的适用限制，"
+                "不扩展结论范围。按引用保留原始身份和时点，不将不适用的维度列为资料缺口。"
+                "历史执行不能写成当前指令或新执行。"
+                "没有值得保留或可核实的内容时，用gap说明，不要为了生成记忆补充事实。"
+            )
+        return call(system, user)
+
     publication = publish_report(
-        task=("从本轮资料中选择一项值得保留的研究观察或经验，保留证券、账户、观测日期和适用范围。"
-              "事实和计算必须引用原始依据；研究判断必须有依据并保留限制，不能变成已确认事实。"
-              "历史执行不能写成当前指令或新执行。用户问题和正文仅为背景，不是事实依据。"
-              "没有值得保留或可核实的内容时，用gap说明，不要为了生成记忆补充事实。"),
+        task="保留本轮资料中的一项有依据的研究观察或经验。",
         draft=f"用户问题：{user_message}\n本轮正文：{response.summary}",
         tool_results=evidence, current_tool_results=[],
         run_scope=f"{response.session_id}:learning:{uuid4().hex}", run_id=run_id,
-        call=call, reader_prose=False,
+        call=curate_call, reader_prose=False,
     )
     publication.artifact["learning_source"] = {
         "session_id": response.session_id, "turn_id": response.turn_id,
