@@ -6,7 +6,7 @@ import time
 import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -929,6 +929,39 @@ _UNCONFIGURED_MSG = (
     "Ollama and LM Studio do not require API keys; remote providers require "
     "their matching API key env (see config/default.yaml)."
 )
+
+
+def create_local_report_fact_check(config: AppConfig, *, is_cancelled=None):
+    """A lazy, local-only, tool-free reviewer; failure never falls back to a writer.
+
+    The publication owner bounds calls. This callback inherits its deadline and
+    cancellation, and the normal provider checks the actual loaded context size.
+    Qwen uses its non-thinking protocol for this focused entailment task.
+    """
+    model = config.llm.local_report_review_model.strip()
+    if not model:
+        return None
+    review_config = replace(config, llm=replace(config.llm, provider="lmstudio", model=model,
+                                               api_key_env="", max_retries=0))
+    client = None
+
+    def call(system, user):
+        nonlocal client
+        from trade_compass_agent.runtime.exceptions import AgentTurnError, TurnInterruptedError
+        check_execution_active()
+        if is_cancelled and is_cancelled():
+            raise TurnInterruptedError("")
+        if client is None:
+            client = create_chat_client(review_config)
+        with llm_maintenance_mode(max_tokens=8192):
+            result = client.stream_complete([ChatMessage(role="system", content=system),
+                ChatMessage(role="user", content=user)], tools=None, on_delta=lambda _: None,
+                is_cancelled=is_cancelled)
+        check_execution_active()
+        if result.tool_calls:
+            raise AgentTurnError("事实审查不能执行工具")
+        return result.content or ""
+    return call
 
 
 def create_chat_client(config: AppConfig | None = None) -> ChatClient:

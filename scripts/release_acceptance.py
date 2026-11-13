@@ -22,6 +22,7 @@ SUITES = (
     "test_report_publication.py",
     "test_report_reading.py",
     "test_report_narrative.py",
+    "test_report_factual_role.py",
     "test_report_learning.py",
     "test_learning_archive.py",
     "test_memory_tree.py",

@@ -40,7 +40,8 @@ def worker(args):
 
     root = args.output
     config = AppConfig(data_dir=root / "data", memory_dir=root / "memory",
-        llm=LLMConfig(provider="lmstudio", model=args.model, api_key_env="", max_retries=0, timeout=240))
+        llm=LLMConfig(provider="lmstudio", model=args.model, api_key_env="", max_retries=0, timeout=240,
+                      local_report_review_model=args.fact_model))
     config = replace(config, agent=replace(config.agent, learning_enabled=True), allow_external_llm_memory=True)
     before = {str(p): p.read_bytes() for p in config.memory_dir.rglob("*.md")}
     base = 32 if args.case == "continued" else 22
@@ -156,6 +157,7 @@ def main():
     parser.add_argument("--wheel", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", required=True)
+    parser.add_argument("--fact-model", default="", help="Independent local LM Studio factual reviewer")
     parser.add_argument("--case", choices=CASES)
     args = parser.parse_args()
     args.output = args.output.resolve()
@@ -168,6 +170,7 @@ def main():
     os.chdir(args.output)
     verify = runpy.run_path(str(script.with_name("release_acceptance.py")))["verify_installed_wheel"]
     result = {"passed": False, "artifact": verify(args.wheel), "model": args.model, "cases": [],
+              "fact_model": args.fact_model,
               "fixtures": "frozen upstream receipts", "model_execution": "real local LM Studio",
               "business_calls": 0, "retries": 0, "plan": CASES,
               "harness_sha256": hashlib.sha256(script.read_bytes()).hexdigest()}
@@ -182,7 +185,8 @@ def main():
         with (args.output / f"{case}.log").open("w") as log:
             try:
                 completed = subprocess.run([sys.executable, "-I", str(script), "--wheel", str(args.wheel),
-                    "--output", str(args.output), "--model", args.model, "--case", case], env=env,
+                    "--output", str(args.output), "--model", args.model, "--case", case,
+                    "--fact-model", args.fact_model], env=env,
                     stdout=log, stderr=subprocess.STDOUT, timeout=270)
                 result["cases"].append({"case": case, "passed": completed.returncode == 0})
             except subprocess.TimeoutExpired:

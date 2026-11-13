@@ -31,6 +31,9 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+- Support an independently configured local factual reviewer. Separate task
+  coverage from evidence entailment; unavailable or inconclusive factual review
+  keeps the report incomplete. Both review roles retain the original deadline.
 - Present scheduled task reports as natural paragraphs with expandable sources on
   mobile. Keep original evidence, calculation results and incomplete-task status
   available; review factual meaning separately from wording style.

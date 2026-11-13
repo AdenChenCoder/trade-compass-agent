@@ -15,6 +15,7 @@ from trade_compass_agent.runtime.types import TurnResponse
 def _curate_report_insight(*, config, user_message, response, run_id, call):
     """Curate from owned receipts; the human-readable answer is only context."""
     from trade_compass_agent.ops.job_definition import StepOutput
+    from trade_compass_agent.llm.providers import create_local_report_fact_check
     from trade_compass_agent.runtime.report_publication import (
         persist_publication, publish_report, upstream_evidence,
     )
@@ -44,7 +45,7 @@ def _curate_report_insight(*, config, user_message, response, run_id, call):
         draft=f"用户问题：{user_message}\n本轮正文：{response.summary}",
         tool_results=evidence, current_tool_results=[],
         run_scope=f"{response.session_id}:learning:{uuid4().hex}", run_id=run_id,
-        call=curate_call, reader_prose=False,
+        call=curate_call, reader_prose=False, fact_review_call=create_local_report_fact_check(config),
     )
     publication.artifact["learning_source"] = {
         "session_id": response.session_id, "turn_id": response.turn_id,

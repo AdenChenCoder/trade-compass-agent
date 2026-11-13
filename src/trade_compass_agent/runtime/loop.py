@@ -651,6 +651,9 @@ class AgentLoop:
 
         native_tool_started = {}
 
+        from trade_compass_agent.llm.providers import create_local_report_fact_check
+        factual_report_call = create_local_report_fact_check(self.config, is_cancelled=is_cancelled)
+
         def read_only_report_call(system, user):
             _check_cancelled()
             review_messages = [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
@@ -677,7 +680,7 @@ class AgentLoop:
                 draft=content, tool_results=evidence, current_tool_results=[],
                 reader_prose=False,
                 run_scope=f"{session.session_id}:memory:{uuid4().hex}", run_id=self.report_run_id,
-                call=read_only_report_call, check_active=active)
+                call=read_only_report_call, check_active=active, fact_review_call=factual_report_call)
             publication.verification.update(persist_publication(self.config.data_dir, publication, check_active=active))
             return publication
 
@@ -942,7 +945,7 @@ class AgentLoop:
                     draft=final_text, tool_results=report_evidence,
                     run_scope=f"{session.session_id}:{turn_id or uuid4().hex}",
                     run_id=self.report_run_id, current_tool_results=tool_calls_log,
-                    call=review_call, check_active=publication_active,
+                    call=review_call, check_active=publication_active, fact_review_call=factual_report_call,
                 )
                 final_text = publication.text
                 verification = publication.verification

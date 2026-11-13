@@ -34,14 +34,26 @@ in the linked regression tests, not in expanding prose exception lists.
   stay visible in the body. Legacy saved text remains readable without regeneration.
 
 - Natural paragraph writing uses the model's reasoning path, with bounded output
-  and application-side schema validation. Non-thinking maintenance is reserved
-  for internal evidence serialization, not sentence composition.
-- Report composition and review share a maximum of four model calls. Unused
+  and application-side schema validation. Non-thinking mode may serve internal
+  evidence serialization and a separately evaluated local entailment role, not
+  sentence composition.
+- Report composition and task-coverage review share a maximum of four model calls. Unused
   structural-repair capacity may fund one feedback revision and a fresh review.
   Preserve required gaps through revision; unavailable review must retain the
   first verified evidence. Invalid optional gap-dismissal metadata cannot remove
   a gap or invalidate independently valid paragraph reviews. Preserve cancellation
   and the parent deadline, and never replay business tools to repair prose.
+- An explicitly configured `llm.local_report_review_model` separates factual
+  entailment from task coverage. It uses only local LM Studio, original receipts,
+  typed calculations, current execution records and the final statements; task
+  instructions, drafts and coverage decisions are not its evidence. Each statement
+  must be entailed; contradictory or unknown statements are withheld. Missing,
+  malformed or unavailable assessments cannot fall back to writer approval.
+  Original and revised bodies share at most two such calls, making at most six
+  model calls in total. The parent deadline, cancellation and no-tools boundary
+  still apply. Record both review inputs/results and actual total calls. Choosing
+  a model is not certification: the exact configured path must pass semantic,
+  full-task, long-report and downstream learning acceptance before activation.
 
 - Validate typed facts against runtime-owned receipts. Preserve instrument and
   account identity, metric, sign, rounding, unit, category, period and source

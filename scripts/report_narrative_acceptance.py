@@ -75,6 +75,7 @@ def main():
     parser.add_argument("--wheel", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", required=True)
+    parser.add_argument("--fact-model", default="", help="Independent local LM Studio factual reviewer")
     args = parser.parse_args()
     root = args.output.resolve()
     wheel = args.wheel.resolve()
@@ -91,17 +92,19 @@ def main():
                       TRADE_COMPASS_ENV_FILE=str(root/".env"), TRADE_COMPASS_DATA_DIR=str(root/"data"),
                       TRADE_COMPASS_MEMORY_DIR=str(root/"memory"), TRADE_COMPASS_NO_SCHEDULER="true")
     from trade_compass_agent.config import AppConfig, LLMConfig
-    from trade_compass_agent.llm.providers import ChatMessage, create_chat_client, llm_request_deadline
+    from trade_compass_agent.llm.providers import ChatMessage, create_chat_client, create_local_report_fact_check, llm_request_deadline
     from trade_compass_agent.runtime.report_publication import publish_report
 
     verify = runpy.run_path(str(Path(__file__).with_name("release_acceptance.py")))["verify_installed_wheel"]
     result = {"passed": False, "artifact": verify(wheel), "mode": "real semantic reviewer / frozen composition",
-              "model": args.model, "cases": [], "plan": CASES, "retries": 0, "business_calls": 0,
+              "model": args.model, "fact_model": args.fact_model, "cases": [], "plan": CASES, "retries": 0, "business_calls": 0,
               "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
     (root/"plan.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
     config = AppConfig(data_dir=root/"data", memory_dir=root/"memory",
-                       llm=LLMConfig(provider="lmstudio", model=args.model, api_key_env="", max_retries=0, timeout=120))
+                       llm=LLMConfig(provider="lmstudio", model=args.model, api_key_env="", max_retries=0, timeout=120,
+                                     local_report_review_model=args.fact_model))
     client = create_chat_client(config)
+    factual_client = create_local_report_fact_check(config)
     receipts = [
         ("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars": [
             {"timestamp": "2025-01-01", "close": 22}, {"timestamp": "2025-01-02", "close": 23}]})),
@@ -115,7 +118,12 @@ def main():
             changed = json.loads(case_receipts[0][1])
             changed["bars"][0]["close"], changed["bars"][1]["close"] = 23, 22
             case_receipts[0] = ("get_bars", json.dumps(changed))
-        calls = []
+        calls, factual_calls = [], []
+        def factual_call(system, user):
+            row = {"input": json.loads(user)}
+            factual_calls.append(row)
+            row["output"] = factual_client(system, user)
+            return row["output"]
         def call(system, user):
             payload = json.loads(user)
             if "schema" in payload:
@@ -178,13 +186,14 @@ def main():
                     task += "给出收盘价变动比例。"
                 report = publish_report(task=task,
                     draft="", tool_results=case_receipts, current_tool_results=case_receipts,
-                    run_scope="semantic-"+name, call=call, max_calls=2)
+                    run_scope="semantic-"+name, call=call, max_calls=2,
+                    fact_review_call=factual_call if factual_client else None)
             (root/(name+"-artifact.json")).write_text(json.dumps(report.artifact, ensure_ascii=False, indent=2))
             reviews = (report.artifact.get("review") or {}).get("reviews", [])
             actual = next((r["supported"] for r in reviews if r["id"] == "answer"), None)
             coverage_complete = (report.artifact.get("review") or {}).get("coverage", {}).get("complete")
             entry.update(actual_supported=actual, coverage_complete=coverage_complete, status=report.verification["status"],
-                         passed=actual is expected and len(calls) == 1
+                         passed=actual is expected and len(calls) == 1 and len(factual_calls) == int(bool(factual_client))
                          and ((coverage_complete is False and report.verification["report"] == "partial")
                               if name == "hidden_result" else
                               (report.verification["status"] == "complete") if expected else
@@ -194,10 +203,14 @@ def main():
             entry["error"] = str(exc)
         entry["seconds"] = round(time.monotonic() - started, 2)
         (root/(name+"-calls.json")).write_text(json.dumps(calls, ensure_ascii=False, indent=2))
+        (root/(name+"-factual-calls.json")).write_text(json.dumps(factual_calls, ensure_ascii=False, indent=2))
         result["cases"].append(entry)
         (root/"acceptance.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
         print(json.dumps(entry, ensure_ascii=False), flush=True)
-    result["passed"] = all(row["passed"] for row in result["cases"])
+        if not entry["passed"]:
+            break
+    result["not_run"] = [name for name in CASES if name not in {row["case"] for row in result["cases"]}]
+    result["passed"] = not result["not_run"] and all(row["passed"] for row in result["cases"])
     (root/"acceptance.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
     raise SystemExit(0 if result["passed"] else 1)
 
