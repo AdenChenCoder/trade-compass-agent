@@ -2,6 +2,24 @@
 
 This project follows [Semantic Versioning](https://semver.org/) and records user-visible changes here.
 
+## [0.5.10] - Unreleased
+
+- Support an independently configured local factual reviewer. Separate task
+  coverage from evidence entailment; unavailable or inconclusive factual review
+  keeps the report incomplete. Both review roles retain the original deadline.
+- Preserve the scheduled business date and display timezone through report
+  writing, factual review and saved evidence; old observations cannot acquire
+  the date of a later review.
+- Present scheduled task reports as natural paragraphs with expandable sources on
+  mobile. Keep original evidence, calculation results and incomplete-task status
+  available; review factual meaning separately from wording style.
+- Preserve expanded sources and citation focus through mobile background refresh,
+  while retaining full-message copy and new-content updates.
+- Ground automatic report learning in its original run evidence. Build memory
+  extracts from complete selected records without rewriting them, and make
+  truncated memory search results explicit.
+- Require Soup Sieve 4 or later to include its selector-performance security fix.
+
 ## 0.5.9
 
 - Preserve full history when an interactive follow-up switches from a scheduled
@@ -28,21 +46,6 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 - Complete the 0.5.6 recovery with the report transport and bounded repair fixes
   from 0.5.7. Production acceptance of 0.5.7 exposed the continued-execution
   defect; existing records remain readable without replaying business actions.
-
-## [Unreleased]
-
-- Support an independently configured local factual reviewer. Separate task
-  coverage from evidence entailment; unavailable or inconclusive factual review
-  keeps the report incomplete. Both review roles retain the original deadline.
-- Present scheduled task reports as natural paragraphs with expandable sources on
-  mobile. Keep original evidence, calculation results and incomplete-task status
-  available; review factual meaning separately from wording style.
-- Preserve expanded sources and citation focus through mobile background refresh,
-  while retaining full-message copy and new-content updates.
-- Ground automatic report learning in its original run evidence. Build memory
-  extracts from complete selected records without rewriting them, and make
-  truncated memory search results explicit.
-- Require Soup Sieve 4 or later to include its selector-performance security fix.
 
 ## [0.5.7] - 2026-11-12
 

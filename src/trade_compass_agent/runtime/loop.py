@@ -680,7 +680,8 @@ class AgentLoop:
                 draft=content, tool_results=evidence, current_tool_results=[],
                 reader_prose=False,
                 run_scope=f"{session.session_id}:memory:{uuid4().hex}", run_id=self.report_run_id,
-                call=read_only_report_call, check_active=active, fact_review_call=factual_report_call)
+                call=read_only_report_call, check_active=active, fact_review_call=factual_report_call,
+                reference_date=self.report_date, reference_timezone=self.config.scheduler.timezone)
             publication.verification.update(persist_publication(self.config.data_dir, publication, check_active=active))
             return publication
 
@@ -946,6 +947,7 @@ class AgentLoop:
                     run_scope=f"{session.session_id}:{turn_id or uuid4().hex}",
                     run_id=self.report_run_id, current_tool_results=tool_calls_log,
                     call=review_call, check_active=publication_active, fact_review_call=factual_report_call,
+                    reference_date=self.report_date, reference_timezone=self.config.scheduler.timezone,
                 )
                 final_text = publication.text
                 verification = publication.verification

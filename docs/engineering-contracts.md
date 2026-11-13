@@ -54,6 +54,13 @@ in the linked regression tests, not in expanding prose exception lists.
   still apply. Record both review inputs/results and actual total calls. Choosing
   a model is not certification: the exact configured path must pass semantic,
   full-task, long-report and downstream learning acceptance before activation.
+  Pass the runtime-owned business date and scheduler timezone separately from
+  instructions, together with the renderer's display timezone. Preserve this
+  context through revision and persistence. An unknown reference date stays
+  unknown; neither retrieval time nor the latest source date establishes today.
+  Historical reuse must retain dated source meaning rather than adopt the review
+  machine's current date. Pair stale-as-current rejection with valid historical
+  wording and UTC-to-local calendar-date acceptance.
 
 - Validate typed facts against runtime-owned receipts. Preserve instrument and
   account identity, metric, sign, rounding, unit, category, period and source

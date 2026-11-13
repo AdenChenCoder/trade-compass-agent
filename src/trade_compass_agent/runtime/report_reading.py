@@ -15,6 +15,8 @@ from trade_compass_agent.runtime.report_contract import (
     inference_evidence,
 )
 
+DISPLAY_TIMEZONE = "Asia/Shanghai"
+
 
 def _plain(value: str) -> str:
     """Keep receipt text literal in Markdown headings and table cells."""
@@ -30,7 +32,7 @@ def _date(fact) -> str:
     try:
         stamp = datetime.fromisoformat(fact.observed_at)
         if stamp.tzinfo:
-            stamp = stamp.astimezone(ZoneInfo("Asia/Shanghai"))
+            stamp = stamp.astimezone(ZoneInfo(DISPLAY_TIMEZONE))
             if fact.timeframe == "1d":
                 return stamp.strftime("%Y-%m-%d")
             return stamp.strftime("%Y-%m-%d %H:%M:%S") + "（北京时间）"

@@ -31,7 +31,7 @@ def assess(payload, verdict="entailed"):
                             for row in payload["statements"]]}
 
 
-def publish(fact_reply, *, max_calls=2, coverage_missing=False, check_active=lambda: None):
+def publish(fact_reply, *, max_calls=2, coverage_missing=False, check_active=lambda: None, reference_date=None):
     primary, factual = [], []
     def writer(system, user):
         payload = json.loads(user)
@@ -46,14 +46,14 @@ def publish(fact_reply, *, max_calls=2, coverage_missing=False, check_active=lam
     def checker(system, user):
         payload = json.loads(user)
         factual.append(payload)
-        assert set(payload) == {"statements", "receipts", "execution_records"}
+        assert set(payload) == {"statements", "receipts", "execution_records", "report_context"}
         assert payload["receipts"][0]["result"] == RECEIPTS[0][1]
         assert "task instruction marker" not in user and "untrusted draft marker" not in user
         result = fact_reply(payload, len(factual))
         return result if isinstance(result, str) else json.dumps(result)
     result = publish_report(task="task instruction marker", draft="untrusted draft marker", tool_results=RECEIPTS,
         run_scope="factual-role", run_id="owned", call=writer, fact_review_call=checker,
-        max_calls=max_calls, check_active=check_active)
+        max_calls=max_calls, check_active=check_active, reference_date=reference_date)
     return result, primary, factual
 
 
@@ -73,6 +73,25 @@ def test_only_supported_final_body_reaches_reader_and_reopened_artifact(tmp_path
     assert saved["coverage_review_input"] == primary[-1]
     assert saved["factual_review_input"] == factual[0]
     assert saved["factual_review"]["assessments"][0]["verdict"] == verdict
+
+
+@pytest.mark.parametrize("reference_date", [None, "2025-01-02", "2025-01-03"])
+def test_runtime_date_reaches_writer_reviewer_revision_and_reopened_record(tmp_path, reference_date):
+    result, primary, factual = publish(lambda payload, n: assess(payload, "unknown" if n == 1 else "entailed"),
+                                      max_calls=4, reference_date=reference_date)
+    context = {"reference_date": reference_date, "reference_timezone": "Asia/Shanghai", "display_timezone": "Asia/Shanghai"}
+    assert len(primary) == 4 and len(factual) == 2
+    assert all(row["report_context"] == context for row in [*primary, *factual])
+    ref = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/"report_artifacts"/(ref["artifact_id"]+".json")).read_text())
+    assert saved["report_context"] == context
+    assert all(row["factual_review_input"]["report_context"] == context for row in saved["revision_attempts"])
+
+
+@pytest.mark.parametrize("reference_date", ["20250102", "2025-02-30", "today", True])
+def test_invalid_runtime_date_cannot_be_guessed_by_model(reference_date):
+    with pytest.raises(ValueError):
+        publish(lambda *_: pytest.fail("invalid date reached model"), reference_date=reference_date)
 
 
 @pytest.mark.parametrize("fault", ["missing", "duplicate", "wrong_id", "wrong_type", "extra", "blank", "timeout"])
@@ -258,3 +277,5 @@ def test_scheduled_api_uses_configured_factual_role_and_never_replays_business_t
     artifact = json.loads((config.data_dir/"report_artifacts"/(verification["artifact_id"]+".json")).read_text())
     assert artifact["published_text"] == detail["analysis"]
     assert artifact["factual_model_calls"] == len(checks)
+    assert artifact["report_context"]["reference_date"] == detail["step_runs"][0]["data"]["session_id"][-10:]
+    assert all(row["report_context"] == artifact["report_context"] for row in checks)

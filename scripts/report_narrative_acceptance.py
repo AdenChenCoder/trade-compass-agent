@@ -69,6 +69,19 @@ SCOPE_CASES = {
 }
 CASES.update({name: (prose, expected) for name, (prose, expected, _, _) in SCOPE_CASES.items()})
 
+_dated_price = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars": [
+    {"timestamp": "2025-01-02", "close": 22}]}))]
+_utc_price = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars": [
+    {"timestamp": "2025-01-01T16:00:00+00:00", "close": 22}]}))]
+TIME_CASES = {
+    "relative_current": ("今天002415收盘价为22元/股。", True, _dated_price, "2025-01-02"),
+    "relative_stale": ("今天002415收盘价为22元/股。", False, _dated_price, "2025-01-03"),
+    "relative_unknown": ("今天002415收盘价为22元/股。", False, _dated_price, None),
+    "utc_display_date": ("002415在2025-01-02的收盘价为22元/股。", True, _utc_price, "2025-01-03"),
+    "utc_wrong_date": ("002415在2025-01-01的收盘价为22元/股。", False, _utc_price, "2025-01-03"),
+}
+CASES.update({name: (prose, expected) for name, (prose, expected, _, _) in TIME_CASES.items()})
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -113,7 +126,8 @@ def main():
             "timestamp": "2024-12-31T14:00:00+08:00"}]})),
     ]
     for name, (prose, expected) in CASES.items():
-        case_receipts = list(SCOPE_CASES[name][2] if name in SCOPE_CASES else receipts)
+        case_receipts = list(TIME_CASES[name][2] if name in TIME_CASES else
+                             SCOPE_CASES[name][2] if name in SCOPE_CASES else receipts)
         if name == "changed_direction_evidence":
             changed = json.loads(case_receipts[0][1])
             changed["bars"][0]["close"], changed["bars"][1]["close"] = 23, 22
@@ -127,10 +141,16 @@ def main():
         def call(system, user):
             payload = json.loads(user)
             if "schema" in payload:
-                if name in SCOPE_CASES:
+                if name in SCOPE_CASES or name in TIME_CASES:
                     refs = [row[0] for group in payload["facts"] for row in group["rows"]]
+                    parts = [{"type": "text", "text": prose}]
+                    if name == "utc_display_date":
+                        close_id = next(group["rows"][0][0] for group in payload["facts"] if group["metric"] == "close")
+                        parts = [{"type": "text", "text": "002415在"},
+                                 {"type": "value", "ref": close_id, "field": "date"},
+                                 {"type": "text", "text": "的收盘价为22元/股。"}]
                     return json.dumps({"schema_version": 1, "items": [{"id": "answer", "section": "overview",
-                        "type": "paragraph", "parts": [{"type": "text", "text": prose}], "refs": refs}]}, ensure_ascii=False)
+                        "type": "paragraph", "parts": parts, "refs": refs}]}, ensure_ascii=False)
                 facts = [dict(zip(payload["fact_columns"], row, strict=True))
                          for group in payload["facts"] if group["metric"] == "close" for row in group["rows"]]
                 parts = [{"type": "value", "ref": facts[0]["id"], "field": "subject"},
@@ -179,7 +199,8 @@ def main():
         started = time.monotonic()
         try:
             with llm_request_deadline(started + 120):
-                task = (SCOPE_CASES[name][3] if name in SCOPE_CASES else
+                task = ("说明所给日线资料中的收盘价及其日期。" if name in TIME_CASES else
+                        SCOPE_CASES[name][3] if name in SCOPE_CASES else
                         "说明这两个观察日收盘价变化，仅在存在本轮执行记录时报告成交。")
                 if name in {"hidden_result", "compact_percentage", "visible_result", "missing_percentage_unit", "correct_percentage",
                             "unit_in_body_context", "explicit_ratio_scale", "percentage_as_price"}:
@@ -187,7 +208,8 @@ def main():
                 report = publish_report(task=task,
                     draft="", tool_results=case_receipts, current_tool_results=case_receipts,
                     run_scope="semantic-"+name, call=call, max_calls=2,
-                    fact_review_call=factual_call if factual_client else None)
+                    fact_review_call=factual_call if factual_client else None,
+                    reference_date=TIME_CASES[name][3] if name in TIME_CASES else None)
             (root/(name+"-artifact.json")).write_text(json.dumps(report.artifact, ensure_ascii=False, indent=2))
             reviews = (report.artifact.get("review") or {}).get("reviews", [])
             actual = next((r["supported"] for r in reviews if r["id"] == "answer"), None)
