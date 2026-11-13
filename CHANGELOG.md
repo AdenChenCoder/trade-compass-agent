@@ -10,6 +10,8 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 - Render current execution outcomes from actual operation receipts. Independent
   body interpretation prevents empty receipts from being accepted as proof that
   no operation happened, while preserving historical statements and plans.
+- Check quantity units and numerical scale from the reader body before consulting
+  evidence, while accepting explicit shared units and concise valid expressions.
 - Preserve the scheduled business date and display timezone through report
   writing, factual review and saved evidence; old observations cannot acquire
   the date of a later review.

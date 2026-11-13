@@ -5,9 +5,11 @@ from __future__ import annotations
 BODY_MEANING = """Read ONLY the supplied reader paragraphs. You have no execution evidence and must not decide truth or justify a claim.
 Classify the exact meaning actually asserted about completed trading or memory-writing outcomes. Affirmative and negative outcomes both count. Do not soften a categorical outcome into uncertainty, or turn missing receipts into a negative outcome. Proposals, conditions, historical events, and inability to confirm an outcome are different meanings.
 Partition EACH input text into contiguous parts at assertion boundaries. Copy text exactly, including punctuation/spacing; concatenating parts must reproduce the input byte-for-byte. Do not rewrite, normalize, add qualifiers, or omit any text. Split independent assertions when possible; retain sufficient original context to classify their meaning.
-Return JSON: {"paragraphs":[{"id":"input id","parts":[{"text":"exact original span","kind":"current_outcome|historical_outcome|plan|availability|other","outcome":"performed|not_performed|unknown|none","extent":"operation|whole_run|none"}]}]}.
+Return JSON: {"quantity_issues":[{"id":"paragraph id","text":"exact problematic quantity assertion span","reason":"missing unit or ratio scale in the reader body"}],"paragraphs":[{"id":"input id","parts":[{"text":"exact original span","kind":"current_outcome|historical_outcome|plan|availability|other","outcome":"performed|not_performed|unknown|none","extent":"operation|whole_run|none"}]}]}.
 current_outcome means the text ASSERTS a trading or memory-writing result in this run, including categorical non-execution. For it, outcome must be performed or not_performed, and extent must distinguish a specific operation from an assertion covering the whole run. A specific rejected attempt is not an assertion that no actions occurred anywhere in the run.
-availability is a statement about supplied records or an unconfirmed outcome, not a categorical assertion of execution/non-execution. Other kinds use outcome=none and extent=none. Include every input paragraph exactly once. Never use evidence or your knowledge to repair the meaning of the author's words."""
+availability is a statement about supplied records or an unconfirmed outcome, not a categorical assertion of execution/non-execution. Other kinds use outcome=none and extent=none. Include every input paragraph exactly once. Never use evidence or your knowledge to repair the meaning of the author's words.
+Independently inspect whether the reader body itself establishes the meaning of each stated quantity: its dimensional unit and, for ratios/rates, its numerical scale. Do not calculate an implied intended number from other values, use outside conventions to supply a missing percentage sign, or repair what the author probably intended. A dimensional quantity needs a unit established in its assertion or an explicit shared convention in these paragraphs. A bare ratio/rate numeral without an explicit fraction, ratio scale or percent convention is ambiguous. Intrinsically dimensionless multiples such as valuation ratios do not require a currency or percent unit. Securities identifiers, dates, counts and qualitative directions are not missing-unit quantities.
+quantity_issues lists ONLY quantity meaning not established by the body. Copy an exact existing text span with its paragraph id for each issue. Use [] when all quantities are clear. This is NOT evidence review: an unambiguously stated factual error must not be marked as a quantity clarity issue. All paragraphs form one reader context; an explicitly shared unit/scale remains valid across clauses and paragraphs. Do not require repeated units or a fixed phrase. Do not infer a missing convention from evidence, calculated answers, or numerical plausibility."""
 
 
 def validate_body_meaning(value, paragraphs):
@@ -16,7 +18,7 @@ def validate_body_meaning(value, paragraphs):
     Semantic categories come from the body-only local model. No phrase list,
     keyword detector or sentence regex assigns these categories in the runtime.
     """
-    if not isinstance(value, dict) or set(value) != {"paragraphs"}:
+    if not isinstance(value, dict) or set(value) != {"paragraphs", "quantity_issues"}:
         raise ValueError("invalid body meaning response")
     rows = value["paragraphs"]
     if not isinstance(rows, list) or len(rows) != len(paragraphs):
@@ -40,4 +42,15 @@ def validate_body_meaning(value, paragraphs):
         if "".join(part["text"] for part in row["parts"]) != paragraphs[row["id"]]:
             raise ValueError("body partition omitted or rewrote text")
         result[row["id"]] = row["parts"]
-    return result
+    issues = value["quantity_issues"]
+    if not isinstance(issues, list) or len(issues) > 100:
+        raise ValueError("invalid quantity meaning issues")
+    by_id = {}
+    for issue in issues:
+        if (not isinstance(issue, dict) or set(issue) != {"id", "text", "reason"}
+                or any(not isinstance(issue[key], str) or not issue[key].strip() for key in issue)
+                or issue["id"] not in paragraphs or issue["text"] not in paragraphs[issue["id"]]
+                or len(issue["reason"]) > 500):
+            raise ValueError("invalid quantity meaning issue")
+        by_id.setdefault(issue["id"], []).append(issue)
+    return result, by_id

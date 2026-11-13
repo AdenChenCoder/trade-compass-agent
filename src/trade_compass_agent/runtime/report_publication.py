@@ -323,7 +323,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     review_input = None
     coverage_review_input = factual_review_input = factual_response = factual_review = None
     body_review_input = body_response = body_meaning = None
-    execution_projections = {}
+    execution_projections, body_quantity_issues = {}, {}
     reader_body = ""
     findings, rendered, traces = [], {}, {}
     attempts, review, fixed_items = [], None, dict(protected_gaps)
@@ -458,7 +458,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     body_response = body_call(BODY_MEANING, json.dumps(body_review_input, ensure_ascii=False,
                                                                       separators=(",", ":")))
                     check_active()
-                    body_meaning = validate_body_meaning(_json_value(body_response), prose)
+                    body_meaning, body_quantity_issues = validate_body_meaning(_json_value(body_response), prose)
                     preview_findings = list(findings)
                     for identifier, parts in body_meaning.items():
                         current = [part for part in parts if part["kind"] == "current_outcome"]
@@ -481,6 +481,15 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         elif not prose[identifier].strip():
                             forced_reviews[identifier] = {"id": identifier, "supported": True,
                                                           "reason": "执行结果由程序依据本轮回执单独展示。"}
+                    # Source evidence may not fill a missing reader unit or
+                    # quantity scale. Keep this body-only finding independent
+                    # of the subsequent evidence assessor's approval.
+                    for identifier, issues in body_quantity_issues.items():
+                        reason = "正文数量的单位或比例尺度尚未明确：" + "；".join(issue["reason"] for issue in issues)
+                        forced_reviews[identifier] = {"id": identifier, "supported": False, "reason": reason}
+                        finding = Finding("analysis", "quantity_meaning_ambiguous", reason, identifier)
+                        findings.append(finding)
+                        preview_findings.append(finding)
                     preview = {**rendered, **{key: value for key, value in prose.items()
                                              if key not in forced_reviews or forced_reviews[key]["supported"]}}
                     review_input["report"] = present(document, preview, preview_findings, include_sources=False)
@@ -603,7 +612,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "review": review, "review_valid": review_valid, "review_input": review_input,
                 "coverage_review_input": coverage_review_input,
                 "body_review_input": body_review_input, "body_response": body_response, "body_meaning": body_meaning,
-                "execution_projections": execution_projections,
+                "execution_projections": execution_projections, "body_quantity_issues": body_quantity_issues,
                 "factual_review_input": factual_review_input, "factual_response": factual_response,
                 "factual_review": factual_review,
                 "revision_input": revision, "reader_body": reader_body or text,
@@ -634,7 +643,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                          and has_verified_prose(publication) and not has_verified_prose(revised))
         selected = revised if revised.artifact["review_valid"] and not lost_analysis else publication
         keys = ("document", "verification", "review", "review_input", "revision_input", "attempts", "published_text",
-                "body_review_input", "body_response", "body_meaning", "execution_projections",
+                "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues",
                 "coverage_review_input", "factual_review_input", "factual_response", "factual_review")
         history = [{key: attempt.artifact[key] for key in keys} for attempt in (publication, revised)]
         selected.artifact["revision_attempts"] = history

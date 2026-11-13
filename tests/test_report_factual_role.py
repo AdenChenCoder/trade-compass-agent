@@ -33,7 +33,7 @@ def assess(payload, verdict="entailed"):
 
 def body_reply(payload):
     assert set(payload) == {"paragraphs"}
-    return {"paragraphs": [{"id": row["id"], "parts": [{"text": row["text"], "kind": "other",
+    return {"quantity_issues": [], "paragraphs": [{"id": row["id"], "parts": [{"text": row["text"], "kind": "other",
         "outcome": "none", "extent": "none"}]} for row in payload["paragraphs"]]}
 
 
@@ -115,7 +115,7 @@ def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path,
         payload = json.loads(user)
         if "paragraphs" in payload:
             assert payload == {"paragraphs": [{"id": "answer", "text": prefix+claim}]}
-            return json.dumps({"paragraphs": [{"id": "answer", "parts": [
+            return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "answer", "parts": [
                 {"text": prefix, "kind": "other", "outcome": "none", "extent": "none"},
                 {"text": claim, "kind": "current_outcome", "outcome": "not_performed" if receipt_status is None else "performed",
                  "extent": "whole_run" if receipt_status is None else "operation"}]}]})
@@ -200,7 +200,7 @@ def test_execution_only_report_uses_receipt_without_empty_prose_or_source_marker
         return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
     def checker(system, user):
         assert set(json.loads(user)) == {"paragraphs"}
-        return json.dumps({"paragraphs": [{"id": "outcome", "parts": [{"text": claim, "kind": "current_outcome",
+        return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "outcome", "parts": [{"text": claim, "kind": "current_outcome",
             "outcome": "performed", "extent": "operation"}]}]})
     result = publish_report(task="报告成交结果", draft="", tool_results=[("place_paper_trade", json.dumps(receipt))],
                             run_scope="execution-only", call=writer, fact_review_call=checker, max_calls=2)
@@ -442,3 +442,111 @@ def test_scheduled_api_uses_configured_factual_role_and_never_replays_business_t
     assert artifact["body_review_model_calls"] == len(body_checks)
     assert artifact["report_context"]["reference_date"] == detail["step_runs"][0]["data"]["session_id"][-10:]
     assert all(row["report_context"] == artifact["report_context"] for row in checks)
+
+
+@pytest.mark.parametrize("ambiguous", [True, False])
+def test_body_quantity_meaning_cannot_be_repaired_by_evidence_approval(tmp_path, ambiguous):
+    text = "价格变动比例为4.55。" if ambiguous else "这里的变动比例以百分数计，为4.55。"
+    checks = []
+    def writer(system, user):
+        payload = json.loads(user)
+        if "schema" in payload:
+            facts = [f for f in report_facts(payload) if f["metric"] == "close"]
+            return json.dumps({"schema_version": 1, "items": [
+                {"id": "change", "type": "calculation", "section": "market", "operation": "change_pct",
+                 "refs": [f["id"] for f in facts]},
+                {"id": "answer", "type": "paragraph", "section": "market",
+                 "parts": [{"type": "text", "text": text}], "refs": ["change"]}]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        checks.append(payload)
+        if "paragraphs" in payload:
+            reply = body_reply(payload)
+            if ambiguous:
+                reply["quantity_issues"] = [{"id": "answer", "text": "4.55", "reason": "正文未明确比例尺度。"}]
+            return json.dumps(reply)
+        return json.dumps(assess(payload))
+    result = publish_report(task="给出变动比例", draft="", tool_results=RECEIPTS, run_scope="quantity-meaning",
+                            call=writer, fact_review_call=checker, max_calls=2)
+    assert result.verification["status"] == ("incomplete" if ambiguous else "complete")
+    assert (text in result.text) is not ambiguous
+    assert len(checks) == (1 if ambiguous else 2)
+    assert bool(result.artifact["body_quantity_issues"]) is ambiguous
+    assert result.artifact["review"]["reviews"][0]["supported"] is not ambiguous
+    if ambiguous:
+        assert "quantity_meaning_ambiguous" in {f["code"] for f in result.verification["findings"]}
+        assert result.artifact["factual_model_calls"] == 0
+    ref = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/"report_artifacts"/(ref["artifact_id"]+".json")).read_text())
+    assert saved["published_text"] == result.text
+    assert saved["body_quantity_issues"] == result.artifact["body_quantity_issues"]
+
+
+@pytest.mark.parametrize("fault", ["missing", "not_list", "wrong_id", "invented_text", "empty_reason", "extra_field"])
+def test_malformed_body_quantity_assessment_is_not_silent_approval(fault):
+    def checker(system, user):
+        payload = json.loads(user)
+        assert set(payload) == {"paragraphs"}
+        body = body_reply(payload)
+        issue = {"id": "answer", "text": payload["paragraphs"][0]["text"], "reason": "需要明确单位。"}
+        body["quantity_issues"] = [issue]
+        if fault == "missing":
+            del body["quantity_issues"]
+        elif fault == "not_list":
+            body["quantity_issues"] = None
+        elif fault == "wrong_id":
+            issue["id"] = "unknown"
+        elif fault == "invented_text":
+            issue["text"] = "正文没有这句话"
+        elif fault == "empty_reason":
+            issue["reason"] = ""
+        else:
+            issue["verdict"] = "approved"
+        return json.dumps(body)
+    def writer(system, user):
+        return json.dumps(compose(json.loads(user)))
+    result = publish_report(task="比较收盘价", draft="", tool_results=RECEIPTS, run_scope="invalid-quantity",
+                            call=writer, fact_review_call=checker, max_calls=2)
+    assert result.verification["status"] == "incomplete"
+    assert result.artifact["factual_model_calls"] == 0
+    assert "22元/股升至23元/股" not in result.text
+
+
+def test_quantity_clarification_revision_is_rechecked_and_bounded():
+    invalid = "价格变动比例为4.55。"
+    valid = "价格变动比例为4.55%。"
+    writing_calls = []
+    def writer(system, user):
+        payload = json.loads(user)
+        writing_calls.append(payload)
+        if "schema" in payload:
+            facts = [f for f in report_facts(payload) if f["metric"] == "close"]
+            text = valid if "revision" in payload else invalid
+            if "revision" in payload:
+                assert payload["revision"]["review"]["reviews"][0]["supported"] is False
+            return json.dumps({"schema_version": 1, "items": [
+                {"id": "change", "type": "calculation", "section": "market", "operation": "change_pct",
+                 "refs": [f["id"] for f in facts]},
+                {"id": "answer", "type": "paragraph", "section": "market",
+                 "parts": [{"type": "text", "text": text}], "refs": ["change"]}]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if "paragraphs" in payload:
+            reply = body_reply(payload)
+            if payload["paragraphs"][0]["text"] == invalid:
+                reply["quantity_issues"] = [{"id": "answer", "text": "4.55", "reason": "正文未明确比例尺度。"}]
+            return json.dumps(reply)
+        assert payload["statements"][0]["text"] == valid
+        return json.dumps(assess(payload))
+    result = publish_report(task="给出变动比例", draft="", tool_results=RECEIPTS, run_scope="quantity-revision",
+                            call=writer, fact_review_call=checker)
+    assert result.verification["status"] == "complete" and valid in result.text and invalid not in result.text
+    assert len(writing_calls) == 4
+    assert result.artifact["model_calls"] == 7 and result.artifact["call_limit"] == 8
+    assert result.artifact["body_review_model_calls"] == 2 and result.artifact["factual_model_calls"] == 1
+    assert result.artifact["selected_attempt"] == 1
+    first, revised = result.artifact["revision_attempts"]
+    assert first["body_quantity_issues"] and not revised["body_quantity_issues"]
+    assert first["verification"]["status"] == "incomplete"

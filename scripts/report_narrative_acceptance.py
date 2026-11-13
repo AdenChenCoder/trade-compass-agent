@@ -49,6 +49,9 @@ _prices = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars
 _position_prose = "600928 西安银行持有1000股，成本10元/股，估值11元/股，浮动盈亏1000元。"
 _price_prose = "002415在2025年1月1日和1月2日的收盘价分别为22元/股和23元/股。"
 SCOPE_CASES = {
+    "currency_missing": ("002415在2025年1月1日的收盘价为22。", False, _prices, "说明前一日收盘价。"),
+    "currency_shared_unit": ("以下价格均以元/股计。002415在2025年1月1日的收盘价为22。", True, _prices, "说明前一日收盘价。"),
+    "dimensionless_valuation": ("600928 西安银行的市净率为0.8。", True, _company, "说明资料中的市净率。"),
     "individual_scope": ("600928 西安银行的市净率为0.8倍。", True, _company, "说明资料中的市净率及其适用主体。"),
     "company_as_sector": ("银行板块整体的市净率为0.8倍。", False, _company, "说明资料中的市净率及其适用主体。"),
     "sector_source_same_words": ("银行板块整体的市净率为0.8倍。", True, _sector, "说明资料中的市净率及其适用主体。"),
@@ -230,6 +233,11 @@ def main():
                               (report.verification["status"] == "complete") if expected else
                               (prose not in report.text
                                and report.verification["report"] == "partial")))
+            if name in {"missing_percentage_unit", "currency_missing"} and factual_client:
+                # The body-only boundary must catch this, even if evidence
+                # entailment would silently supply the omitted reader unit.
+                entry["passed"] = entry["passed"] and bool(report.artifact["body_quantity_issues"].get("answer"))
+                entry["passed"] = entry["passed"] and report.artifact["factual_model_calls"] == 0
             if name == "current_execution_receipt" and factual_client:
                 entry["passed"] = entry["passed"] and "answer" in report.artifact["execution_projections"]
                 entry["passed"] = entry["passed"] and "买入100股" in report.text and "本轮已买入002415共100股" not in report.text

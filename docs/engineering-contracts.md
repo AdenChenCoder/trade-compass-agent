@@ -52,6 +52,11 @@ in the linked regression tests, not in expanding prose exception lists.
   Before evidence review, the same local model independently partitions and types
   the body without task instructions, receipts or other source evidence. Exact
   text reconstruction is required; omission or rewriting fails this contract.
+  This body-only review also identifies quantities whose units or numerical scale
+  are not established by the reader context. Evidence review cannot supply a
+  missing convention or override that finding. Explicit shared units and
+  dimensionless valuation multiples remain valid; this is a semantic assessment,
+  not a punctuation or keyword rule. A bounded revision may clarify the body.
   Current execution assertions are removed from AI analysis before coverage and
   factual review. The runtime renders actual mutation receipts separately. Without
   current receipts, such assertions remain unconfirmed and the report incomplete;
