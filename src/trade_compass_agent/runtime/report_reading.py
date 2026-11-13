@@ -144,6 +144,7 @@ def _narrative(document, rendered, findings, catalog, *, execution, include_sour
     approved = any(isinstance(item, Paragraph) and rendered.get(item.id, "").strip() for item in document.items)
     unresolved = {finding.item_id for finding in findings if finding.item_id}
     unknown_execution = {finding.item_id for finding in findings if finding.code == "execution_claim_unconfirmed"}
+    other_unresolved = {finding.item_id for finding in findings if finding.code != "execution_claim_unconfirmed"}
     incomplete_sections = set()
 
     def incomplete_notice(item):
@@ -153,7 +154,7 @@ def _narrative(document, rendered, findings, catalog, *, execution, include_sour
             if "execution_status" not in incomplete_sections:
                 incomplete_sections.add("execution_status")
                 blocks.append("本轮操作结果尚未确认。")
-        elif item.section not in incomplete_sections:
+        if (item.id not in unknown_execution or item.id in other_unresolved) and item.section not in incomplete_sections:
             incomplete_sections.add(item.section)
             blocks.append(f"{SECTION_LABELS[item.section]}部分尚未完成，相关结论暂无法确认。")
 

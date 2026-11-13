@@ -475,7 +475,9 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             unconfirmed_execution[identifier] = {"id": identifier, "supported": False, "reason": reason}
                             if not prose[identifier].strip():
                                 forced_reviews[identifier] = unconfirmed_execution[identifier]
-                            preview_findings.append(Finding("analysis", "execution_claim_unconfirmed", reason, identifier))
+                            finding = Finding("analysis", "execution_claim_unconfirmed", reason, identifier)
+                            findings.append(finding)
+                            preview_findings.append(finding)
                         elif not prose[identifier].strip():
                             forced_reviews[identifier] = {"id": identifier, "supported": True,
                                                           "reason": "执行结果由程序依据本轮回执单独展示。"}
@@ -541,6 +543,9 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     for row in rows:
                         if row["id"] in unconfirmed_execution:
                             execution_projections[row["id"]]["analysis_supported"] = row["supported"]
+                            if not row["supported"] and row["id"] not in forced_reviews:
+                                findings.append(Finding("analysis", "insufficient_support", row["reason"], row["id"]))
+                                unconfirmed_execution[row["id"]]["reason"] += " " + row["reason"]
                     rows = [unconfirmed_execution.get(row["id"], row) for row in rows]
                     review = {**review, "reviews": rows}
                 try:
@@ -558,9 +563,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     row = by_id[item.id]
                     if row["supported"] or execution_projections.get(item.id, {}).get("analysis_supported"):
                         rendered[item.id] = prose[item.id]
-                    if not row["supported"]:
-                        code = "execution_claim_unconfirmed" if item.id in unconfirmed_execution else "insufficient_support"
-                        findings.append(Finding("analysis", code, row["reason"], item.id, tuple(item.refs)))
+                    if not row["supported"] and item.id not in unconfirmed_execution:
+                        findings.append(Finding("analysis", "insufficient_support", row["reason"], item.id, tuple(item.refs)))
                 review_valid = True
             except TurnInterruptedError:
                 raise
@@ -618,8 +622,17 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
             revision={"previous_document": transport.encode_document(document.model_dump()),
                       "reader_body": reader_body, "review": review,
                       "required_gaps": [item.model_dump() for item in required_gaps]})
-        # An unavailable second attempt cannot erase the first verified evidence.
-        selected = revised if revised.artifact["review_valid"] else publication
+        # A failed correction cannot replace readable, verified analysis with
+        # nothing, even if its JSON review itself was structurally valid.
+        def has_verified_prose(attempt):
+            accepted = {row["id"] for row in (attempt.artifact.get("review") or {}).get("reviews", []) if row["supported"]}
+            accepted.update(key for key, value in attempt.artifact["execution_projections"].items()
+                            if value.get("analysis_supported"))
+            return any(row["id"] in accepted and row["text"].strip()
+                       for row in (attempt.artifact.get("review_input") or {}).get("inferences", []))
+        lost_analysis = (revised.verification["status"] != "complete"
+                         and has_verified_prose(publication) and not has_verified_prose(revised))
+        selected = revised if revised.artifact["review_valid"] and not lost_analysis else publication
         keys = ("document", "verification", "review", "review_input", "revision_input", "attempts", "published_text",
                 "body_review_input", "body_response", "body_meaning", "execution_projections",
                 "coverage_review_input", "factual_review_input", "factual_response", "factual_review")

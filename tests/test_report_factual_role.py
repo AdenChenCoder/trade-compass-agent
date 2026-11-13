@@ -87,7 +87,8 @@ def test_only_supported_final_body_reaches_reader_and_reopened_artifact(tmp_path
 
 
 @pytest.mark.parametrize("receipt_status", [None, "executed", "rejected", "unknown"])
-def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path, receipt_status):
+@pytest.mark.parametrize("analysis_supported", [True, False])
+def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path, receipt_status, analysis_supported):
     prefix = "002415在2025年1月1日和1月2日的收盘价分别为22元/股和23元/股。"
     # The author is wrong even beside a valid receipt: it must not survive in
     # analysis merely because another model would approve the whole paragraph.
@@ -120,7 +121,7 @@ def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path,
                  "extent": "whole_run" if receipt_status is None else "operation"}]}]})
         factual_inputs.append(payload)
         assert payload["statements"][0]["text"] == prefix
-        return json.dumps(assess(payload))  # This permissive double cannot overrule missing execution evidence.
+        return json.dumps(assess(payload, "entailed" if analysis_supported else "contradicted"))
     publication = publish_report(task="说明价格与执行结果", draft="", tool_results=rows, current_tool_results=rows,
         run_scope="execution-ownership", run_id="owned", call=writer, fact_review_call=checker, max_calls=2)
     assert claim not in publication.text and claim not in publication.artifact["reader_body"]
@@ -128,17 +129,21 @@ def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path,
     assert publication.artifact["body_review_model_calls"] == 1
     assert publication.artifact["factual_model_calls"] == 1
     assert len(factual_inputs) == 1
-    assert prefix in publication.text
+    assert (prefix in publication.text) is analysis_supported
     if receipt_status is None:
         assert publication.verification["status"] == "incomplete"
         assert publication.artifact["review"]["reviews"][0]["supported"] is False
         assert "本轮操作结果尚未确认。" in publication.text
-        assert publication.artifact["execution_projections"]["answer"]["analysis_supported"] is True
+        assert publication.artifact["execution_projections"]["answer"]["analysis_supported"] is analysis_supported
+        if not analysis_supported:
+            assert "比较最终陈述与原始资料。" in publication.artifact["review"]["reviews"][0]["reason"]
+            assert {f["code"] for f in publication.verification["findings"]} >= {"execution_claim_unconfirmed", "insufficient_support"}
+            assert "市场部分尚未完成" in publication.text
     elif receipt_status == "executed":
-        assert publication.verification["status"] == "complete"
+        assert publication.verification["status"] == ("complete" if analysis_supported else "incomplete")
         assert "买入100股" in publication.text and "买入300股" not in publication.text
     elif receipt_status == "rejected":
-        assert publication.verification["status"] == "complete"
+        assert publication.verification["status"] == ("complete" if analysis_supported else "incomplete")
         assert "本次未成交：可用资金不足" in publication.text
     else:
         assert publication.verification["execution"] == "unknown"
@@ -279,10 +284,13 @@ def test_one_revision_shares_eight_call_limit_and_reviews_actual_final_text_agai
     assert factual[-1]["statements"][0]["text"] in result.artifact["reader_body"]
 
 
-def test_failed_revision_cannot_erase_first_fact_checked_body():
+@pytest.mark.parametrize("failure", ["unavailable", "unsupported"])
+def test_failed_revision_cannot_erase_first_fact_checked_body(failure):
     def reply(payload, n):
         if n == 2:
-            raise TimeoutError("review unavailable")
+            if failure == "unavailable":
+                raise TimeoutError("review unavailable")
+            return assess(payload, "contradicted")
         return assess(payload)
     result, _, factual = publish(reply, max_calls=4, coverage_missing=True)
     assert len(factual) == 2 and result.artifact["selected_attempt"] == 0
