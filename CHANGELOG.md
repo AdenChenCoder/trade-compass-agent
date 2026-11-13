@@ -31,6 +31,16 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [Unreleased]
 
+- Present scheduled task reports as natural paragraphs with expandable sources on
+  mobile. Keep original evidence, calculation results and incomplete-task status
+  available; review factual meaning separately from wording style.
+- Preserve expanded sources and citation focus through mobile background refresh,
+  while retaining full-message copy and new-content updates.
+- Ground automatic report learning in its original run evidence. Build memory
+  extracts from complete selected records without rewriting them, and make
+  truncated memory search results explicit.
+- Require Soup Sieve 4 or later to include its selector-performance security fix.
+
 ## [0.5.7] - 2026-11-12
 
 ### Fixed
