@@ -149,12 +149,28 @@ def _narrative(document, rendered, findings, catalog, *, execution, include_sour
         if item.section not in incomplete_sections:
             incomplete_sections.add(item.section)
             blocks.append(f"{SECTION_LABELS[item.section]}部分尚未完成，相关结论暂无法确认。")
+
+    def partial_evidence(item):
+        # Only program-rendered, validated definitions reach this fallback.
+        # Move their source metadata to the same disclosure used by prose,
+        # without parsing or rewriting any author-written sentence.
+        refs = [item.ref] if isinstance(item, Observation) else item.refs
+        facts = [catalog.resolve(ref) for ref in dict.fromkeys(refs)]
+        text = rendered[item.id]
+        for fact in facts:
+            identity = " · ".join(x for x in (fact.subject, fact.account) if x)
+            compact = (f"{_plain(identity) + '：' if identity else ''}{_plain(fact.label)} "
+                       f"{_plain(fact.value)}{_plain(fact.unit)}（{_plain(_date(fact))}）")
+            text = text.replace(fact.display(), compact)
+        sources = tuple(fact.display() for fact in facts)
+        notes.setdefault(sources, len(notes) + 1)
+        return text + f"[^source-{notes[sources]}]"
     for item in document.items:
         if isinstance(item, (Observation, Calculation)):
             if item.id in unresolved:
                 incomplete_notice(item)
             if not approved and item.id in rendered:
-                blocks.append(rendered[item.id])
+                blocks.append(partial_evidence(item))
             continue
         if item.id not in rendered:
             if item.id in unresolved:

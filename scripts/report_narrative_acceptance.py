@@ -41,6 +41,13 @@ _company = [("get_fundamentals", json.dumps({"symbol": "600928", "name": "西安
              "as_of": "2025-01-02", "pb": 0.8}))]
 _sector = [("fetch_url", json.dumps({"url": "https://example.invalid/frozen-sector",
             "title": "冻结的行业统计样本", "content": "银行板块整体的市净率为0.8倍。该指标适用于整个板块，不是单一银行。"}))]
+_holding = [*_company, ("analyze_portfolio", json.dumps({"positions": [
+    {"symbol": "600928", "name": "西安银行", "account": "test", "quantity": 1000,
+     "avg_cost": 10, "last_price": 11, "unrealized_pnl": 1000}]}))]
+_prices = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars": [
+    {"timestamp": "2025-01-01", "close": 22}, {"timestamp": "2025-01-02", "close": 23}]}))]
+_position_prose = "600928 西安银行持有1000股，成本10元/股，估值11元/股，浮动盈亏1000元。"
+_price_prose = "002415在2025年1月1日和1月2日的收盘价分别为22元/股和23元/股。"
 SCOPE_CASES = {
     "individual_scope": ("600928 西安银行的市净率为0.8倍。", True, _company, "说明资料中的市净率及其适用主体。"),
     "company_as_sector": ("银行板块整体的市净率为0.8倍。", False, _company, "说明资料中的市净率及其适用主体。"),
@@ -49,6 +56,16 @@ SCOPE_CASES = {
                                 "说明现有资料能否确认本轮买卖执行情况。"),
     "absence_as_unknown": ("提供的资料中没有本轮交易回执，无法据此确认本轮是否执行了买卖。", True, _company,
                           "说明现有资料能否确认本轮买卖执行情况。"),
+    # Correct adjacent quantities must not hide the only incorrect assertion.
+    # Do not add a second unsupported claim that could mask a missed defect.
+    "compound_company_as_sector": (_position_prose + "银行板块的市净率为0.8倍。", False, _holding,
+                                   "说明持仓情况和资料中的市净率及其适用主体。"),
+    "compound_individual_scope": (_position_prose + "600928 西安银行的市净率为0.8倍。", True, _holding,
+                                 "说明持仓情况和资料中的市净率及其适用主体。"),
+    "compound_absence_as_nonexecution": (_price_prose + "本轮未执行新的买卖操作。", False, _prices,
+                                        "说明两日收盘价和现有资料能否确认本轮买卖执行情况。"),
+    "compound_absence_as_unknown": (_price_prose + "没有本轮交易回执，无法确认本轮是否执行了买卖。", True, _prices,
+                                   "说明两日收盘价和现有资料能否确认本轮买卖执行情况。"),
 }
 CASES.update({name: (prose, expected) for name, (prose, expected, _, _) in SCOPE_CASES.items()})
 

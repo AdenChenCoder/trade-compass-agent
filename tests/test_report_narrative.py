@@ -411,3 +411,23 @@ def test_reader_incomplete_notice_does_not_repeat_internal_review_or_false_claim
     assert report.verification["data"] == ("insufficient" if missing else "available")
     assert any(row["message"] == reason for row in report.verification["findings"])
     assert report.artifact["review"]["reviews"][0]["reason"] == reason
+
+
+@pytest.mark.parametrize("observation", [False, True])
+def test_all_rejected_prose_retains_cited_readable_evidence(observation):
+    def mutate(doc):
+        if observation:
+            doc["items"].append({"id": "price", "type": "fact", "section": "market",
+                                 "ref": doc["items"][0]["refs"][0]})
+    report, calls = publish(verdict=False, mutate=mutate)
+    body, sources = report.text.split("[^source-1]:", 1)
+    assert "get_bars" not in body and "周期：1d" not in body
+    assert r"get\_bars" in sources and "周期：1d" in sources
+    assert "10.00%" in body and "10元/股（2026-11-10）" in body
+    assert "11元/股（2026-11-11）" in body
+    assert "[^source-1]" in body
+    assert "研判部分尚未完成" in body
+    assert report.verification["report"] == "partial"
+    assert report.verification["data"] == "available"
+    assert report.artifact["reader_body"] == body.strip()
+    assert calls[-1]["receipts"] == report.artifact["receipts"]
