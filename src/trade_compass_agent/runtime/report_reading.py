@@ -143,12 +143,17 @@ def _narrative(document, rendered, findings, catalog, *, execution, include_sour
     blocks, notes = [], {}
     approved = any(isinstance(item, Paragraph) and rendered.get(item.id, "").strip() for item in document.items)
     unresolved = {finding.item_id for finding in findings if finding.item_id}
+    unknown_execution = {finding.item_id for finding in findings if finding.code == "execution_claim_unconfirmed"}
     incomplete_sections = set()
 
     def incomplete_notice(item):
         # Review diagnostics may quote rejected claims or internal field names.
         # Keep them in the artifact; the reader needs the unfinished business area.
-        if item.section not in incomplete_sections:
+        if item.id in unknown_execution:
+            if "execution_status" not in incomplete_sections:
+                incomplete_sections.add("execution_status")
+                blocks.append("本轮操作结果尚未确认。")
+        elif item.section not in incomplete_sections:
             incomplete_sections.add(item.section)
             blocks.append(f"{SECTION_LABELS[item.section]}部分尚未完成，相关结论暂无法确认。")
 
@@ -193,6 +198,8 @@ def _narrative(document, rendered, findings, catalog, *, execution, include_sour
                 notes.setdefault(key, len(notes) + 1)
                 text += f"[^source-{notes[key]}]"
         blocks.append(text)
+        if isinstance(item, (Paragraph, Inference)) and item.id in unresolved:
+            incomplete_notice(item)
     if execution:
         blocks.append(execution.render(include_table=False).strip())
         blocks.append(execution.trade_details.strip())

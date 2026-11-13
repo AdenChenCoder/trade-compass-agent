@@ -235,8 +235,9 @@ def main():
                 entry["passed"] = entry["passed"] and "买入100股" in report.text and "本轮已买入002415共100股" not in report.text
             if name in {"historical_execution", "absence_as_nonexecution", "compound_absence_as_nonexecution"} and factual_client:
                 projection = report.artifact["execution_projections"].get("answer", {})
-                entry["passed"] = (entry["passed"] and projection.get("has_execution_records") is False
-                                   and report.artifact["factual_model_calls"] == 0)
+                entry["passed"] = entry["passed"] and projection.get("has_execution_records") is False
+                if name == "compound_absence_as_nonexecution":
+                    entry["passed"] = entry["passed"] and projection.get("analysis_supported") is True and _price_prose in report.text
         except Exception as exc:
             entry["error"] = str(exc)
         entry["seconds"] = round(time.monotonic() - started, 2)

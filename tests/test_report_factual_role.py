@@ -126,11 +126,14 @@ def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path,
     assert claim not in publication.text and claim not in publication.artifact["reader_body"]
     assert len(coverage_inputs) == 1
     assert publication.artifact["body_review_model_calls"] == 1
-    assert publication.artifact["factual_model_calls"] == int(receipt_status is not None)
-    assert len(factual_inputs) == int(receipt_status is not None)
+    assert publication.artifact["factual_model_calls"] == 1
+    assert len(factual_inputs) == 1
+    assert prefix in publication.text
     if receipt_status is None:
         assert publication.verification["status"] == "incomplete"
         assert publication.artifact["review"]["reviews"][0]["supported"] is False
+        assert "本轮操作结果尚未确认。" in publication.text
+        assert publication.artifact["execution_projections"]["answer"]["analysis_supported"] is True
     elif receipt_status == "executed":
         assert publication.verification["status"] == "complete"
         assert "买入100股" in publication.text and "买入300股" not in publication.text

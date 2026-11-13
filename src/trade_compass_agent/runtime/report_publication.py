@@ -450,7 +450,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 review_input["verified_items"] = [{"id": key, "rendered": text} for key, text in verified_items.items()]
             try:
                 check_active()
-                forced_reviews = {}
+                forced_reviews, unconfirmed_execution = {}, {}
                 if body_call and inferences:
                     # First interpret the author's words without task, draft,
                     # source data or receipts that could bias that interpretation.
@@ -472,7 +472,9 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                                                             "has_execution_records": bool(execution.records)}
                         if not execution.records:
                             reason = "正文声称本轮操作结果，但尚无可核实的本轮执行回执。"
-                            forced_reviews[identifier] = {"id": identifier, "supported": False, "reason": reason}
+                            unconfirmed_execution[identifier] = {"id": identifier, "supported": False, "reason": reason}
+                            if not prose[identifier].strip():
+                                forced_reviews[identifier] = unconfirmed_execution[identifier]
                             preview_findings.append(Finding("analysis", "execution_claim_unconfirmed", reason, identifier))
                         elif not prose[identifier].strip():
                             forced_reviews[identifier] = {"id": identifier, "supported": True,
@@ -534,6 +536,12 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                              "reason": row["comparison"]} for row in assessments]
                 if fact_call:
                     rows = [*rows, *forced_reviews.values()]
+                    # A verified remaining analysis may survive, but its
+                    # approval cannot clear the unconfirmed execution claim.
+                    for row in rows:
+                        if row["id"] in unconfirmed_execution:
+                            execution_projections[row["id"]]["analysis_supported"] = row["supported"]
+                    rows = [unconfirmed_execution.get(row["id"], row) for row in rows]
                     review = {**review, "reviews": rows}
                 try:
                     dismissed_gaps = _dismissed_gaps(review, gaps, set(verified_items)) - protected_gaps.keys()
@@ -548,10 +556,11 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 by_id = {row["id"]: row for row in rows}
                 for item in inferences:
                     row = by_id[item.id]
-                    if row["supported"]:
+                    if row["supported"] or execution_projections.get(item.id, {}).get("analysis_supported"):
                         rendered[item.id] = prose[item.id]
-                    else:
-                        findings.append(Finding("analysis", "insufficient_support", row["reason"], item.id, tuple(item.refs)))
+                    if not row["supported"]:
+                        code = "execution_claim_unconfirmed" if item.id in unconfirmed_execution else "insufficient_support"
+                        findings.append(Finding("analysis", code, row["reason"], item.id, tuple(item.refs)))
                 review_valid = True
             except TurnInterruptedError:
                 raise
