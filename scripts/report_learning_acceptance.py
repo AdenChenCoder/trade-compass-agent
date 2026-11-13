@@ -101,6 +101,35 @@ def worker(args):
             require(len(calls) <= 4, "curation exceeded call budget")
             result["memory"] = memory
             result["artifact"] = artifact
+            # Observe real local provider calls; this wrapper does not supply
+            # model responses. Invalid JSON/fallback cannot pass normal scenes.
+            from unittest.mock import patch
+            from trade_compass_agent.runtime import learning
+            from trade_compass_agent.memory.tree.storage import MemoryTreeStore
+            original_provider = learning.create_llm_provider
+            selection_calls = []
+            def recorded_provider(**kwargs):
+                provider = original_provider(**kwargs)
+                complete = provider.complete
+                def recorded(request):
+                    answer = complete(request)
+                    selection_calls.append({"input": request.prompt, "output": answer.text})
+                    return answer
+                provider.complete = recorded
+                return provider
+            records = MemoryTreeStore(config.memory_dir).recent_chunks(limit=20, max_chars=6000,
+                exclude_scopes=frozenset({"compaction"}))
+            with patch.object(learning, "create_llm_provider", recorded_provider), llm_request_deadline(time.monotonic() + 90):
+                compacted = learning.compact_memory_summary(config)
+            require(compacted is not None and len(selection_calls) == 1, "real compaction did not select records")
+            selection = json.loads(selection_calls[0]["output"])
+            require(set(selection) == {"selected"} and 0 < len(selection["selected"]) <= 3,
+                    "compaction fell back from invalid model output")
+            content = compacted.read_text()
+            require(all(records[int(key[1:])].content in content for key in selection["selected"]),
+                    "compaction changed or truncated a selected record")
+            require(all(Path(p).read_bytes() == data for p, data in before.items()), "compaction changed existing history")
+            result["compaction"] = {"calls": selection_calls, "path": str(compacted), "content": content}
         result["passed"] = True
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"

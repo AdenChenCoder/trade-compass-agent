@@ -20,6 +20,9 @@ CASES = {
     "visible_result": ("收盘价上升。", True),
     "missing_percentage_unit": ("价格变动比例为4.55。", False),
     "correct_percentage": ("价格变动比例为4.55%。", True),
+    "unit_in_body_context": ("这里的变动比例以百分数计，为4.55。", True),
+    "explicit_ratio_scale": ("价格变动比例约为0.0455，即4.55%。", True),
+    "percentage_as_price": ("后一日收盘价为4.55%。", False),
     "natural": ("在这两个观察日，收盘价走高；不能据此预测后续走势。", True),
     "reordered": ("后续走势不能据此判断；两个观察日之间收盘价上升。", True),
     "correct_unit": ("前一日收盘价为22元/股，后一日为23元/股。", True),
@@ -95,7 +98,8 @@ def main():
                     raise RuntimeError("historical execution fixture lost its source")
                 definitions = []
                 refs = historical_refs if name == "historical_execution" else []
-                if name in {"hidden_result", "compact_percentage", "visible_result", "missing_percentage_unit", "correct_percentage"}:
+                if name in {"hidden_result", "compact_percentage", "visible_result", "missing_percentage_unit", "correct_percentage",
+                            "unit_in_body_context", "explicit_ratio_scale", "percentage_as_price"}:
                     definitions = [{"type": "calculation", "id": "change", "section": "overview",
                                     "operation": "change_pct", "refs": [facts[0]["id"], facts[1]["id"]]}]
                     refs = ["change"]
@@ -129,7 +133,8 @@ def main():
         try:
             with llm_request_deadline(started + 120):
                 task = "说明这两个观察日收盘价变化，仅在存在本轮执行记录时报告成交。"
-                if name in {"hidden_result", "compact_percentage", "visible_result", "missing_percentage_unit", "correct_percentage"}:
+                if name in {"hidden_result", "compact_percentage", "visible_result", "missing_percentage_unit", "correct_percentage",
+                            "unit_in_body_context", "explicit_ratio_scale", "percentage_as_price"}:
                     task += "给出收盘价变动比例。"
                 report = publish_report(task=task,
                     draft="", tool_results=case_receipts, current_tool_results=case_receipts,

@@ -24,6 +24,8 @@ SUITES = (
     "test_report_narrative.py",
     "test_report_learning.py",
     "test_learning_archive.py",
+    "test_memory_tree.py",
+    "test_memory_recall.py",
     "test_report_scheduler_contract.py",
     "test_report_batch_contract.py",
     "test_report_incident_annotations.py",

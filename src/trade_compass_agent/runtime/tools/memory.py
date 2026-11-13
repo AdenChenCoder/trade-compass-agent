@@ -12,7 +12,9 @@ def tool_search_memory(memory_dir, query: str, *, limit: int = 8) -> str:
     payload = [
         {
             "scope": hit.scope,
-            "content": hit.content[:800],
+            "content": hit.content[:8000],
+            "truncated": len(hit.content) > 8000,
+            "content_chars": len(hit.content),
             "path": hit.path,
             "rank": hit.rank,
         }
@@ -50,5 +52,5 @@ def bootstrap_memory_context(memory_dir, *, max_chars: int = 2000) -> str:
         return ""
     lines = ["## Recent Memory"]
     for chunk in chunks:
-        lines.append(f"- [{chunk.scope}] {chunk.content[:300]}")
+        lines.append(f"- [{chunk.scope}] {chunk.content}")
     return "\n".join(lines)

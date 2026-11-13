@@ -131,7 +131,15 @@ Regression entry points:
   is context, never a replacement for receipts. Only complete curated results
   enter the searchable archive; failed attempts remain report diagnostics linked
   to the source turn. Missing evidence must not fall back to prose-only learning.
-  This does not certify legacy interactive learning or later free-text compaction.
+  This does not certify legacy interactive learning.
+- Memory compaction selects complete source records rather than rewriting their
+  factual content. Keep source paths and qualifications, exclude earlier compactions
+  from new selections, and deduplicate identical extracts. Original records remain
+  accessible. Unavailable/invalid selection may retain a bounded extract of recent
+  records, never model-supplied replacement prose. It is historical recall, not
+  fresh market/execution evidence. Indexed and fallback lookup preserve complete
+  content within the consumer budget and explicitly mark oversized results;
+  bootstrap context must not silently cut the qualifications off selected records.
 - Explicit dates constrain recall without deleting history. Exact phrase matches
   must reach the matching record before loose search matches. Repeated recalled
   content must not crowd out independent evidence; verify returned content after
