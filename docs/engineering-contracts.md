@@ -48,8 +48,10 @@ in the linked regression tests, not in expanding prose exception lists.
   and the parent deadline, and never replay business tools to repair prose.
 - An explicitly configured `llm.local_report_review_model` separates factual
   entailment from task coverage. It uses only local LM Studio, original receipts,
-  typed calculations, current execution records and the final statements; task
-  instructions, drafts and coverage decisions are not its evidence. Each statement
+  typed calculations, current execution records and the final statements. The original
+  task is supplied separately as requirements context: it can establish a requested
+  decision rule, but cannot prove market/account facts, causal premises or execution.
+  Drafts and coverage decisions are not evidence. Each statement
   must be entailed; contradictory or unknown statements are withheld. Missing,
   malformed or unavailable assessments cannot fall back to writer approval.
   Assess actual factual commitments while preserving negation, conditions and
@@ -80,6 +82,10 @@ in the linked regression tests, not in expanding prose exception lists.
   Reporting an operation and performing it have different semantics. Classify the
   business outcome the author commits to, including under confirmation; an operation
   mentioned within a presentation rule does not itself assert a business outcome.
+  An authored prospective choice or recommendation remains a plan even when made
+  in this run. Verify its factual premises and claimed compliance with supplied
+  requirements; do not require execution receipts to prove the choice itself.
+  Independently classify and check any accompanying execution assertion.
   Original and revised bodies share at most two body-meaning and two entailment
   calls, making at most eight model calls in total. The parent deadline, cancellation and no-tools boundary
   still apply. Record both review inputs/results and actual total calls. Choosing

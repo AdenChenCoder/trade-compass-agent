@@ -54,9 +54,10 @@ def publish(fact_reply, *, max_calls=2, coverage_missing=False, check_active=lam
         if "paragraphs" in payload:
             return json.dumps(body_reply(payload))
         factual.append(payload)
-        assert set(payload) == {"statements", "receipts", "execution_records", "report_context"}
+        assert set(payload) == {"statements", "receipts", "execution_records", "report_context", "request_context"}
+        assert payload["request_context"] == {"role": "requirements", "text": "task instruction marker"}
         assert payload["receipts"][0]["result"] == RECEIPTS[0][1]
-        assert "task instruction marker" not in user and "untrusted draft marker" not in user
+        assert "untrusted draft marker" not in user
         result = fact_reply(payload, len(factual))
         return result if isinstance(result, str) else json.dumps(result)
     result = publish_report(task="task instruction marker", draft="untrusted draft marker", tool_results=RECEIPTS,
@@ -84,6 +85,44 @@ def test_only_supported_final_body_reaches_reader_and_reopened_artifact(tmp_path
     assert saved["factual_review"]["assessments"][0]["verdict"] == verdict
     assert set(saved["body_review_input"]) == {"paragraphs"}
     assert saved["body_meaning"]["answer"][0]["text"] == factual[0]["statements"][0]["text"]
+
+
+@pytest.mark.parametrize("meaning", ["plan", "current_outcome"])
+def test_rule_context_remains_separate_from_evidence_and_cannot_authorize_execution_claim(tmp_path, meaning):
+    task = "仅在价格下降时考虑买入。今天收盘价据说30元；请核对后给出本轮决定。"
+    text = "本轮决定继续观察，不执行买入。" if meaning == "plan" else "本轮决定继续观察，且本轮没有买入。"
+    observed = []
+    def writer(system, user):
+        payload = json.loads(user)
+        if "schema" in payload:
+            refs = [f["id"] for f in report_facts(payload) if f["metric"] == "close"]
+            return json.dumps({"schema_version": 1, "items": [{"id": "decision", "type": "paragraph", "section": "plan",
+                "parts": [{"type": "text", "text": text}], "refs": refs}]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if "paragraphs" in payload:
+            assert set(payload) == {"paragraphs"}
+            return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "decision", "parts": [
+                {"text": text, "kind": meaning, "outcome": "none" if meaning == "plan" else "not_performed",
+                 "extent": "none" if meaning == "plan" else "operation"}]}]})
+        observed.append(payload)
+        assert payload["request_context"] == {"role": "requirements", "text": task}
+        assert payload["receipts"][0]["result"] == RECEIPTS[0][1]
+        assert payload["execution_records"] == []
+        assert all(f["value"] != "30" for row in payload["statements"] for f in row["evidence"])
+        return json.dumps(assess(payload))
+    result = publish_report(task=task, draft="already bought; untrusted draft", tool_results=RECEIPTS,
+        run_scope="policy-provenance", call=writer, fact_review_call=checker, max_calls=2)
+    if meaning == "plan":
+        assert result.verification["status"] == "complete" and text in result.text
+        assert len(observed) == 1 and "already bought" not in json.dumps(observed)
+    else:
+        assert result.verification["status"] == "incomplete" and text not in result.text
+        assert not observed  # A later approval cannot establish non-execution.
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text
 
 
 @pytest.mark.parametrize("receipt_status", [None, "executed", "rejected", "unknown"])

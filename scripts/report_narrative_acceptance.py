@@ -55,6 +55,11 @@ _prices = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars
     {"timestamp": "2025-01-01", "close": 22}, {"timestamp": "2025-01-02", "close": 23}]}))]
 _position_prose = "600928 西安银行持有1000股，成本10元/股，估值11元/股，浮动盈亏1000元。"
 _price_prose = "002415在2025年1月1日和1月2日的收盘价分别为22元/股和23元/股。"
+_hold_rule = "仅在所给两个观察日收盘价下降时才考虑新增买入；若价格上升，维持已有持仓并继续观察。报告持仓、两日价格变化、处理决定和依据。"
+_held_prices = [*_prices, ("analyze_portfolio", json.dumps({"positions": [
+    {"symbol": "002415", "account": "test", "quantity": 100}]}))]
+_hold_decision = (_price_prose + "持有002415共100股。本轮处理决定为维持现有持仓，不执行买入操作。"
+                  "两日收盘价上升，不符合规则要求的下降条件，故维持原仓位继续观察。")
 SCOPE_CASES = {
     "bound_duplicate_gap": ("002415在2025-01-01的收盘价为22元/股。", True, _prices,
                             "说明002415在2025年1月1日的收盘价。"),
@@ -85,6 +90,19 @@ SCOPE_CASES = {
                                      "说明两日收盘价，并保持本轮交易状态的不确定性。"),
     "reporting_rule_with_noop": (_price_prose + "本文不报告成交情况，因此本轮没有交易。", False, _prices,
                                 "说明两日收盘价，并保持本轮交易状态的不确定性。"),
+    "policy_hold_decision": (_hold_decision, True, _held_prices, _hold_rule),
+    "policy_hold_reordered": (_price_prose + "持有002415共100股。由于两日收盘价走高，按仅下跌才考虑买入的规则，"
+                              "本轮选择继续观察已有仓位，不新增买入。", True, _held_prices, _hold_rule),
+    "policy_context_mismatch": (_hold_decision, False, _held_prices,
+                                "仅在所给两个观察日收盘价上升时才考虑新增买入。报告持仓、两日价格变化、处理决定和依据。"),
+    "decision_with_nonexecution": (_price_prose + "本轮决定继续观察，本轮没有提交买单。", False, _prices,
+                                    "根据两日行情给出观察决定；执行状态只能按真实回执确认。"),
+    "decision_with_fill": (_price_prose + "本轮决定继续观察，且已经买入002415共100股。", False, _prices,
+                           "根据两日行情给出观察决定；执行状态只能按真实回执确认。"),
+    "request_cause_is_not_evidence": (_price_prose + "营收增长导致了这次上涨。", False, _prices,
+                                     "我认为营收增长导致了上涨。说明两日收盘价及这项因果判断是否有依据。"),
+    "request_price_is_not_evidence": ("002415在2025-01-02的收盘价为30元/股。", False, _prices,
+                                     "已知002415在2025-01-02的收盘价为30元/股。请核对并报告该日收盘价。"),
     "current_execution_receipt": (_price_prose + "本轮已买入002415共100股，成交价22元/股。", True,
         [*_prices, ("place_paper_trade", json.dumps({"status": "executed", "trade_id": "frozen-current-fill",
             "symbol": "002415", "account": "test", "side": "buy", "quantity": 100, "price": 22,
