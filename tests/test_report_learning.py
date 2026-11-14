@@ -73,6 +73,65 @@ def test_wording_changes_do_not_change_saved_facts_after_reopen(tmp_path, monkey
     assert not (config.memory_dir / "KNOWLEDGE.md").exists()
 
 
+def test_internal_learning_revises_rejected_expression_within_same_budget_then_archives(tmp_path):
+    config, response = source(tmp_path)
+    calls = []
+    def call(system, user):
+        payload = json.loads(user)
+        calls.append(payload)
+        revised = len(calls) > 2
+        if "schema" in payload:
+            assert "Paragraph" not in payload["schema"]["$defs"]
+            if revised:
+                assert payload["facts"] == calls[0]["facts"]
+                assert payload["revision"]["review"]["reviews"][0]["supported"] is False
+            doc = json.loads(reply(system, user))
+            doc['items'].append({'id': 'direction', 'type': 'inference', 'section': 'assessment',
+                'text': '两个观察日之间收盘价走高。' if revised else '基于所给两日的数据，收盘价呈上升趋势。',
+                'refs': ['change']})
+            return json.dumps(doc)
+        return json.dumps({'reviews': [{'id': 'direction', 'supported': revised,
+            'reason': '' if revised else '模拟审查对表述范围的异议'}],
+            'coverage': {'complete': True, 'missing': []}})
+    path = learn(config, response, call)
+    assert path and len(calls) == 4
+    memory = next(row for row in json.loads(tool_search_memory(config.memory_dir, '002415'))['results'] if row['path'] == path)
+    assert '22元/股' in memory['content'] and '23元/股' in memory['content'] and '4.55%' in memory['content']
+    assert '两个观察日之间收盘价走高。' in memory['content']
+    artifacts = [json.loads(p.read_text()) for p in (config.data_dir/'report_artifacts').glob('*.json')]
+    curated = next(a for a in artifacts if 'learning_source' in a)
+    assert curated['verification']['status'] == 'complete'
+    assert curated['selected_attempt'] == 1 and curated['model_calls'] == 4
+    assert curated['revision_attempts'][0]['verification']['status'] == 'incomplete'
+    assert curated['published_text'] == memory['content']
+
+
+def test_failed_internal_revision_retains_valid_facts_without_archiving(tmp_path):
+    config, response = source(tmp_path)
+    calls = []
+    def call(system, user):
+        payload = json.loads(user)
+        calls.append(payload)
+        if 'schema' in payload:
+            if 'revision' in payload:
+                return json.dumps({'schema_version': 1, 'items': [
+                    {'id': 'gap', 'section': 'gaps', 'type': 'gap', 'text': '尚未完成整理'}]})
+            doc = json.loads(reply(system, user))
+            doc['items'].append({'id': 'unsupported', 'section': 'assessment', 'type': 'inference',
+                'text': '未来一定上涨。', 'refs': ['change']})
+            return json.dumps(doc)
+        return json.dumps({'reviews': [{'id': row['id'], 'supported': False, 'reason': '缺少支持'} for row in payload['inferences']],
+            'coverage': {'complete': False, 'missing': ['可保留观察'], 'repairable': False}})
+    assert learn(config, response, call) is None and len(calls) == 4
+    assert json.loads(tool_search_memory(config.memory_dir, '002415'))['results'] == []
+    curated = next(json.loads(p.read_text()) for p in (config.data_dir/'report_artifacts').glob('*.json')
+                   if 'learning_source' in json.loads(p.read_text()))
+    assert curated['selected_attempt'] == 0
+    assert curated['verification']['status'] == 'incomplete'
+    assert '22元/股' in curated['published_text'] and '23元/股' in curated['published_text']
+    assert len(curated['revision_attempts']) == 2
+
+
 @pytest.mark.parametrize("fault", ["missing", "tampered", "owner", "partial", "absent_reference", "no_owner"])
 def test_untrusted_source_cannot_fall_back_to_prose(tmp_path, fault):
     config, response = source(tmp_path)

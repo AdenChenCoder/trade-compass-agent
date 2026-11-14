@@ -42,6 +42,9 @@ in the linked regression tests, not in expanding prose exception lists.
   sentence composition.
 - Report composition and task-coverage review share a maximum of four model calls. Unused
   structural-repair capacity may fund one feedback revision and a fresh review.
+  This applies to both reader paragraphs and internal evidence/learning documents;
+  a revision retains the chosen document format and cannot discard useful verified
+  observations or calculations when its correction remains incomplete.
   Preserve required gaps through revision; unavailable review must retain the
   first verified evidence. Invalid optional gap-dismissal metadata cannot remove
   a gap or invalidate independently valid paragraph reviews. Preserve cancellation
@@ -55,7 +58,10 @@ in the linked regression tests, not in expanding prose exception lists.
   must be entailed; contradictory or unknown statements are withheld. Missing,
   malformed or unavailable assessments cannot fall back to writer approval.
   Assess actual factual commitments while preserving negation, conditions and
-  modality. An evidence-scoped limitation concerns what the provided observations
+  modality. Evaluate qualitative descriptions within their stated observation
+  scope; do not add an unstated claim of persistence, statistical significance
+  or a stronger technical diagnostic. Those properties still require evidence
+  when asserted. An evidence-scoped limitation concerns what the provided observations
   establish, not whether a future event is impossible. Non-empirical report discourse
   needs no market attribution; claims about available records still do. Disclaimers
   and opinions cannot exempt adjacent factual claims, causal premises or quantities.

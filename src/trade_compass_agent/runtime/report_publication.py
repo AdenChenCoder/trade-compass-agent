@@ -150,6 +150,11 @@ Check its factual premises against evidence and any claimed compliance with a su
 against that requirement. A stated intention cannot prove an accompanying execution claim.
 Decide whether the evidence supports the EXACT factual commitments of its text. First
 identify what is actually asserted, preserving negation, modality, conditions and embedding.
+Evaluate qualitative descriptions within their explicitly stated observation scope and
+strength. Do not expand a bounded description into an unstated claim of persistence,
+out-of-sample behavior, statistical significance or a stronger technical diagnostic.
+Require evidence for those stronger properties only when the statement actually asserts
+them. Ordinary wording differences cannot add empirical commitments the author did not make.
 Do not repair or reinterpret a statement to agree with evidence. A missing fact is unknown, not false.
 Do not use external knowledge to establish a specific event, quantity or outcome.
 Preserve entity/scope, time, quantity/scale, relationships and execution state. Units
@@ -663,25 +668,34 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     needs_revision = review_valid and (any(not row["supported"] for row in review["reviews"])
         or (not review["coverage"]["complete"]
             and (review["coverage"].get("repairable", False) or not required_gaps)))
-    if reader_prose and revision is None and remaining() >= 2 and needs_revision:
+    if revision is None and remaining() >= 2 and needs_revision:
         check_active()
         revised = _publish_report(task=task, draft=draft, tool_results=tool_results, run_scope=run_scope,
             call=call, run_id=run_id, current_tool_results=current_tool_results,
-            check_active=check_active, reader_prose=True, remaining=remaining, fact_call=fact_call, body_call=body_call,
+            check_active=check_active, reader_prose=reader_prose, remaining=remaining, fact_call=fact_call, body_call=body_call,
             report_context=report_context,
             revision={"previous_document": transport.encode_document(document.model_dump()),
                       "reader_body": reader_body, "review": review,
                       "required_gaps": [item.model_dump() for item in required_gaps]})
         # A failed correction cannot replace readable, verified analysis with
         # nothing, even if its JSON review itself was structurally valid.
-        def has_verified_prose(attempt):
+        def has_verified_content(attempt):
             accepted = {row["id"] for row in (attempt.artifact.get("review") or {}).get("reviews", []) if row["supported"]}
             accepted.update(key for key, value in attempt.artifact["execution_projections"].items()
                             if value.get("analysis_supported"))
-            return any(row["id"] in accepted and row["text"].strip()
-                       for row in (attempt.artifact.get("review_input") or {}).get("inferences", []))
+            if any(row["id"] in accepted and row["text"].strip()
+                   for row in (attempt.artifact.get("review_input") or {}).get("inferences", [])):
+                return True
+            # Internal evidence documents also contain useful runtime-verified
+            # observations/calculations. A failed revision must retain those.
+            facts = {row["id"] for row in attempt.artifact["facts"]}
+            blocked = {row["item_id"] for row in attempt.verification["findings"]}
+            return any(item["id"] not in blocked and (
+                item["type"] == "fact" and item["ref"] in facts
+                or item["type"] == "calculation" and item["id"] in attempt.artifact["calculations"])
+                for item in (attempt.artifact.get("document") or {}).get("items", []))
         lost_analysis = (revised.verification["status"] != "complete"
-                         and has_verified_prose(publication) and not has_verified_prose(revised))
+                         and has_verified_content(publication) and not has_verified_content(revised))
         selected = revised if revised.artifact["review_valid"] and not lost_analysis else publication
         keys = ("document", "verification", "review", "review_input", "revision_input", "attempts", "published_text",
                 "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues", "bound_quantity_checks",

@@ -60,6 +60,11 @@ _held_prices = [*_prices, ("analyze_portfolio", json.dumps({"positions": [
     {"symbol": "002415", "account": "test", "quantity": 100}]}))]
 _hold_decision = (_price_prose + "持有002415共100股。本轮处理决定为维持现有持仓，不执行买入操作。"
                   "两日收盘价上升，不符合规则要求的下降条件，故维持原仓位继续观察。")
+_learning_prices = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars": [
+    {"timestamp": "2026-11-10", "close": 22}, {"timestamp": "2026-11-11", "close": 23}]}))]
+_learning_reversed = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars": [
+    {"timestamp": "2026-11-10", "close": 23}, {"timestamp": "2026-11-11", "close": 22}]}))]
+_bounded_direction = "基于2026-11-10至2026-11-11的数据，002415收盘价呈现上升趋势。"
 SCOPE_CASES = {
     "bound_duplicate_gap": ("002415在2025-01-01的收盘价为22元/股。", True, _prices,
                             "说明002415在2025年1月1日的收盘价。"),
@@ -103,6 +108,14 @@ SCOPE_CASES = {
                                      "我认为营收增长导致了上涨。说明两日收盘价及这项因果判断是否有依据。"),
     "request_price_is_not_evidence": ("002415在2025-01-02的收盘价为30元/股。", False, _prices,
                                      "已知002415在2025-01-02的收盘价为30元/股。请核对并报告该日收盘价。"),
+    "bounded_observed_direction": (_bounded_direction, True, _learning_prices, "说明两个观察日收盘价的变化方向。"),
+    "bounded_direction_reordered": ("002415在2026-11-10至2026-11-11这两个观察日内的收盘价呈上升趋势。",
+                                     True, _learning_prices, "说明两个观察日收盘价的变化方向。"),
+    "bounded_direction_reversed": (_bounded_direction, False, _learning_reversed, "说明两个观察日收盘价的变化方向。"),
+    "persistent_direction": ("基于2026-11-10至2026-11-11的数据，可以确定002415的上升趋势未来仍将持续。",
+                              False, _learning_prices, "说明这两次收盘观察能支持什么结论。"),
+    "statistical_significance": ("2026-11-10至2026-11-11的两个收盘价证明002415的上涨具有统计显著性。",
+                                  False, _learning_prices, "说明这两次收盘观察能支持什么结论。"),
     "current_execution_receipt": (_price_prose + "本轮已买入002415共100股，成交价22元/股。", True,
         [*_prices, ("place_paper_trade", json.dumps({"status": "executed", "trade_id": "frozen-current-fill",
             "symbol": "002415", "account": "test", "side": "buy", "quantity": 100, "price": 22,
