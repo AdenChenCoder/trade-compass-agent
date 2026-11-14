@@ -1,6 +1,8 @@
-"""Real semantic review acceptance; frozen composition, no business tools.
+"""Real publication acceptance from frozen first prose, no business tools.
 
 This deliberately varies prose meaning independently of evidence identity.
+Invalid controls must be rejected without a rewrite. Legitimate controls may use
+the production pipeline's single real feedback revision and fresh reviews.
 It does not claim to prove all natural-language judgments are reliable.
 """
 from __future__ import annotations
@@ -125,7 +127,7 @@ def main():
     from trade_compass_agent.runtime.report_publication import publish_report
 
     verify = runpy.run_path(str(Path(__file__).with_name("release_acceptance.py")))["verify_installed_wheel"]
-    result = {"passed": False, "artifact": verify(wheel), "mode": "real semantic reviewer / frozen composition",
+    result = {"passed": False, "artifact": verify(wheel), "mode": "frozen first prose / real review and bounded normal revision",
               "model": args.model, "fact_model": args.fact_model, "cases": [], "plan": CASES, "retries": 0, "business_calls": 0,
               "selected_cases": list(selected), "unselected_cases": [name for name in CASES if name not in selected],
               "full_corpus": len(selected) == len(CASES),
@@ -151,7 +153,12 @@ def main():
             changed = json.loads(case_receipts[0][1])
             changed["bars"][0]["close"], changed["bars"][1]["close"] = 23, 22
             case_receipts[0] = ("get_bars", json.dumps(changed))
-        calls, factual_calls = [], []
+        normal_publication = expected and name != "hidden_result"
+        # The full task harness uses the same 240-second parent budget. Negative
+        # controls retain their 120-second first-review limit and cannot rewrite.
+        deadline_seconds = 240 if normal_publication else 120
+        primary_limit = 4 if normal_publication else 2
+        calls, factual_calls, writing_calls = [], [], []
         def factual_call(system, user):
             payload = json.loads(user)
             row = {"input": payload, "stage": "body_meaning" if "paragraphs" in payload else "entailment"}
@@ -161,6 +168,18 @@ def main():
         def call(system, user):
             payload = json.loads(user)
             if "schema" in payload:
+                writing_calls.append({"input": payload, "frozen": "revision" not in payload})
+                if "revision" in payload:
+                    if not normal_publication or len(writing_calls) != 2:
+                        raise RuntimeError("only one normal publication revision is allowed")
+                    answer = client.stream_complete([ChatMessage(role="system", content=system),
+                        ChatMessage(role="user", content=user)], tools=None)
+                    writing_calls[-1]["output"] = answer.content
+                    if answer.tool_calls:
+                        raise RuntimeError("revision requested a tool")
+                    return answer.content
+                if len(writing_calls) != 1:
+                    raise RuntimeError("frozen first composition cannot be resampled")
                 if name in SCOPE_CASES or name in TIME_CASES:
                     refs = [row[0] for group in payload["facts"] for row in group["rows"]]
                     parts = [{"type": "text", "text": prose}]
@@ -214,7 +233,7 @@ def main():
                 return json.dumps({"schema_version": 1, "items": [*definitions,
                     {"type": "paragraph", "id": "answer", "section": "overview", "parts": parts,
                      "refs": refs}]})
-            if calls:
+            if len(calls) >= (2 if normal_publication else 1):
                 raise RuntimeError("review call budget exceeded")
             calls.append({"input": payload})
             answer = client.stream_complete([ChatMessage(role="system", content=system),
@@ -223,10 +242,12 @@ def main():
             if answer.tool_calls:
                 raise RuntimeError("review requested a tool")
             return answer.content
-        entry = {"case": name, "expected_supported": expected, "passed": False}
+        entry = {"case": name, "expected_supported": expected, "passed": False,
+                 "deadline_seconds": deadline_seconds, "primary_call_limit": primary_limit,
+                 "revision_allowed": normal_publication}
         started = time.monotonic()
         try:
-            with llm_request_deadline(started + 120):
+            with llm_request_deadline(started + deadline_seconds):
                 task = ("说明所给日线资料中的收盘价及其日期。" if name in TIME_CASES else
                         SCOPE_CASES[name][3] if name in SCOPE_CASES else
                         "说明这两个观察日收盘价变化，仅在存在本轮执行记录时报告成交。")
@@ -235,19 +256,42 @@ def main():
                     task += "给出收盘价变动比例。"
                 report = publish_report(task=task,
                     draft="", tool_results=case_receipts, current_tool_results=case_receipts,
-                    run_scope="semantic-"+name, call=call, max_calls=2,
+                    run_scope="semantic-"+name, call=call, max_calls=primary_limit,
                     fact_review_call=factual_call if factual_client else None,
                     reference_date=TIME_CASES[name][3] if name in TIME_CASES else None)
             (root/(name+"-artifact.json")).write_text(json.dumps(report.artifact, ensure_ascii=False, indent=2))
             reviews = (report.artifact.get("review") or {}).get("reviews", [])
             actual = next((r["supported"] for r in reviews if r["id"] == "answer"), None)
+            attempts = report.artifact.get("revision_attempts", [report.artifact])
+            first = attempts[0]
+            first_reviews = (first.get("review") or {}).get("reviews", [])
+            first_supported = next((r["supported"] for r in first_reviews if r["id"] == "answer"), None)
+            paragraph_ids = {item["id"] for item in report.artifact["document"]["items"] if item["type"] == "paragraph"}
+            supported_ids = {row["id"] for row in reviews if row["supported"]}
+            supported_ids.update(key for key, projection in report.artifact["execution_projections"].items()
+                                 if projection.get("analysis_supported"))
+            final_supported = bool(paragraph_ids) and paragraph_ids <= supported_ids
+            first_prose = [row["text"] for row in (first.get("body_review_input") or {}).get("paragraphs", [])]
+            final_prose = [row["text"] for row in (report.artifact.get("body_review_input") or {}).get("paragraphs", [])]
+            revised = len(attempts) == 2
+            # Changing IDs or asking the reviewer again is not a correction.
+            changed_prose = first_prose != final_prose if factual_client else first["document"] != report.artifact["document"]
             coverage_complete = (report.artifact.get("review") or {}).get("coverage", {}).get("complete")
             local_calls = report.artifact["factual_model_calls"] + report.artifact["body_review_model_calls"]
             entry.update(actual_supported=actual, coverage_complete=coverage_complete, status=report.verification["status"],
+                         first_supported=first_supported, final_supported=final_supported,
+                         revision_attempted=revised, selected_attempt=report.artifact.get("selected_attempt", 0),
+                         changed_prose=changed_prose, model_calls=report.artifact["model_calls"],
                          body_model_calls=report.artifact["body_review_model_calls"],
                          factual_model_calls=report.artifact["factual_model_calls"],
-                         passed=actual is expected and len(calls) == 1 and len(factual_calls) == local_calls
-                         and report.artifact["body_review_model_calls"] == int(bool(factual_client))
+                         passed=report.artifact["review_valid"]
+                         and (final_supported if normal_publication else actual is expected)
+                         and 1 <= len(calls) <= (2 if normal_publication else 1)
+                         and len(factual_calls) == local_calls
+                         and report.artifact["model_calls"] == len(calls) + len(writing_calls) + local_calls
+                         and report.artifact["model_calls"] <= primary_limit + 4 * int(bool(factual_client))
+                         and report.artifact["body_review_model_calls"] == (1 + int(revised)) * int(bool(factual_client))
+                         and (not revised or changed_prose and report.artifact.get("selected_attempt") == 1)
                          and ((coverage_complete is False and report.verification["report"] == "partial")
                               if name == "hidden_result" else
                               (report.verification["status"] == "incomplete") if name == "bound_genuine_gap" else
@@ -256,22 +300,30 @@ def main():
                                and report.verification["report"] == "partial")))
             if name in {"bound_duplicate_gap", "bound_genuine_gap"}:
                 gap = (report.artifact.get("review") or {}).get("gap_reviews", [])
+                facts_by_id = {row["id"]: row for row in report.artifact["facts"]}
+                price_visible = any(
+                    part.get("field") == "value_with_unit"
+                    and (fact := facts_by_id.get(part.get("ref"), {})).get("subject") == "002415"
+                    and fact.get("metric") == "close" and str(fact.get("value")) == "22"
+                    and fact.get("observed_at", "").startswith("2025-01-01")
+                    for item in report.artifact["document"]["items"] if item["type"] == "paragraph"
+                    for part in item["parts"])
                 correct_gap = len(gap) == 1 and gap[0]["id"] == "gap" and gap[0]["status"] == (
                     "required" if name == "bound_genuine_gap" else "already_present")
                 if name == "bound_genuine_gap":
-                    entry["passed"] = (entry["passed"] and actual is True and correct_gap and prose in report.text
+                    entry["passed"] = (entry["passed"] and final_supported and correct_gap and price_visible
                         and report.verification["status"] == "incomplete" and "缺少营收资料" in report.text
                         and any(f["code"] == "declared_gap" for f in report.verification["findings"]))
                 else:
-                    entry["passed"] = entry["passed"] and correct_gap and prose in report.text and "缺少" not in report.text
+                    entry["passed"] = entry["passed"] and price_visible and (correct_gap or revised and not gap)
             if name in {"missing_percentage_unit", "currency_missing"} and factual_client:
                 # The body-only boundary must catch this, even if evidence
                 # entailment would silently supply the omitted reader unit.
                 entry["passed"] = entry["passed"] and bool(report.artifact["body_quantity_issues"].get("answer"))
                 entry["passed"] = entry["passed"] and report.artifact["factual_model_calls"] == 0
             if name == "current_execution_receipt" and factual_client:
-                entry["passed"] = entry["passed"] and "answer" in report.artifact["execution_projections"]
-                entry["passed"] = entry["passed"] and "买入100股" in report.text and "本轮已买入002415共100股" not in report.text
+                entry["passed"] = entry["passed"] and report.artifact["execution_records"][0]["quantity"] == 100
+                entry["passed"] = entry["passed"] and "买入100股" in report.text
             if name in {"historical_execution", "absence_as_nonexecution", "compound_absence_as_nonexecution"} and factual_client:
                 projection = report.artifact["execution_projections"].get("answer", {})
                 entry["passed"] = entry["passed"] and projection.get("has_execution_records") is False
@@ -281,6 +333,7 @@ def main():
             entry["error"] = str(exc)
         entry["seconds"] = round(time.monotonic() - started, 2)
         (root/(name+"-calls.json")).write_text(json.dumps(calls, ensure_ascii=False, indent=2))
+        (root/(name+"-writing-calls.json")).write_text(json.dumps(writing_calls, ensure_ascii=False, indent=2))
         (root/(name+"-factual-calls.json")).write_text(json.dumps(factual_calls, ensure_ascii=False, indent=2))
         result["cases"].append(entry)
         (root/"acceptance.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))

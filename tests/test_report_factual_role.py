@@ -513,16 +513,19 @@ def test_malformed_body_quantity_assessment_is_not_silent_approval(fault):
     assert "22元/股升至23元/股" not in result.text
 
 
-def test_quantity_clarification_revision_is_rechecked_and_bounded():
-    invalid = "价格变动比例为4.55。"
-    valid = "价格变动比例为4.55%。"
+@pytest.mark.parametrize("first_text", ["价格变动比例为4.55。", "这里的变动比例以百分数计，为4.55。"])
+@pytest.mark.parametrize("corrected", [True, False])
+def test_quantity_clarification_revision_is_rechecked_and_bounded(first_text, corrected):
+    # The second first_text is legitimate prose that a model may falsely flag.
+    # Recovery still rewrites once; another factual mistake cannot be approved.
+    revised_text = "价格变动比例为4.55%。" if corrected else "价格变动比例为4.56%。"
     writing_calls = []
     def writer(system, user):
         payload = json.loads(user)
         writing_calls.append(payload)
         if "schema" in payload:
             facts = [f for f in report_facts(payload) if f["metric"] == "close"]
-            text = valid if "revision" in payload else invalid
+            text = revised_text if "revision" in payload else first_text
             if "revision" in payload:
                 assert payload["revision"]["review"]["reviews"][0]["supported"] is False
             return json.dumps({"schema_version": 1, "items": [
@@ -535,14 +538,16 @@ def test_quantity_clarification_revision_is_rechecked_and_bounded():
         payload = json.loads(user)
         if "paragraphs" in payload:
             reply = body_reply(payload)
-            if payload["paragraphs"][0]["text"] == invalid:
+            if payload["paragraphs"][0]["text"] == first_text:
                 reply["quantity_issues"] = [{"id": "answer", "text": "4.55", "reason": "正文未明确比例尺度。"}]
             return json.dumps(reply)
-        assert payload["statements"][0]["text"] == valid
-        return json.dumps(assess(payload))
+        assert payload["statements"][0]["text"] == revised_text
+        return json.dumps(assess(payload, "entailed" if corrected else "contradicted"))
     result = publish_report(task="给出变动比例", draft="", tool_results=RECEIPTS, run_scope="quantity-revision",
                             call=writer, fact_review_call=checker)
-    assert result.verification["status"] == "complete" and valid in result.text and invalid not in result.text
+    assert (result.verification["status"] == "complete") is corrected
+    assert (revised_text in result.text) is corrected
+    assert first_text not in result.text
     assert len(writing_calls) == 4
     assert result.artifact["model_calls"] == 7 and result.artifact["call_limit"] == 8
     assert result.artifact["body_review_model_calls"] == 2 and result.artifact["factual_model_calls"] == 1
