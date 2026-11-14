@@ -22,6 +22,7 @@ classifiers = [
 
 dependencies = [
   "aiortc>=1.14,<2",
+  "dnspython>=2.9.2,<3",
   "httpx>=0.27,<1",
   "cryptography>=50.0.0,<51",
   "fastapi>=0.115,<1",

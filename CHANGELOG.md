@@ -24,6 +24,7 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
   extracts from complete selected records without rewriting them, and make
   truncated memory search results explicit.
 - Require Soup Sieve 4 or later to include its selector-performance security fix.
+- Require dnspython 2.9.2 or later to include its zone parser resource-use fix.
 
 ## 0.5.9
 
