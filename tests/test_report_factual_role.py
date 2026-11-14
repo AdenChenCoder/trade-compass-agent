@@ -581,6 +581,9 @@ def test_bound_unit_presence_cannot_override_sentence_truth_or_author_quantity(a
             return json.dumps(result)
         factual.append(payload)
         assert payload["statements"][0]["text"] == "价格变动比例为4.55%。"
+        trace, = payload["statements"][0]["calculations"]
+        assert trace["display_value_with_unit"] == "4.55%"
+        assert trace["result"] == "4.545454545454545454545454545"
         return json.dumps(assess(payload, verdict))
     result = publish_report(task="给出变动比例", draft="", tool_results=RECEIPTS, run_scope="owned-quantity",
                             call=writer, fact_review_call=checker, max_calls=2)

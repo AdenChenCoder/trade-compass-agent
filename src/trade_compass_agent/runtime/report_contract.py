@@ -479,7 +479,8 @@ def calculate(item: Calculation, catalog: EvidenceCatalog) -> tuple[str, dict]:
     rendered = format(result.quantize(Decimal("0.01")), "f")
     operands = "；".join(f.display() for f in facts)
     return f"{label}：{rendered}{unit}。依据：{operands}", {
-        "operation": item.operation, "refs": item.refs, "result": str(result), "unit": unit}
+        "operation": item.operation, "refs": item.refs, "result": str(result), "unit": unit,
+        "display_value_with_unit": rendered + unit}
 
 
 def inference_evidence(item: Inference | Paragraph, document: ReportDocument, catalog: EvidenceCatalog):
@@ -539,8 +540,7 @@ def paragraph_segments(item: Paragraph, document: ReportDocument, catalog: Evide
                 raise ValueError("计算仅提供带单位的结果，身份和日期须引用原始事实")
             _, trace = calculate(entry, catalog)
             unit = trace.get("unit", "")
-            value = (format(Decimal(trace["result"]).quantize(Decimal("0.01")), "f") + trace["unit"]
-                     if "unit" in trace else trace["result"])
+            value = trace.get("display_value_with_unit", trace["result"])
         else:
             fact = catalog.resolve(entry.ref if isinstance(entry, Observation) else ref)
             unit = fact.unit if part.field == "value_with_unit" else ""

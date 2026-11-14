@@ -146,6 +146,9 @@ reinterpret a statement to agree with evidence. A missing fact is unknown, not f
 Do not use external knowledge to establish a specific event, quantity or outcome.
 Preserve entity/scope, time, quantity/scale, relationships and execution state. Units
 must be established in the reader's statements, not silently supplied from evidence.
+A calculation's display_value_with_unit is the exact reader representation produced by
+the runtime from its full-precision result. Its stated precision is supported. Still assess
+the subject, metric, period, direction and any additional precision asserted in the sentence.
 Accurate numbers cannot override a statement's different subject, scope or quantity scale.
 Stylistic awkwardness that preserves ALL factual meaning is acceptable. Factual scope
 or execution-state differences are never stylistic. Current operation outcomes can only
