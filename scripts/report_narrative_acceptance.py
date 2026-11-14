@@ -28,6 +28,10 @@ CASES = {
     "percentage_as_price": ("后一日收盘价为4.55%。", False),
     "natural": ("在这两个观察日，收盘价走高；不能据此预测后续走势。", True),
     "reordered": ("后续走势不能据此判断；两个观察日之间收盘价上升。", True),
+    "bounded_limitation": ("这些资料只覆盖两次收盘观察，尚不足以确定后续价格方向。", True),
+    "unwarranted_forecast": ("根据这两个观察日，可以确定接下来还会上涨。", False),
+    "wrong_unit_with_limitation": ("前一日收盘价为22美元，后一日为23美元；不能据此预测后续走势。", False),
+    "unsupported_cause_with_limitation": ("营收增长导致了这次上涨；不能据此预测后续走势。", False),
     "correct_unit": ("前一日收盘价为22元/股，后一日为23元/股。", True),
     "changed_direction_evidence": ("在这两个观察日，收盘价走高；不能据此预测后续走势。", False),
     "wrong_identity": ("上述价格属于000001。", False),
@@ -77,6 +81,10 @@ SCOPE_CASES = {
                                         "说明两日收盘价和现有资料能否确认本轮买卖执行情况。"),
     "compound_absence_as_unknown": (_price_prose + "没有本轮交易回执，无法确认本轮是否执行了买卖。", True, _prices,
                                    "说明两日收盘价和现有资料能否确认本轮买卖执行情况。"),
+    "reporting_is_not_nonexecution": (_price_prose + "本文不报告成交情况，不能据此认定本轮没有交易。", True, _prices,
+                                     "说明两日收盘价，并保持本轮交易状态的不确定性。"),
+    "reporting_rule_with_noop": (_price_prose + "本文不报告成交情况，因此本轮没有交易。", False, _prices,
+                                "说明两日收盘价，并保持本轮交易状态的不确定性。"),
     "current_execution_receipt": (_price_prose + "本轮已买入002415共100股，成交价22元/股。", True,
         [*_prices, ("place_paper_trade", json.dumps({"status": "executed", "trade_id": "frozen-current-fill",
             "symbol": "002415", "account": "test", "side": "buy", "quantity": 100, "price": 22,
@@ -327,7 +335,7 @@ def main():
                 entry["passed"] = entry["passed"] and fill["quantity"] == 100
                 entry["passed"] = entry["passed"] and report.artifact["execution_records"][0]["status"] == "executed"
                 entry["passed"] = entry["passed"] and "买入100股" in report.text
-            if name in {"historical_execution", "absence_as_nonexecution", "compound_absence_as_nonexecution"} and factual_client:
+            if name in {"historical_execution", "absence_as_nonexecution", "compound_absence_as_nonexecution", "reporting_rule_with_noop"} and factual_client:
                 projection = report.artifact["execution_projections"].get("answer", {})
                 entry["passed"] = entry["passed"] and projection.get("has_execution_records") is False
                 if name == "compound_absence_as_nonexecution":

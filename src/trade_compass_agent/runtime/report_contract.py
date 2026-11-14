@@ -532,6 +532,10 @@ def paragraph_segments(item: Paragraph, document: ReportDocument, catalog: Evide
         if isinstance(part, Prose):
             segments.append({"origin": "author", "text": part.text})
             continue
+        if segments and segments[-1]["origin"] == "evidence":
+            # Adjacent owned fields remain separate tokens. Formatting supplies
+            # no connective meaning and does not alter either bound value.
+            segments.append({"origin": "format", "text": " "})
         ref = part.ref
         unit = ""
         entry = entries.get(ref)

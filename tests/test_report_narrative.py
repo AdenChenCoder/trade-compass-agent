@@ -109,6 +109,31 @@ def test_final_natural_paragraph_is_reviewed_and_persisted_without_rewriting(tmp
     assert "[^source-1]:" in report.text
 
 
+@pytest.mark.parametrize("separator", [None, "：", "的收盘价为"])
+def test_adjacent_bindings_keep_field_boundaries_in_review_and_reopened_body(tmp_path, separator):
+    def mutate(doc):
+        paragraph = doc["items"][1]
+        ref = paragraph["parts"][0]["ref"]
+        paragraph["parts"] = [value(ref, "date")]
+        if separator is not None:
+            paragraph["parts"].append(text(separator))
+        paragraph["parts"].extend([value(ref), text("。")])
+    report, calls = publish(mutate=mutate)
+    expected = "2026-11-10" + (separator if separator is not None else " ") + "10元/股。"
+    assert report.verification["status"] == "complete" and expected in report.text
+    reviewed = calls[-1]["inferences"][0]
+    assert reviewed["text"] == expected
+    assert "".join(segment["text"] for segment in reviewed["segments"]) == expected
+    formatting = [segment for segment in reviewed["segments"] if segment["origin"] == "format"]
+    assert formatting == ([{"origin": "format", "text": " "}] if separator is None else [])
+    reference = persist_publication(tmp_path, report)
+    saved = json.loads((tmp_path / "report_artifacts" / (reference["artifact_id"] + ".json")).read_text())
+    assert saved["published_text"] == report.text
+    assert saved["review_input"]["inferences"][0]["text"] == expected
+    assert [(fact["value"], fact["observed_at"]) for fact in saved["facts"] if fact["metric"] == "close"] == [
+        ("10", "2026-11-10"), ("11", "2026-11-11")]
+
+
 @pytest.mark.parametrize("fault", ["unknown", "missing_date", "calculation_field", "cycle"])
 def test_invalid_evidence_cannot_be_approved_by_semantic_reviewer(fault):
     receipts = RECEIPTS

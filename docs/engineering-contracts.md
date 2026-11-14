@@ -25,6 +25,9 @@ in the linked regression tests, not in expanding prose exception lists.
   or rescale an unqualified ratio as a percentage. Reference
   existence alone does not establish meaning, and prose keyword/regex rules are
   not a substitute for this review.
+  Adjacent bound fields retain a runtime formatting separator, so a date and
+  amount cannot concatenate into a different token. This whitespace is part of
+  the exact reviewed and saved body; it supplies no factual or connective meaning.
 - Review the actual reader presentation. No model rewrites approved paragraphs
   afterwards. Save the final consumer text alongside evidence and review; runtime
   availability notices may be appended without changing reviewed prose. Sources
@@ -49,6 +52,11 @@ in the linked regression tests, not in expanding prose exception lists.
   instructions, drafts and coverage decisions are not its evidence. Each statement
   must be entailed; contradictory or unknown statements are withheld. Missing,
   malformed or unavailable assessments cannot fall back to writer approval.
+  Assess actual factual commitments while preserving negation, conditions and
+  modality. An evidence-scoped limitation concerns what the provided observations
+  establish, not whether a future event is impossible. Non-empirical report discourse
+  needs no market attribution; claims about available records still do. Disclaimers
+  and opinions cannot exempt adjacent factual claims, causal premises or quantities.
   Before evidence review, the same local model independently partitions and types
   the body without task instructions, receipts or other source evidence. Exact
   text reconstruction is required; omission or rewriting fails this contract.
@@ -69,6 +77,9 @@ in the linked regression tests, not in expanding prose exception lists.
   current receipts, such assertions remain unconfirmed and the report incomplete;
   model approval cannot turn empty receipts into proof of non-execution. Historical
   statements, plans and uncertainty remain eligible for factual review.
+  Reporting an operation and performing it have different semantics. Classify the
+  business outcome the author commits to, including under confirmation; an operation
+  mentioned within a presentation rule does not itself assert a business outcome.
   Original and revised bodies share at most two body-meaning and two entailment
   calls, making at most eight model calls in total. The parent deadline, cancellation and no-tools boundary
   still apply. Record both review inputs/results and actual total calls. Choosing
