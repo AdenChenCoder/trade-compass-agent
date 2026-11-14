@@ -51,8 +51,8 @@ _position_prose = "600928 西安银行持有1000股，成本10元/股，估值11
 _price_prose = "002415在2025年1月1日和1月2日的收盘价分别为22元/股和23元/股。"
 SCOPE_CASES = {
     "holding_observation": (_position_prose, True, _holding, "说明当前持仓观察。"),
-    "currency_missing": ("002415在2025年1月1日的收盘价为22。", False, _prices, "说明前一日收盘价。"),
-    "currency_shared_unit": ("以下价格均以元/股计。002415在2025年1月1日的收盘价为22。", True, _prices, "说明前一日收盘价。"),
+    "currency_missing": ("002415在2025年1月1日的收盘价为22。", False, _prices, "说明资料中002415在2025年1月1日的收盘价。"),
+    "currency_shared_unit": ("以下价格均以元/股计。002415在2025年1月1日的收盘价为22。", True, _prices, "说明资料中002415在2025年1月1日的收盘价。"),
     "dimensionless_valuation": ("600928 西安银行的市净率为0.8。", True, _company, "说明资料中的市净率。"),
     "individual_scope": ("600928 西安银行的市净率为0.8倍。", True, _company, "说明资料中的市净率及其适用主体。"),
     "company_as_sector": ("银行板块整体的市净率为0.8倍。", False, _company, "说明资料中的市净率及其适用主体。"),
@@ -98,7 +98,10 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--fact-model", default="", help="Independent local LM Studio factual reviewer")
+    parser.add_argument("--cases", nargs="+", choices=tuple(CASES),
+                        help="Run named controls and record unselected cases explicitly")
     args = parser.parse_args()
+    selected = dict.fromkeys(args.cases or CASES)
     root = args.output.resolve()
     wheel = args.wheel.resolve()
     if root.is_relative_to(Path(__file__).resolve().parents[1]):
@@ -120,6 +123,8 @@ def main():
     verify = runpy.run_path(str(Path(__file__).with_name("release_acceptance.py")))["verify_installed_wheel"]
     result = {"passed": False, "artifact": verify(wheel), "mode": "real semantic reviewer / frozen composition",
               "model": args.model, "fact_model": args.fact_model, "cases": [], "plan": CASES, "retries": 0, "business_calls": 0,
+              "selected_cases": list(selected), "unselected_cases": [name for name in CASES if name not in selected],
+              "full_corpus": len(selected) == len(CASES),
               "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
     (root/"plan.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
     config = AppConfig(data_dir=root/"data", memory_dir=root/"memory",
@@ -134,7 +139,8 @@ def main():
             "trade_id": "historical-fill", "side": "buy", "quantity": 100, "price": 22,
             "timestamp": "2024-12-31T14:00:00+08:00"}]})),
     ]
-    for name, (prose, expected) in CASES.items():
+    for name in selected:
+        prose, expected = CASES[name]
         case_receipts = list(TIME_CASES[name][2] if name in TIME_CASES else
                              SCOPE_CASES[name][2] if name in SCOPE_CASES else receipts)
         if name == "changed_direction_evidence":
@@ -258,7 +264,7 @@ def main():
         print(json.dumps(entry, ensure_ascii=False), flush=True)
         if not entry["passed"]:
             break
-    result["not_run"] = [name for name in CASES if name not in {row["case"] for row in result["cases"]}]
+    result["not_run"] = [name for name in selected if name not in {row["case"] for row in result["cases"]}]
     result["passed"] = not result["not_run"] and all(row["passed"] for row in result["cases"])
     (root/"acceptance.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
     raise SystemExit(0 if result["passed"] else 1)
