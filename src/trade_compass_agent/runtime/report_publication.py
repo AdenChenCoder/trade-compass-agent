@@ -350,6 +350,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     body_review_input = body_response = body_meaning = None
     execution_projections, body_quantity_issues, bound_quantity_checks = {}, {}, {}
     reader_body = ""
+    candidate_body_sha256 = None
     findings, rendered, traces = [], {}, {}
     attempts, review, fixed_items = [], None, dict(protected_gaps)
     dismissed_gaps = set()
@@ -467,6 +468,9 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             else [{"origin": "author", "text": item.text}],
                 "evidence": [asdict(fact) for fact in evidence[item.id][0]],
                 "calculations": evidence[item.id][1]} for item in inferences]}
+            # Track actual reader content before any reviewer filters it.
+            # Renaming JSON IDs or resampling a verdict is not a revision.
+            candidate_body_sha256 = hashlib.sha256(review_input["report"].encode()).hexdigest()
             gaps = [item for item in document.items if isinstance(item, Gap)]
             verified_items = {item.id: rendered[item.id] for item in document.items
                               if isinstance(item, (Observation, Calculation)) and item.id in rendered}
@@ -662,6 +666,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "factual_review_input": factual_review_input, "factual_response": factual_response,
                 "factual_review": factual_review,
                 "revision_input": revision, "reader_body": reader_body or text,
+                "candidate_body_sha256": candidate_body_sha256,
                 "published_text": text, "attempts": attempts}
     publication = Publication(text, result, artifact)
     required_gaps = [item for item in document.items if isinstance(item, Gap) and item.id not in dismissed_gaps] if document else []
@@ -696,13 +701,16 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 for item in (attempt.artifact.get("document") or {}).get("items", []))
         lost_analysis = (revised.verification["status"] != "complete"
                          and has_verified_content(publication) and not has_verified_content(revised))
-        selected = revised if revised.artifact["review_valid"] and not lost_analysis else publication
+        changed_body = revised.artifact["candidate_body_sha256"] != candidate_body_sha256
+        selected = revised if revised.artifact["review_valid"] and changed_body and not lost_analysis else publication
         keys = ("document", "verification", "review", "review_input", "revision_input", "attempts", "published_text",
+                "candidate_body_sha256",
                 "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues", "bound_quantity_checks",
                 "coverage_review_input", "factual_review_input", "factual_response", "factual_review")
         history = [{key: attempt.artifact[key] for key in keys} for attempt in (publication, revised)]
         selected.artifact["revision_attempts"] = history
         selected.artifact["selected_attempt"] = int(selected is revised)
+        selected.artifact["revision_changed_body"] = changed_body
         return selected
     return publication
 

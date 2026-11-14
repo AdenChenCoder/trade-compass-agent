@@ -43,7 +43,10 @@ def publish(fact_reply, *, max_calls=2, coverage_missing=False, check_active=lam
         payload = json.loads(user)
         primary.append(payload)
         if "schema" in payload:
-            return json.dumps(compose(payload))
+            doc = compose(payload)
+            if "revision" in payload:
+                doc["items"][0]["parts"][0]["text"] = "002415在所给观察日的收盘价由"
+            return json.dumps(doc)
         assert payload["inferences"] == [] and payload["receipts"] == []
         assert "22元/股升至23元/股" in payload["report"]
         missing = coverage_missing and len(primary) == 2

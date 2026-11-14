@@ -45,6 +45,9 @@ in the linked regression tests, not in expanding prose exception lists.
   This applies to both reader paragraphs and internal evidence/learning documents;
   a revision retains the chosen document format and cannot discard useful verified
   observations or calculations when its correction remains incomplete.
+  Fingerprint the complete candidate reader text before review filtering. An
+  unchanged body cannot become an accepted correction through renamed item IDs
+  or a different second verdict; retain the initial outcome and both attempts.
   Preserve required gaps through revision; unavailable review must retain the
   first verified evidence. Invalid optional gap-dismissal metadata cannot remove
   a gap or invalidate independently valid paragraph reviews. Preserve cancellation

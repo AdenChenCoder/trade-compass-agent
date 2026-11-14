@@ -132,6 +132,30 @@ def test_failed_internal_revision_retains_valid_facts_without_archiving(tmp_path
     assert len(curated['revision_attempts']) == 2
 
 
+def test_unchanged_internal_body_cannot_be_archived_by_resampling_review(tmp_path):
+    config, response = source(tmp_path)
+    calls = []
+    def call(system, user):
+        payload = json.loads(user)
+        calls.append(payload)
+        revised = len(calls) > 2
+        if 'schema' in payload:
+            doc = json.loads(reply(system, user))
+            doc['items'].append({'id': 'renamed' if revised else 'original', 'type': 'inference',
+                'section': 'assessment', 'text': '收盘价上升。', 'refs': ['change']})
+            return json.dumps(doc)
+        return json.dumps({'reviews': [{'id': row['id'], 'supported': revised,
+            'reason': '' if revised else '模拟首次核验未获支持'} for row in payload['inferences']],
+            'coverage': {'complete': True, 'missing': []}})
+    assert learn(config, response, call) is None and len(calls) == 4
+    assert json.loads(tool_search_memory(config.memory_dir, '002415'))['results'] == []
+    curated = next(json.loads(p.read_text()) for p in (config.data_dir/'report_artifacts').glob('*.json')
+                   if 'learning_source' in json.loads(p.read_text()))
+    assert curated['verification']['status'] == 'incomplete'
+    assert curated['revision_attempts'][1]['verification']['status'] == 'complete'
+    assert curated['selected_attempt'] == 0 and curated['revision_changed_body'] is False
+
+
 @pytest.mark.parametrize("fault", ["missing", "tampered", "owner", "partial", "absent_reference", "no_owner"])
 def test_untrusted_source_cannot_fall_back_to_prose(tmp_path, fault):
     config, response = source(tmp_path)
