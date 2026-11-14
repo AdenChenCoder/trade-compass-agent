@@ -441,7 +441,8 @@ def test_local_reviewer_routes_locally_without_tools_retries_or_deadline_reset(t
         configs.append(review_config)
         def stream(messages, **kwargs):
             invocations.append(kwargs)
-            assert providers._maintenance_mode.get()
+            assert not providers._maintenance_mode.get()
+            assert providers._response_output_limit.get() == 8192
             assert providers._remaining_request_time() <= 10
             assert kwargs["tools"] is None and kwargs["is_cancelled"] is cancelled
             return SimpleNamespace(content='{"assessments":[]}', tool_calls=[])

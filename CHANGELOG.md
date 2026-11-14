@@ -12,6 +12,8 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 - Support an independently configured local factual reviewer. Separate task
   coverage from evidence entailment; unavailable or inconclusive factual review
   keeps the report incomplete. Both review roles retain the original deadline.
+  Semantic review uses bounded reasoning rather than the formatting mode;
+  private reasoning is excluded from the published body and saved evidence.
 - Render current execution outcomes from actual operation receipts. Independent
   body interpretation prevents empty receipts from being accepted as proof that
   no operation happened, while preserving historical statements and plans.

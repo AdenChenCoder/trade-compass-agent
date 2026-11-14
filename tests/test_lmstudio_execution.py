@@ -116,6 +116,49 @@ def test_bounded_natural_writing_keeps_reasoning_private_without_raw_template(mo
     assert _response_output_limit.get() is None
 
 
+@pytest.mark.parametrize("model", ["qwen3.6-35b-a3b", "qwen3.8-27b"])
+@pytest.mark.parametrize("parent_limit", [4096, 32768])
+@pytest.mark.parametrize("complete", [True, False])
+def test_local_semantic_review_uses_private_reasoning_inside_formatting_context(
+    monkeypatch, tmp_path, model, parent_limit, complete,
+):
+    from trade_compass_agent.llm import providers
+    from trade_compass_agent.runtime.exceptions import LLMIncompleteResponseError
+    requests = []
+    value = '{"assessments":[]}'
+    def handler(request):
+        requests.append(request)
+        choices = [{"index": 0, "delta": {"reasoning_content": "private evidence comparison"}, "finish_reason": None}]
+        choices.append({"index": 0, "delta": {"content": value} if complete else {},
+                        "finish_reason": "stop" if complete else "length"})
+        return httpx.Response(200, text=_sse(*choices), headers={"content-type": "text/event-stream"})
+    monkeypatch.setattr(providers, "_usage_http_client",
+                        lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(providers, "_measure_lmstudio_context",
+                        lambda *args, **kwargs: providers.ContextMeasurement(64, 131072))
+    config = AppConfig(data_dir=tmp_path/"data", memory_dir=tmp_path/"memory",
+        llm=LLMConfig(provider="disabled", local_report_review_model=model))
+    callback = providers.create_local_report_fact_check(config)
+    outer_schema = {"type": "object", "properties": {"formatting": {"type": "string"}}}
+    with llm_request_deadline(time.monotonic()+30):
+        with llm_maintenance_mode(max_tokens=parent_limit, response_schema=outer_schema):
+            if complete:
+                assert callback("Assess supplied assertions.", "{}") == value
+            else:
+                with pytest.raises(LLMIncompleteResponseError):
+                    callback("Assess supplied assertions.", "{}")
+            assert providers._maintenance_mode.get()
+            assert providers._response_output_limit.get() == parent_limit
+            assert providers._response_schema.get() is outer_schema
+    assert not providers._maintenance_mode.get() and providers._response_output_limit.get() is None
+    assert len(requests) == 1  # No retry or second verdict after reasoning exhaustion.
+    assert requests[0].url.host == "localhost" and requests[0].url.path == "/v1/chat/completions"
+    body = json.loads(requests[0].content)
+    assert body["model"] == model and body["max_tokens"] == min(parent_limit, 8192)
+    assert "prompt" not in body and "response_format" not in body and "tools" not in body
+    assert "private evidence comparison" not in json.dumps(body)
+
+
 @pytest.mark.parametrize("value,finish", [("unstructured output", "stop"), ('{"items":[]}', "stop"),
                                         ('{"schema_version":1,"items":[]}', "length")])
 def test_report_still_rejects_nonconforming_or_truncated_provider_output(monkeypatch, tmp_path, value, finish):

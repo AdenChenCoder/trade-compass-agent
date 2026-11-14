@@ -42,9 +42,11 @@ in the linked regression tests, not in expanding prose exception lists.
   stay visible in the body. Legacy saved text remains readable without regeneration.
 
 - Natural paragraph writing uses the model's reasoning path, with bounded output
-  and application-side schema validation. Non-thinking mode may serve internal
-  evidence serialization and a separately evaluated local entailment role, not
-  sentence composition.
+  and application-side schema validation. Non-thinking mode serves internal
+  evidence serialization. Body interpretation and entailment use the local
+  model's bounded reasoning path, clearing inherited formatting mode while
+  preserving the parent's token cap, deadline and cancellation. Reasoning is
+  private and cannot become reader text or evidence.
 - Report composition and task-coverage review share a maximum of four model calls. Unused
   structural-repair capacity may fund one feedback revision and a fresh review.
   This applies to both reader paragraphs and internal evidence/learning documents;

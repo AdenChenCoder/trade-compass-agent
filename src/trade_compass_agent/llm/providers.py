@@ -936,7 +936,8 @@ def create_local_report_fact_check(config: AppConfig, *, is_cancelled=None):
 
     The publication owner bounds calls. This callback inherits its deadline and
     cancellation, and the normal provider checks the actual loaded context size.
-    Qwen uses its non-thinking protocol for this focused entailment task.
+    Semantic interpretation needs reasoning, including inside a caller's
+    formatting/maintenance context. The reasoning stream stays private.
     """
     model = config.llm.local_report_review_model.strip()
     if not model:
@@ -953,10 +954,14 @@ def create_local_report_fact_check(config: AppConfig, *, is_cancelled=None):
             raise TurnInterruptedError("")
         if client is None:
             client = create_chat_client(review_config)
-        with llm_maintenance_mode(max_tokens=8192):
-            result = client.stream_complete([ChatMessage(role="system", content=system),
-                ChatMessage(role="user", content=user)], tools=None, on_delta=lambda _: None,
-                is_cancelled=is_cancelled)
+        mode_token = _maintenance_mode.set(False)
+        try:
+            with llm_response_contract(max_tokens=8192):
+                result = client.stream_complete([ChatMessage(role="system", content=system),
+                    ChatMessage(role="user", content=user)], tools=None, on_delta=lambda _: None,
+                    is_cancelled=is_cancelled)
+        finally:
+            _maintenance_mode.reset(mode_token)
         check_execution_active()
         if result.tool_calls:
             raise AgentTurnError("事实审查不能执行工具")
