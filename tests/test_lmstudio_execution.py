@@ -83,8 +83,37 @@ def test_schema_maintenance_preserves_closed_thinking_template_and_enforces_gram
     body = json.loads(requests[0].content)
     assert body["response_format"]["json_schema"]["schema"] == ReportContentDocument.model_json_schema()
     assert body["max_tokens"] == 16384 and body["prompt"].endswith("</think>\n\n")
-    from trade_compass_agent.llm.providers import _maintenance_response_schema
-    assert _maintenance_response_schema.get() is None
+    from trade_compass_agent.llm.providers import _response_schema
+    assert _response_schema.get() is None
+
+
+@pytest.mark.parametrize("model", ["qwen3.6-35b-a3b", "qwen3.8-27b"])
+@pytest.mark.parametrize("parent_limit", [8192, 32768])
+def test_bounded_natural_writing_keeps_reasoning_private_without_raw_template(monkeypatch, tmp_path, model, parent_limit):
+    from trade_compass_agent.llm.providers import llm_response_contract, _response_output_limit
+    requests = []
+    value = '{"schema_version":1,"items":[]}'
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, text=_sse(
+            {"index": 0, "delta": {"reasoning_content": "private planning"}, "finish_reason": None},
+            {"index": 0, "delta": {"content": value}, "finish_reason": "stop"},
+        ), headers={"content-type": "text/event-stream"})
+    monkeypatch.setattr("trade_compass_agent.llm.providers._usage_http_client",
+                        lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    client = OpenAIChatClient(model=model, api_key="lmstudio", name="lmstudio",
+                             base_url="http://localhost:1234/v1", usage_db_path=tmp_path / "usage.db")
+    deltas = []
+    with llm_response_contract(max_tokens=parent_limit):
+        with llm_response_contract(max_tokens=16384):
+            result = client.stream_complete([ChatMessage(role="user", content="组织报告正文")], on_delta=deltas.append)
+        assert _response_output_limit.get() == parent_limit
+    assert requests[0].url.path == "/v1/chat/completions"
+    body = json.loads(requests[0].content)
+    assert "prompt" not in body and "response_format" not in body and "tools" not in body
+    assert body["max_tokens"] == min(parent_limit, 16384)
+    assert result.content == "".join(deltas) == value
+    assert _response_output_limit.get() is None
 
 
 @pytest.mark.parametrize("value,finish", [("unstructured output", "stop"), ('{"items":[]}', "stop"),
@@ -94,7 +123,7 @@ def test_report_still_rejects_nonconforming_or_truncated_provider_output(monkeyp
     calls = []
     def handler(request):
         calls.append(request)
-        return httpx.Response(200, text=_sse({"index": 0, "text": value, "finish_reason": finish}),
+        return httpx.Response(200, text=_sse({"index": 0, "delta": {"content": value}, "finish_reason": finish}),
                               headers={"content-type": "text/event-stream"})
     monkeypatch.setattr("trade_compass_agent.llm.providers._usage_http_client",
                         lambda: httpx.Client(transport=httpx.MockTransport(handler)))
@@ -520,9 +549,11 @@ def test_reasoning_only_finish_uses_one_readonly_finalization_without_replaying_
     AutonomousTradingStore(config.data_dir).set_enabled(True)
     reply = ScheduledAgentSession(config, job_id="autonomous_trading").run("买入000001100股", timeout=5)
     assert len(orders) == 1 and "actual-receipt" in reply
-    assert [r.url.path for r in requests] == ["/v1/chat/completions"] * 3 + ["/v1/completions", "/v1/chat/completions"]
+    assert [r.url.path for r in requests] == ["/v1/chat/completions"] * 5
     composition = json.loads(requests[3].content)
-    assert composition["response_format"]["json_schema"]["schema"]["properties"]["items"]["maxItems"] == 120
+    assert "response_format" not in composition
+    composition_input = json.loads(composition["messages"][-1]["content"])
+    assert composition_input["schema"]["properties"]["items"]["maxItems"] == 120
     assert composition["max_tokens"] == (8192 if model.startswith("qwen3.5") else 16384)
     finalization = json.loads(requests[2].content)
     assert all("tools" not in json.loads(request.content) for request in requests[2:])

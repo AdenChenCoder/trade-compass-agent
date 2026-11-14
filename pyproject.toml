@@ -1,6 +1,6 @@
 [project]
 name = "trade-compass-agent"
-version = "0.5.9"
+version = "0.5.10"
 description = "交易罗盘: local-first A-share trading agent workbench for short-term trading, ETF rotation, simulation, review, and memory-driven improvement."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -22,6 +22,7 @@ classifiers = [
 
 dependencies = [
   "aiortc>=1.14,<2",
+  "dnspython>=2.9.2,<3",
   "httpx>=0.27,<1",
   "cryptography>=50.0.0,<51",
   "fastapi>=0.115,<1",
@@ -32,6 +33,7 @@ dependencies = [
   "pandas>=2.2,<4",
   "numpy>=2.0,<3",
   "akshare>=1.15,<2",
+  "soupsieve>=4,<5",
   "baostock>=0.8,<1",
   "python-dotenv>=1.0,<2",
   "questionary>=2.1,<3",

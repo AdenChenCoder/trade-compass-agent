@@ -6,7 +6,7 @@ import time
 import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 _request_deadline: ContextVar[float | None] = ContextVar("llm_request_deadline", default=None)
 _request_cancelled: ContextVar[Callable[[], bool] | None] = ContextVar("llm_request_cancelled", default=None)
 _maintenance_mode: ContextVar[bool] = ContextVar("llm_maintenance_mode", default=False)
-_maintenance_output_limit: ContextVar[int] = ContextVar("llm_maintenance_output_limit", default=4096)
-_maintenance_response_schema: ContextVar[dict[str, Any] | None] = ContextVar("llm_maintenance_response_schema", default=None)
+_response_output_limit: ContextVar[int | None] = ContextVar("llm_response_output_limit", default=None)
+_response_schema: ContextVar[dict[str, Any] | None] = ContextVar("llm_response_schema", default=None)
 
 
 class LLMExecutionCancelled(BaseException):
@@ -83,17 +83,27 @@ def llm_request_deadline(deadline: float, *, is_cancelled: Callable[[], bool] | 
 
 
 @contextmanager
-def llm_maintenance_mode(*, max_tokens: int = 4096, response_schema: dict[str, Any] | None = None):
-    """Use non-thinking generation only for factual compression or formatting."""
-    token = _maintenance_mode.set(True)
-    limit_token = _maintenance_output_limit.set(max_tokens)
-    schema_token = _maintenance_response_schema.set(response_schema)
+def llm_response_contract(*, max_tokens: int, response_schema: dict[str, Any] | None = None):
+    """Bound a read-only response without changing its reasoning mode."""
+    parent_limit = _response_output_limit.get()
+    limit_token = _response_output_limit.set(min(parent_limit, max_tokens) if parent_limit is not None else max_tokens)
+    schema_token = _response_schema.set(response_schema)
     try:
         yield
     finally:
+        _response_output_limit.reset(limit_token)
+        _response_schema.reset(schema_token)
+
+
+@contextmanager
+def llm_maintenance_mode(*, max_tokens: int = 4096, response_schema: dict[str, Any] | None = None):
+    """Use non-thinking generation only for factual compression or formatting."""
+    token = _maintenance_mode.set(True)
+    try:
+        with llm_response_contract(max_tokens=max_tokens, response_schema=response_schema):
+            yield
+    finally:
         _maintenance_mode.reset(token)
-        _maintenance_output_limit.reset(limit_token)
-        _maintenance_response_schema.reset(schema_token)
 
 
 def _remaining_request_time() -> float | None:
@@ -647,7 +657,7 @@ class OpenAIChatClient:
         on_delta: Callable[[str], None] | None = None,
         is_cancelled: Callable[[], bool] | None = None,
     ) -> ChatCompletion:
-        response_schema = _maintenance_response_schema.get() if not tools and self.name.startswith("lmstudio") else None
+        response_schema = _response_schema.get() if not tools and self.name.startswith("lmstudio") else None
         if is_lmstudio_qwen(self.name, self.model) and _maintenance_mode.get() and not tools:
             # LM Studio 0.4.x can silently ignore chat_template_kwargs for a
             # downloaded MLX model. Its raw completion endpoint applies no
@@ -661,7 +671,7 @@ class OpenAIChatClient:
             summary_kwargs = {
                 "model": self.model, "prompt": "".join(prompt_parts),
                 "temperature": 0.3,
-                "max_tokens": min(_maintenance_output_limit.get(), self.response_token_limit or 4096),
+                "max_tokens": min(_response_output_limit.get() or 4096, self.response_token_limit or 4096),
                 "stream": True,
                 "stream_options": {"include_usage": True},
                 "stop": ["<|im_end|>", "<|im_start|>"],
@@ -695,7 +705,8 @@ class OpenAIChatClient:
             # Non-Qwen LM Studio models use their native chat template.
             kwargs["response_format"] = {"type": "json_schema", "json_schema": {
                 "name": "maintenance_response", "strict": True, "schema": response_schema}}
-            kwargs["max_tokens"] = min(_maintenance_output_limit.get(), self.response_token_limit or 4096)
+        if not tools and self.name.startswith("lmstudio") and _response_output_limit.get() is not None:
+            kwargs["max_tokens"] = min(_response_output_limit.get(), self.response_token_limit or 4096)
         return self._stream_api(kwargs, operation="chat_stream", on_delta=on_delta, is_cancelled=is_cancelled)
 
     def _stream_api(
@@ -918,6 +929,39 @@ _UNCONFIGURED_MSG = (
     "Ollama and LM Studio do not require API keys; remote providers require "
     "their matching API key env (see config/default.yaml)."
 )
+
+
+def create_local_report_fact_check(config: AppConfig, *, is_cancelled=None):
+    """A lazy, local-only, tool-free reviewer; failure never falls back to a writer.
+
+    The publication owner bounds calls. This callback inherits its deadline and
+    cancellation, and the normal provider checks the actual loaded context size.
+    Qwen uses its non-thinking protocol for this focused entailment task.
+    """
+    model = config.llm.local_report_review_model.strip()
+    if not model:
+        return None
+    review_config = replace(config, llm=replace(config.llm, provider="lmstudio", model=model,
+                                               api_key_env="", max_retries=0))
+    client = None
+
+    def call(system, user):
+        nonlocal client
+        from trade_compass_agent.runtime.exceptions import AgentTurnError, TurnInterruptedError
+        check_execution_active()
+        if is_cancelled and is_cancelled():
+            raise TurnInterruptedError("")
+        if client is None:
+            client = create_chat_client(review_config)
+        with llm_maintenance_mode(max_tokens=8192):
+            result = client.stream_complete([ChatMessage(role="system", content=system),
+                ChatMessage(role="user", content=user)], tools=None, on_delta=lambda _: None,
+                is_cancelled=is_cancelled)
+        check_execution_active()
+        if result.tool_calls:
+            raise AgentTurnError("事实审查不能执行工具")
+        return result.content or ""
+    return call
 
 
 def create_chat_client(config: AppConfig | None = None) -> ChatClient:

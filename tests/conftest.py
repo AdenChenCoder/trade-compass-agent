@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import socket
+from urllib.parse import urlparse
 from pathlib import Path
 
 import pytest
@@ -29,7 +31,7 @@ def _isolate_native_user_config(tmp_path, monkeypatch):
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
-    """Keep the test process offline unless a test injects an explicit fake key."""
+    """Remove remote credentials; local models are blocked separately below."""
     del session
     for key in _LLM_API_KEY_ENV_VARS:
         _ORIGINAL_LLM_API_KEYS[key] = os.environ.get(key, _MISSING)
@@ -53,3 +55,25 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     from trade_compass_agent.web.app import app
 
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_local_model_connections(monkeypatch, request):
+    """Local providers need no API key; even swallowed connection attempts fail."""
+    from trade_compass_agent.llm.providers import _PROVIDER_BASE_URLS
+
+    ports = {urlparse(_PROVIDER_BASE_URLS[name]).port for name in ("lmstudio", "ollama")}
+    attempted = []
+    def protect(original):
+        def connect(sock, address):
+            if (isinstance(address, tuple) and len(address) > 1
+                    and address[0] in {"127.0.0.1", "localhost", "::1"} and address[1] in ports):
+                attempted.append(address[1])
+                raise RuntimeError("Unit tests must explicitly mock local model calls")
+            return original(sock, address)
+        return connect
+    monkeypatch.setattr(socket.socket, "connect", protect(socket.socket.connect))
+    monkeypatch.setattr(socket.socket, "connect_ex", protect(socket.socket.connect_ex))
+    yield
+    if attempted:
+        pytest.fail(f"{request.node.nodeid} attempted a live local model connection; inject a model double")

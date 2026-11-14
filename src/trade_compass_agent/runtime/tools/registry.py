@@ -214,7 +214,7 @@ BASE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "search_memory",
-            "description": "Search the hierarchical memory tree (tree/ directory) by keyword. Returns time-scoped notes and insights from past sessions. Use to recall prior analysis, market notes, or signal logs. For searching KNOWLEDGE.md/USER.md entries, use write_knowledge action=list instead.",
+            "description": "Search the hierarchical memory tree (tree/ directory) by keyword. Returns time-scoped notes and insights from past sessions, not current market or execution evidence. A result with truncated=true is incomplete and may omit qualifications; do not derive a factual conclusion from it. For searching KNOWLEDGE.md/USER.md entries, use write_knowledge action=list instead.",
             "parameters": {
                 "type": "object",
                 "properties": {

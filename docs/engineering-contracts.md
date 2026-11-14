@@ -7,6 +7,98 @@ in the linked regression tests, not in expanding prose exception lists.
 
 ## Report and market evidence
 
+- Reading acceptance permits minor awkward wording, redundancy or ellipsis when
+  the surrounding body makes the business meaning unambiguous. Polished prose
+  is not a completion gate. Preserve factual identity, dates, values, units,
+  scale, direction and execution state; ambiguity that changes their meaning is
+  not a cosmetic defect. Verify downstream consumers separately: original
+  receipts and typed results remain authoritative, while narrative supplied to
+  later reasoning or learning must not silently become a new factual source.
+- Evidence structure is not the reader's writing structure. Published paragraphs
+  may combine observations and judgments naturally. Explicit inline bindings keep
+  values, units, identity and dates runtime-owned; a semantic review checks their
+  use in the expanded sentence against original receipts and task scope. The explicitly named
+  `value_with_unit` field binds a number and its unit as one indivisible display
+  value; a percentage must not lose its percent sign. Author-written facts or
+  units still require semantic review. The body must establish the units of
+  author-written quantities; evidence units cannot silently fill a missing unit
+  or rescale an unqualified ratio as a percentage. Reference
+  existence alone does not establish meaning, and prose keyword/regex rules are
+  not a substitute for this review.
+  Adjacent bound fields retain a runtime formatting separator, so a date and
+  amount cannot concatenate into a different token. This whitespace is part of
+  the exact reviewed and saved body; it supplies no factual or connective meaning.
+- Review the actual reader presentation. No model rewrites approved paragraphs
+  afterwards. Save the final consumer text alongside evidence and review; runtime
+  availability notices may be appended without changing reviewed prose. Sources
+  may be disclosed on demand. Task coverage is assessed from the reader body;
+  a requested result present only in source notes does not count as an answer.
+  Material gaps and uncertain execution outcomes
+  stay visible in the body. Legacy saved text remains readable without regeneration.
+
+- Natural paragraph writing uses the model's reasoning path, with bounded output
+  and application-side schema validation. Non-thinking mode may serve internal
+  evidence serialization and a separately evaluated local entailment role, not
+  sentence composition.
+- Report composition and task-coverage review share a maximum of four model calls. Unused
+  structural-repair capacity may fund one feedback revision and a fresh review.
+  Preserve required gaps through revision; unavailable review must retain the
+  first verified evidence. Invalid optional gap-dismissal metadata cannot remove
+  a gap or invalidate independently valid paragraph reviews. Preserve cancellation
+  and the parent deadline, and never replay business tools to repair prose.
+- An explicitly configured `llm.local_report_review_model` separates factual
+  entailment from task coverage. It uses only local LM Studio, original receipts,
+  typed calculations, current execution records and the final statements. The original
+  task is supplied separately as requirements context: it can establish a requested
+  decision rule, but cannot prove market/account facts, causal premises or execution.
+  Drafts and coverage decisions are not evidence. Each statement
+  must be entailed; contradictory or unknown statements are withheld. Missing,
+  malformed or unavailable assessments cannot fall back to writer approval.
+  Assess actual factual commitments while preserving negation, conditions and
+  modality. An evidence-scoped limitation concerns what the provided observations
+  establish, not whether a future event is impossible. Non-empirical report discourse
+  needs no market attribution; claims about available records still do. Disclaimers
+  and opinions cannot exempt adjacent factual claims, causal premises or quantities.
+  Before evidence review, the same local model independently partitions and types
+  the body without task instructions, receipts or other source evidence. Exact
+  text reconstruction is required; omission or rewriting fails this contract.
+  This body-only review also identifies quantities whose units or numerical scale
+  are not established by the reader context. Evidence review cannot supply a
+  missing convention or override that finding. Explicit shared units and
+  dimensionless valuation multiples remain valid; this is a semantic assessment,
+  not a punctuation or keyword rule. A bounded revision may clarify the body.
+  Runtime-owned value-with-unit spans establish unit presence independently of
+  the model. Locating a quoted issue wholly within those spans may clear only
+  the missing-unit allegation, never sentence truth or scope. A matching quote
+  in author text cannot borrow another occurrence's binding. Persist this check
+  and still require factual entailment for the complete sentence.
+  Execution assertions concern an actor's state-changing operation (orders or
+  memory writes), not observations of price movement, returns or holdings.
+  Current execution assertions are removed from AI analysis before coverage and
+  factual review. The runtime renders actual mutation receipts separately. Without
+  current receipts, such assertions remain unconfirmed and the report incomplete;
+  model approval cannot turn empty receipts into proof of non-execution. Historical
+  statements, plans and uncertainty remain eligible for factual review.
+  Reporting an operation and performing it have different semantics. Classify the
+  business outcome the author commits to, including under confirmation; an operation
+  mentioned within a presentation rule does not itself assert a business outcome.
+  An authored prospective choice or recommendation remains a plan even when made
+  in this run. Verify its factual premises and claimed compliance with supplied
+  requirements; do not require execution receipts to prove the choice itself.
+  Independently classify and check any accompanying execution assertion.
+  Original and revised bodies share at most two body-meaning and two entailment
+  calls, making at most eight model calls in total. The parent deadline, cancellation and no-tools boundary
+  still apply. Record both review inputs/results and actual total calls. Choosing
+  a model is not certification: the exact configured path must pass semantic,
+  full-task, long-report and downstream learning acceptance before activation.
+  Pass the runtime-owned business date and scheduler timezone separately from
+  instructions, together with the renderer's display timezone. Preserve this
+  context through revision and persistence. An unknown reference date stays
+  unknown; neither retrieval time nor the latest source date establishes today.
+  Historical reuse must retain dated source meaning rather than adopt the review
+  machine's current date. Pair stale-as-current rejection with valid historical
+  wording and UTC-to-local calendar-date acceptance.
+
 - Validate typed facts against runtime-owned receipts. Preserve instrument and
   account identity, metric, sign, rounding, unit, category, period and source
   scope through nested research, dispatch, publication and persisted output.
@@ -36,7 +128,10 @@ in the linked regression tests, not in expanding prose exception lists.
   imply execution failure. Incomplete output must not become automatic learning.
 - Model-declared gaps are semantic claims. The existing reviewer may dismiss a
   gap only when it is outside the task or cites validated report facts/calculations
-  already providing the requested content. Preserve the original claim and review
+  already providing the requested content. Numeric value bindings inside natural
+  paragraphs count as validated report facts; identity-only bindings and bare
+  references do not establish that a value was provided. Clearing a duplicate gap
+  cannot approve unsupported prose or erase other findings. Preserve the original claim and review
   in the artifact. Missing/invalid reviews retain gaps; deterministic evidence and
   execution failures cannot be dismissed by this review.
 - Publication and correction use the same original receipts and deadline.
@@ -89,6 +184,21 @@ Regression entry points:
 
 ## Memory and learning lifecycle
 
+- Automatic learning from verified task reports reopens the run-owned evidence
+  artifact, checks its digest and completion state, and curates against original
+  receipts through the bounded, read-only internal report contract. Human prose
+  is context, never a replacement for receipts. Only complete curated results
+  enter the searchable archive; failed attempts remain report diagnostics linked
+  to the source turn. Missing evidence must not fall back to prose-only learning.
+  This does not certify legacy interactive learning.
+- Memory compaction selects complete source records rather than rewriting their
+  factual content. Keep source paths and qualifications, exclude earlier compactions
+  from new selections, and deduplicate identical extracts. Original records remain
+  accessible. Unavailable/invalid selection may retain a bounded extract of recent
+  records, never model-supplied replacement prose. It is historical recall, not
+  fresh market/execution evidence. Indexed and fallback lookup preserve complete
+  content within the consumer budget and explicitly mark oversized results;
+  bootstrap context must not silently cut the qualifications off selected records.
 - Explicit dates constrain recall without deleting history. Exact phrase matches
   must reach the matching record before loose search matches. Repeated recalled
   content must not crowd out independent evidence; verify returned content after

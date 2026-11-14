@@ -34,8 +34,10 @@ class MemoryTreeStore:
         path.write_text(body, encoding="utf-8")
         return MemoryChunk(scope=normalized_scope, content=content.strip(), path=path, created_at=now)
 
-    def recent_chunks(self, *, limit: int = 8, max_chars: int = 2000) -> list[MemoryChunk]:
-        files = sorted(self.root.rglob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+    def recent_chunks(self, *, limit: int = 8, max_chars: int = 2000,
+                      exclude_scopes: frozenset[str] = frozenset()) -> list[MemoryChunk]:
+        files = sorted((p for p in self.root.rglob("*.md") if p.parent.name not in exclude_scopes),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
         chunks: list[MemoryChunk] = []
         total = 0
         for path in files[: limit * 3]:
@@ -45,7 +47,7 @@ class MemoryTreeStore:
             if not content:
                 continue
             if total + len(content) > max_chars:
-                break
+                continue
             chunks.append(
                 MemoryChunk(
                     scope=scope,

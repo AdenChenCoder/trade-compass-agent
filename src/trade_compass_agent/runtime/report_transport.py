@@ -6,8 +6,50 @@ and artifacts continue to use the original, run-scoped fact IDs.
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 
 from trade_compass_agent.runtime.report_contract import EvidenceCatalog, ReportDocument
+
+
+def review_receipts(catalog, facts):
+    """Scope batch-bar evidence by owned JSON pointers, never by prose.
+
+    Preserve each selected instrument's entire original subtree and all batch
+    metadata. A root-level reference requires the full receipt. Original bytes
+    and their hash remain in the publication artifact; a view is explicitly
+    labelled and cannot represent the omitted instruments.
+    """
+    by_receipt = {}
+    for fact in facts:
+        by_receipt.setdefault(fact.receipt_id, []).append(fact)
+    result = []
+    for receipt in catalog.receipts:
+        selected = by_receipt.get(receipt["id"])
+        if not selected:
+            continue
+        if receipt["tool"] != "batch_get_bars":
+            result.append(receipt)
+            continue
+        data = json.loads(receipt["result"])
+        branches = data.get("results")
+        keys = set()
+        for fact in selected:
+            path = fact.pointer.split("/")
+            if len(path) < 4 or path[1] != "results":
+                break
+            keys.add(path[2].replace("~1", "/").replace("~0", "~"))
+        else:
+            if isinstance(branches, dict) and keys and keys < branches.keys():
+                view = {**data, "results": {key: row for key, row in branches.items() if key in keys}}
+                result.append({"id": receipt["id"], "tool": receipt["tool"],
+                    "original_sha256": receipt["sha256"],
+                    "selection": {"kind": "complete_instrument_subtrees",
+                                  "included": [key for key in branches if key in keys],
+                                  "omitted": [key for key in branches if key not in keys]},
+                    "result": json.dumps(view, ensure_ascii=False, separators=(",", ":"))})
+                continue
+        result.append(receipt)
+    return result
 
 
 class ReportTransport:
@@ -43,6 +85,18 @@ class ReportTransport:
             self.table["fact_rendering_example"] = {
                 "ref": self.aliases[sample.id], "rendered": sample.display(),
             }
+            # Name the atomic display field explicitly so neither the writer nor
+            # renderer has to infer whether a numeric value includes its unit.
+            ref = self.aliases[sample.id]
+            self.table["paragraph_rendering_example"] = {
+                "parts": [{"type": "value", "ref": ref, "field": "subject"},
+                          {"type": "text", "text": "的"},
+                          {"type": "value", "ref": ref, "field": "label"},
+                          {"type": "text", "text": "为"},
+                          {"type": "value", "ref": ref, "field": "value_with_unit"},
+                          {"type": "text", "text": "。"}],
+                "rendered": f"{sample.subject}的{sample.label}为{sample.value}{sample.unit}。",
+            }
 
     def encode_document(self, document):
         """Repair prompts use exactly the same aliases as initial composition."""
@@ -61,7 +115,8 @@ class ReportTransport:
         for item in document.items:
             if item.id not in blocked:
                 continue
-            refs = getattr(item, "refs", [getattr(item, "ref", "")])
+            refs = list(getattr(item, "refs", [getattr(item, "ref", "")]))
+            refs.extend(part.ref for part in getattr(item, "parts", []) if hasattr(part, "ref"))
             facts, unknown = [], []
             for ref in refs:
                 alias = self.aliases.get(ref, ref)
@@ -95,6 +150,10 @@ class ReportTransport:
             if isinstance(item.get("refs"), list):
                 item["refs"] = [mapping.get(ref, ref) if isinstance(ref, str) else ref
                                 for ref in item["refs"]]
+            if isinstance(item.get("parts"), list):
+                for part in item["parts"]:
+                    if isinstance(part, dict) and part.get("type") == "value" and isinstance(part.get("ref"), str):
+                        part["ref"] = mapping.get(part["ref"], part["ref"])
         return value
 
 

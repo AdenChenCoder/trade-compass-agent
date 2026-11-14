@@ -20,11 +20,19 @@ import zipfile
 SUITES = (
     "test_report_transport.py",
     "test_report_publication.py",
+    "test_report_reading.py",
+    "test_report_narrative.py",
+    "test_report_factual_role.py",
+    "test_report_learning.py",
+    "test_learning_archive.py",
+    "test_memory_tree.py",
+    "test_memory_recall.py",
     "test_report_scheduler_contract.py",
     "test_report_batch_contract.py",
     "test_report_incident_annotations.py",
     "test_native_agents.py",
     "test_native_budgets.py",
+    "test_lmstudio_execution.py",
 )
 
 

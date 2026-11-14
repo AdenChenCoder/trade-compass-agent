@@ -2,6 +2,32 @@
 
 This project follows [Semantic Versioning](https://semver.org/) and records user-visible changes here.
 
+## [0.5.10] - Unreleased
+
+- Support an independently configured local factual reviewer. Separate task
+  coverage from evidence entailment; unavailable or inconclusive factual review
+  keeps the report incomplete. Both review roles retain the original deadline.
+- Render current execution outcomes from actual operation receipts. Independent
+  body interpretation prevents empty receipts from being accepted as proof that
+  no operation happened, while preserving historical statements and plans.
+- Preserve decisions based on user-supplied rules without treating the request
+  as proof of market facts or completed trades.
+- Check quantity units and numerical scale from the reader body before consulting
+  evidence, while accepting explicit shared units and concise valid expressions.
+- Preserve the scheduled business date and display timezone through report
+  writing, factual review and saved evidence; old observations cannot acquire
+  the date of a later review.
+- Present scheduled task reports as natural paragraphs with expandable sources on
+  mobile. Keep original evidence, calculation results and incomplete-task status
+  available; review factual meaning separately from wording style.
+- Preserve expanded sources and citation focus through mobile background refresh,
+  while retaining full-message copy and new-content updates.
+- Ground automatic report learning in its original run evidence. Build memory
+  extracts from complete selected records without rewriting them, and make
+  truncated memory search results explicit.
+- Require Soup Sieve 4 or later to include its selector-performance security fix.
+- Require dnspython 2.9.2 or later to include its zone parser resource-use fix.
+
 ## 0.5.9
 
 - Preserve full history when an interactive follow-up switches from a scheduled
@@ -28,8 +54,6 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 - Complete the 0.5.6 recovery with the report transport and bounded repair fixes
   from 0.5.7. Production acceptance of 0.5.7 exposed the continued-execution
   defect; existing records remain readable without replaying business actions.
-
-## [Unreleased]
 
 ## [0.5.7] - 2026-11-12
 

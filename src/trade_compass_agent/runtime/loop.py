@@ -651,6 +651,9 @@ class AgentLoop:
 
         native_tool_started = {}
 
+        from trade_compass_agent.llm.providers import create_local_report_fact_check
+        factual_report_call = create_local_report_fact_check(self.config, is_cancelled=is_cancelled)
+
         def read_only_report_call(system, user):
             _check_cancelled()
             review_messages = [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
@@ -675,8 +678,10 @@ class AgentLoop:
                 check_execution_active()
             publication = publish_report(task="仅保留拟保存记忆的含义和必要依据，不扩展结论范围：\n" + content,
                 draft=content, tool_results=evidence, current_tool_results=[],
+                reader_prose=False,
                 run_scope=f"{session.session_id}:memory:{uuid4().hex}", run_id=self.report_run_id,
-                call=read_only_report_call, check_active=active)
+                call=read_only_report_call, check_active=active, fact_review_call=factual_report_call,
+                reference_date=self.report_date, reference_timezone=self.config.scheduler.timezone)
             publication.verification.update(persist_publication(self.config.data_dir, publication, check_active=active))
             return publication
 
@@ -941,7 +946,8 @@ class AgentLoop:
                     draft=final_text, tool_results=report_evidence,
                     run_scope=f"{session.session_id}:{turn_id or uuid4().hex}",
                     run_id=self.report_run_id, current_tool_results=tool_calls_log,
-                    call=review_call, check_active=publication_active,
+                    call=review_call, check_active=publication_active, fact_review_call=factual_report_call,
+                    reference_date=self.report_date, reference_timezone=self.config.scheduler.timezone,
                 )
                 final_text = publication.text
                 verification = publication.verification
@@ -1026,9 +1032,6 @@ class AgentLoop:
                 quality.degraded |= incomplete(verification)
                 publication.verification = verification
                 publication.artifact["verification"] = verification
-                from trade_compass_agent.runtime.report_publication import persist_publication
-                verification.update(persist_publication(
-                    self.config.data_dir, publication, check_active=publication_active))
                 quality.warnings = list(dict.fromkeys([*quality.warnings, *(f["message"] for f in findings)]))
             if data_warnings:
                 final_text += "\n\n数据可用性：\n" + "\n".join(f"- {w}" for w in data_warnings)
@@ -1042,6 +1045,15 @@ class AgentLoop:
                 final_text += "\n\n" + incomplete_reason
             if publication is None:
                 final_text += "".join(build_report_evidence(final_text, data_tool_calls))
+            else:
+                # Save the actual consumer text, including runtime-owned notices.
+                # No model rewrites the approved paragraphs after review.
+                from trade_compass_agent.runtime.report_publication import persist_publication
+                publication.artifact["reader_body"] += final_text[len(publication.text):]
+                publication.text = final_text
+                publication.artifact["published_text"] = final_text
+                verification.update(persist_publication(
+                    self.config.data_dir, publication, check_active=publication_active))
             if publish_after_verification:
                 self._emit("delta", {"text": final_text})
 
@@ -1082,7 +1094,8 @@ class AgentLoop:
                     with llm_request_deadline(time.monotonic() + self.config.llm.timeout,
                                               is_cancelled=is_cancelled):
                         _check_cancelled()
-                        curate_turn_insight(config=self.config, user_message=message, response=response)
+                        curate_turn_insight(config=self.config, user_message=message, response=response,
+                            report_run_id=self.report_run_id, report_call=read_only_report_call)
                         _check_cancelled()
                 except LLMExecutionCancelled:
                     _check_cancelled()  # User stop is distinct from parent workflow expiry.

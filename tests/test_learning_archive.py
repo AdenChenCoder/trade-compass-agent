@@ -33,8 +33,9 @@ def test_learning_archive_is_searchable_beside_existing_hits_after_reopen(tmp_pa
     config = _config(tmp_path)
     old = json.loads(tool_write_memory(config.memory_dir, "notes", "风险偏好：旧的研究备注。"))
     summary = "风险偏好：紫杉方案只讨论用户明确授权的研究范围。"
+    response = summary if kind == "insights" else '{"selected":["m0"]}'
     monkeypatch.setattr("trade_compass_agent.runtime.learning.create_llm_provider",
-                        lambda **_: SimpleNamespace(name="test", complete=lambda _: SimpleNamespace(text=summary)))
+                        lambda **_: SimpleNamespace(name="test", complete=lambda _: SimpleNamespace(text=response)))
 
     path = Path(_learn(config, kind))
 
@@ -43,7 +44,11 @@ def test_learning_archive_is_searchable_beside_existing_hits_after_reopen(tmp_pa
     for _ in range(2):
         hits = json.loads(tool_search_memory(config.memory_dir, "风险偏好"))["results"]
         assert {old["path"], str(path)} <= {hit["path"] for hit in hits}
-        assert any(hit["scope"] == kind and hit["content"] == summary for hit in hits)
+        archived = next(hit["content"] for hit in hits if hit["path"] == str(path))
+        if kind == "insights":
+            assert archived == summary
+        else:
+            assert "风险偏好：旧的研究备注。" in archived and summary not in archived
     assert not (config.memory_dir / "KNOWLEDGE.md").exists()
 
 
@@ -87,6 +92,59 @@ def test_compaction_network_failure_can_archive_existing_content(tmp_path, monke
         path = compact_memory_summary(config)
     assert str(path) in {hit["path"] for hit in
                          json.loads(tool_search_memory(config.memory_dir, "风险偏好"))["results"]}
+
+
+@pytest.mark.parametrize("response", ['{"selected":["m0"]}', '收盘价为4.55%，已买入100股。',
+    '{"selected":["missing"]}', '{"selected":["m0","m0"]}',
+    '{"selected":["m0"],"content":"已买入100股"}'])
+def test_compaction_cannot_rewrite_facts_or_truncate_caveats(tmp_path, monkeypatch, response):
+    config = _config(tmp_path)
+    content = "002415两日收盘价22元、23元，变化4.55%。\n" + "研究背景。" * 100 + "\n尚未成交，仍需核对实时行情。"
+    original = json.loads(tool_write_memory(config.memory_dir, "notes", content))
+    original_bytes = Path(original["path"]).read_bytes()
+    prompts = []
+    def complete(request):
+        prompts.append(request.prompt)
+        return SimpleNamespace(text=response)
+    monkeypatch.setattr("trade_compass_agent.runtime.learning.create_llm_provider",
+                        lambda **_: SimpleNamespace(name="test", complete=complete))
+    first = compact_memory_summary(config)
+    second = compact_memory_summary(config)
+    assert first == second and len(list((config.memory_dir / "tree" / "compaction").glob("*.md"))) == 1
+    assert Path(original["path"]).read_bytes() == original_bytes
+    assert all(json.loads(p.split("\n", 1)[1])["m0"]["content"] == content for p in prompts)
+    hit = next(h for h in json.loads(tool_search_memory(config.memory_dir, "002415"))["results"] if h["path"] == str(first))
+    assert content in hit["content"] and "已买入100股" not in hit["content"]
+    assert Path(original["path"]).relative_to(config.memory_dir).as_posix() in hit["content"]
+    assert hit["truncated"] is False
+    from trade_compass_agent.runtime.tools.memory import bootstrap_memory_context
+    assert "尚未成交，仍需核对实时行情。" in bootstrap_memory_context(config.memory_dir)
+
+
+@pytest.mark.parametrize("count", [0, 1, 4])
+def test_compaction_selection_is_bounded_and_keeps_originals(tmp_path, monkeypatch, count):
+    config = _config(tmp_path)
+    for i in range(count):
+        tool_write_memory(config.memory_dir, "notes", f"证券002415，观察日{i}，注意不同日期不能拼成同一观察。")
+    before = {p: p.read_bytes() for p in config.memory_dir.rglob("*.md")}
+    monkeypatch.setattr("trade_compass_agent.runtime.learning.create_llm_provider",
+                        lambda **_: SimpleNamespace(name="disabled"))
+    path = compact_memory_summary(config)
+    assert all(p.read_bytes() == data for p, data in before.items())
+    if count == 0:
+        assert path is None
+    else:
+        text = path.read_text()
+        assert sum(p.relative_to(config.memory_dir).as_posix() in text for p in before) == min(count, 3)
+
+
+def test_compaction_empty_selection_does_not_write(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    tool_write_memory(config.memory_dir, "notes", "暂无独立观察。")
+    monkeypatch.setattr("trade_compass_agent.runtime.learning.create_llm_provider",
+                        lambda **_: SimpleNamespace(name="test", complete=lambda _: SimpleNamespace(text='{"selected":[]}')))
+    assert compact_memory_summary(config) is None
+    assert not list((config.memory_dir / "tree" / "compaction").glob("*.md"))
 
 
 @pytest.mark.parametrize("backend", ["api", "native"])

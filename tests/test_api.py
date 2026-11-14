@@ -557,9 +557,14 @@ def test_scheduler_config_get_and_patch(client: TestClient, tmp_path, monkeypatc
     assert invalid.status_code == 422
 
 
-def test_decisions_curate_and_reflect(client: TestClient, tmp_path: Path) -> None:
+def test_decisions_curate_and_reflect(client: TestClient, tmp_path: Path, monkeypatch) -> None:
     from trade_compass_agent.memory.decision_store import DecisionStore
 
+    calls = []
+    def reflect(system, user):
+        calls.append((system, user))
+        return "冻结样本的复盘结果"
+    monkeypatch.setattr("trade_compass_agent.web.api._decision_llm_call", lambda _: reflect)
     data_dir = tmp_path / "data"
     store = DecisionStore(data_dir)
     d = store.store_decision(symbol="600549", side="buy", quantity=100, price=90.0, account="short_stock", reasoning="板块强势")
@@ -584,4 +589,5 @@ def test_decisions_curate_and_reflect(client: TestClient, tmp_path: Path) -> Non
     reflected = client.post(f"/api/decisions/{d2.id}/reflect")
     assert reflected.status_code == 200, reflected.text
     assert reflected.json()["decision"]["status"] == "reflected"
-    assert reflected.json()["decision"]["reflection"]
+    assert reflected.json()["decision"]["reflection"] == "冻结样本的复盘结果"
+    assert len(calls) == 2

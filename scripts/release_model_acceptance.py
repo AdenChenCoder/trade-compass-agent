@@ -77,8 +77,8 @@ def check_report(detail, artifact, receipt, *, missing):
             require(all(facts[ref]["subject"] == "002415" for ref in item["refs"]),
                     "published calculation belongs to another instrument")
     expected = [(str(b["close"]), b["timestamp"]) for b in bars]
-    found = False
-    for calc in artifact["calculations"].values():
+    matched_calculations = set()
+    for calc_id, calc in artifact["calculations"].items():
         if calc["operation"] != "change_pct":
             continue
         operands = [facts.get(ref, {}) for ref in calc["refs"]]
@@ -86,16 +86,26 @@ def check_report(detail, artifact, receipt, *, missing):
             actual = [(str(f["value"]), f["observed_at"][:10]) for f in operands]
             if actual == expected:
                 wanted = (Decimal(expected[1][0]) / Decimal(expected[0][0]) - 1) * 100
-                found = abs(Decimal(calc["result"]) - wanted) < Decimal("0.000001")
-    require(found, "requested closing-price change is absent or uses wrong metrics/dates")
+                if abs(Decimal(calc["result"]) - wanted) < Decimal("0.000001"):
+                    matched_calculations.add(calc_id)
+    require(bool(matched_calculations), "requested closing-price change is absent or uses wrong metrics/dates")
     for value, timestamp in expected:
         require(value in detail["analysis"] and timestamp in detail["analysis"],
                 "dated closing prices are absent from the published report")
+    paragraphs = [item for item in artifact["document"]["items"] if item["type"] == "paragraph"]
+    require(bool(paragraphs), "normal answer was replaced with an evidence list")
+    approved = {row["id"] for row in artifact["review"]["reviews"] if row["supported"]}
+    require(all(item["id"] in approved for item in paragraphs), "final prose did not pass review")
+    require(artifact["published_text"] == detail["analysis"], "persisted body differs from published body")
+    require(bool(artifact["reader_body"]), "reader body missing")
+    visible_calcs = {part["ref"] for paragraph in paragraphs for part in paragraph["parts"]
+                     if part["type"] == "value" and part["field"] == "value_with_unit"}
+    require(bool(matched_calculations & visible_calcs), "requested change percentage appears only in evidence, not the body")
     if not missing:
-        require("研判：" in detail["analysis"], "requested price-direction judgment is absent")
+        require(artifact["review_input"]["report"] == artifact["reader_body"], "reviewed body differs from final body")
 
 
-def worker(root, case, model):
+def worker(root, case, model, fact_model=""):
     from dataclasses import replace
     from unittest.mock import patch
 
@@ -120,7 +130,8 @@ def worker(root, case, model):
     from trade_compass_agent.web.app import create_app
 
     config = AppConfig(data_dir=state/"data", memory_dir=state/"memory", data_provider="sample",
-                       llm=LLMConfig(provider="lmstudio", model=model, api_key_env="", max_retries=0, timeout=180),
+                       llm=LLMConfig(provider="lmstudio", model=model, api_key_env="", max_retries=0, timeout=180,
+                                     local_report_review_model=fact_model),
                        agent=AgentConfig(learning_enabled=False, llm_session_titles=False, max_tool_rounds=3))
     config = replace(config, scheduler=replace(config.scheduler, enabled=False),
                      mobile=replace(config.mobile, enabled=False))
@@ -142,6 +153,7 @@ def worker(root, case, model):
     tools, calls = [], []
     real = create_chat_client(config)
     profile = {"provider": real.name, "model": real.model,
+               "fact_model": fact_model,
                "context_window": real.context_window, "response_token_limit": real.response_token_limit}
 
     class Client:
@@ -194,6 +206,8 @@ def worker(root, case, model):
         require(response.status_code == 200, "run unavailable through API")
         detail = response.json()
         (root/f"{case}-run.json").write_text(json.dumps(detail, ensure_ascii=False, indent=2))
+        require(detail.get("status") in {"completed", "degraded"},
+                "scheduled task did not produce a report: " + str(detail.get("error") or detail.get("status")))
         require(tools == [expected_tool], "current run did not fetch its own evidence")
         for name, contents in previous.items():
             require((state/"data/agent_sessions"/name).read_bytes().startswith(contents), "history rewritten")
@@ -208,7 +222,10 @@ def worker(root, case, model):
         messages = api.get("/api/agent/sessions/"+sid).json()["messages"]
         require(messages[-1]["content"] == detail["analysis"], "session and report disagree")
         return {"case": case, "passed": True, "run_id": run.id, "status": detail["status"],
-                "model_calls": len(calls), "tools": tools, "real_business_calls": 0, "profile": profile}
+                "model_calls": len(calls) + artifact.get("factual_model_calls", 0) + artifact.get("body_review_model_calls", 0),
+                "factual_model_calls": artifact.get("factual_model_calls", 0),
+                "body_model_calls": artifact.get("body_review_model_calls", 0),
+                "tools": tools, "real_business_calls": 0, "profile": profile}
 
 
 def main():
@@ -216,13 +233,14 @@ def main():
     parser.add_argument("--wheel", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--model", required=True)
+    parser.add_argument("--fact-model", default="", help="Independent local LM Studio factual reviewer")
     parser.add_argument("--worker", choices=CASES, help=argparse.SUPPRESS)
     args = parser.parse_args()
     root, wheel = args.output.resolve(), args.wheel.resolve()
     os.umask(0o077)
     if args.worker:
         try:
-            result = worker(root, args.worker, args.model)
+            result = worker(root, args.worker, args.model, args.fact_model)
         except Exception as exc:
             result = {"case": args.worker, "passed": False, "error": str(exc)}
         (root/f"{args.worker}-result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
@@ -232,6 +250,7 @@ def main():
     os.chdir(root)
     verify = runpy.run_path(str(Path(__file__).with_name("release_acceptance.py")))["verify_installed_wheel"]
     result = {"passed": False, "mode": "real-model", "provider": "lmstudio", "model": args.model,
+              "fact_model": args.fact_model,
               "cases": [], "case_plan": list(CASES), "retries": 0, "business_tools": "synthetic frozen",
               "capability_profile": "executor whitelist: only each case's frozen query tool",
               "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
@@ -245,7 +264,8 @@ def main():
             with (root/f"{case}.log").open("w") as log:
                 try:
                     child = subprocess.run([sys.executable, "-I", str(Path(__file__).resolve()),
-                        "--worker", case, "--wheel", str(wheel), "--output", str(root), "--model", args.model],
+                        "--worker", case, "--wheel", str(wheel), "--output", str(root), "--model", args.model,
+                        "--fact-model", args.fact_model],
                         stdout=log, stderr=subprocess.STDOUT, timeout=270)
                     path = root/f"{case}-result.json"
                     entry = json.loads(path.read_text()) if path.exists() else {"case": case, "passed": False}

@@ -59,12 +59,34 @@ class Inference(Item):
     refs: list[str] = Field(min_length=1, max_length=20, description="引用事实目录id或本报告中fact/calculation条目的id；条件和其他研判不是证据")
 
 
+class Prose(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    type: Literal["text"]
+    text: str = Field(min_length=1, max_length=2500)
+
+
+class EvidenceValue(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    type: Literal["value"]
+    ref: str = Field(description="事实id、fact条目id或calculation条目id；不是正文段落id")
+    field: Literal["value_with_unit", "subject", "account", "date", "label"] = Field(
+        description="value_with_unit是完整的带单位数值，例如22元/股或4.55%，不能再补单位。计算仅支持此字段。日期不从检索时间推测。")
+
+
+class Paragraph(Item):
+    """Author-owned prose with runtime-owned values; meaning still needs review."""
+    type: Literal["paragraph"]
+    parts: list[Annotated[Prose | EvidenceValue, Field(discriminator="type")]] = Field(min_length=1, max_length=80)
+    refs: list[str] = Field(default_factory=list, max_length=30,
+                            description="该段判断的额外依据；parts中的引用自动计入")
+
+
 class Gap(Item):
     type: Literal["gap"]
     text: str = Field(min_length=1, max_length=1000)
 
 
-ReportItem = Annotated[Observation | Calculation | Condition | Inference | Gap,
+ReportItem = Annotated[Observation | Calculation | Condition | Inference | Paragraph | Gap,
                        Field(discriminator="type")]
 
 
@@ -108,6 +130,10 @@ class Fact:
 
     def display(self) -> str:
         context = " · ".join(x for x in (self.subject, self.account) if x)
+        return f"{context + '：' if context else ''}{self.label} {self.value}{self.unit}（{self.context()}）"
+
+    def context(self) -> str:
+        """Exact observation context shared by audit and reader presentations."""
         stamp = self.observed_at or "时点未提供"
         details = json.loads(self.scope) if self.scope else {}
         labels = {"timeframe": "周期", "adjustment": "复权口径", "classification": "分类来源",
@@ -123,7 +149,7 @@ class Fact:
         if details.get("pnl_basis") == "fifo_after_entry_and_exit_fees":
             notes.append("FIFO净结算，已扣分摊买卖费用")
         scope = "；" + "；".join(notes) if notes else ""
-        return f"{context + '：' if context else ''}{self.label} {self.value}{self.unit}（{stamp}{scope}；{self.source}）"
+        return f"{stamp}{scope}；{self.source}"
 
 
 # These are producer field contracts, not phrases recognized in generated prose.
@@ -453,10 +479,11 @@ def calculate(item: Calculation, catalog: EvidenceCatalog) -> tuple[str, dict]:
     rendered = format(result.quantize(Decimal("0.01")), "f")
     operands = "；".join(f.display() for f in facts)
     return f"{label}：{rendered}{unit}。依据：{operands}", {
-        "operation": item.operation, "refs": item.refs, "result": str(result), "unit": unit}
+        "operation": item.operation, "refs": item.refs, "result": str(result), "unit": unit,
+        "display_value_with_unit": rendered + unit}
 
 
-def inference_evidence(item: Inference, document: ReportDocument, catalog: EvidenceCatalog):
+def inference_evidence(item: Inference | Paragraph, document: ReportDocument, catalog: EvidenceCatalog):
     """Resolve judgments to source observations and verified calculations.
 
     Calculations keep their raw-fact-only operand contract. Revalidating them
@@ -465,7 +492,9 @@ def inference_evidence(item: Inference, document: ReportDocument, catalog: Evide
     """
     items = {entry.id: entry for entry in document.items}
     facts, calculations = {}, {}
-    for ref in item.refs:
+    refs = item.refs + ([part.ref for part in item.parts if isinstance(part, EvidenceValue)]
+                        if isinstance(item, Paragraph) else [])
+    for ref in dict.fromkeys(refs):
         if ref in catalog.facts:
             if ref in items:
                 raise ValueError("报告条目ID与事实ID冲突，引用含义不明确")
@@ -486,6 +515,51 @@ def inference_evidence(item: Inference, document: ReportDocument, catalog: Evide
         else:
             raise ValueError("研判引用不属于本轮事实或已验证计算")
     return list(facts.values()), list(calculations.values())
+
+
+def paragraph_segments(item: Paragraph, document: ReportDocument, catalog: EvidenceCatalog):
+    """Resolve explicit bindings, never recognize or rewrite claims in prose.
+
+    This checks reference/field validity, not the truth of surrounding language.
+    The semantic reviewer sees this exact expanded paragraph and its evidence.
+    """
+    from trade_compass_agent.runtime.report_reading import _date, _plain
+
+    entries = {entry.id: entry for entry in document.items}
+    inference_evidence(item, document, catalog)
+    segments = []
+    for part in item.parts:
+        if isinstance(part, Prose):
+            segments.append({"origin": "author", "text": part.text})
+            continue
+        if segments and segments[-1]["origin"] == "evidence":
+            # Adjacent owned fields remain separate tokens. Formatting supplies
+            # no connective meaning and does not alter either bound value.
+            segments.append({"origin": "format", "text": " "})
+        ref = part.ref
+        unit = ""
+        entry = entries.get(ref)
+        if isinstance(entry, Calculation):
+            if part.field != "value_with_unit":
+                raise ValueError("计算仅提供带单位的结果，身份和日期须引用原始事实")
+            _, trace = calculate(entry, catalog)
+            unit = trace.get("unit", "")
+            value = trace.get("display_value_with_unit", trace["result"])
+        else:
+            fact = catalog.resolve(entry.ref if isinstance(entry, Observation) else ref)
+            unit = fact.unit if part.field == "value_with_unit" else ""
+            value = {"value_with_unit": fact.value + fact.unit, "subject": fact.subject,
+                     "account": fact.account, "date": _date(fact) if fact.observed_at else "",
+                     "label": fact.label}[part.field]
+            if not value:
+                raise ValueError("引用的事实未提供所需身份、账户、日期或单位")
+        segments.append({"origin": "evidence", "ref": part.ref, "field": part.field, "text": _plain(value),
+                         "quantity_unit": unit})
+    return segments
+
+
+def paragraph_text(item: Paragraph, document: ReportDocument, catalog: EvidenceCatalog):
+    return "".join(segment["text"] for segment in paragraph_segments(item, document, catalog))
 
 
 def validate_document(document: ReportDocument, catalog: EvidenceCatalog):
@@ -514,6 +588,8 @@ def validate_document(document: ReportDocument, catalog: EvidenceCatalog):
                     action += f"{item.quantity}股"
                 rendered[item.id] = (f"条件计划：若{fact.subject}的{fact.label}{op}{threshold}{item.unit}，{action}。"
                                      f"该条件不是已发生事实或已执行指令。参考：{fact.display()}")
+            elif isinstance(item, Paragraph):
+                paragraph_text(item, document, catalog)
             elif isinstance(item, Inference):
                 inference_evidence(item, document, catalog)
             else:

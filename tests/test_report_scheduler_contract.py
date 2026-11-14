@@ -85,6 +85,8 @@ def test_job_coverage_uses_business_task_and_preserves_real_gaps(tmp_path, monke
     assert detail["status"] == run.status
     assert verification["execution"] == "completed"
     assert verification["status"] == ("incomplete" if missing else "complete")
+    artifact = json.loads((config.data_dir / "report_artifacts" / (verification["artifact_id"] + ".json")).read_text())
+    assert artifact["published_text"] == detail["analysis"]
     assert "7.46" in detail["analysis"]
     if derived:
         assert "13.03%" in detail["analysis"] and "研判：两日收盘价上升。" in detail["analysis"]
