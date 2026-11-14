@@ -78,7 +78,8 @@ def test_each_assertion_must_be_reviewed_before_the_complete_paragraph_is_publis
 @pytest.mark.parametrize('value,display', [(0.42287699999999995, '0.42%'), (-0.42287699999999995, '-0.42%'),
                                          (0.004, '0.004%'), (-0.004, '-0.004%'), (0, '0%')])
 def test_percent_reader_precision_preserves_source_values_and_real_nonzero_changes(tmp_path, value, display):
-    receipts = [('get_market_pulse', json.dumps({'as_of': '2026-11-12',
+    receipts = [('get_market_pulse', json.dumps({'_meta': {'data_as_of': None,
+        'retrieved_at': '2026-11-12T15:00:00+08:00', 'timezone': 'Asia/Shanghai'},
         'sectors': [{'name': '金融行业', 'change_pct': value}]}))]
     expected_raw = str(value)
     def writer(system, user):
@@ -97,10 +98,12 @@ def test_percent_reader_precision_preserves_source_values_and_real_nonzero_chang
         evidence = next(f for row in payload['contexts'].values() for f in row['evidence'] if f['metric'] == 'change_pct')
         assert evidence['display_value_with_unit'] == display
         assert evidence['value'] == expected_raw
+        assert evidence['observed_at'] is None
         return json.dumps(assess(payload))
     result = publish_report(task='说明所给金融行业涨跌幅。', draft='', tool_results=receipts,
         run_scope='percentage-precision', call=writer, fact_review_call=checker, max_calls=2)
     assert result.verification['status'] == 'complete' and display in result.text
+    assert '2026-11-12' not in result.artifact['reader_body']
     reference = persist_publication(tmp_path, result)
     saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
     assert saved['receipts'][0]['result'] == receipts[0][1]
