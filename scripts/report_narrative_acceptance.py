@@ -322,7 +322,10 @@ def main():
                 entry["passed"] = entry["passed"] and bool(report.artifact["body_quantity_issues"].get("answer"))
                 entry["passed"] = entry["passed"] and report.artifact["factual_model_calls"] == 0
             if name == "current_execution_receipt" and factual_client:
-                entry["passed"] = entry["passed"] and report.artifact["execution_records"][0]["quantity"] == 100
+                fill = next(json.loads(row["result"]) for row in report.artifact["receipts"]
+                            if row["tool"] == "place_paper_trade")
+                entry["passed"] = entry["passed"] and fill["quantity"] == 100
+                entry["passed"] = entry["passed"] and report.artifact["execution_records"][0]["status"] == "executed"
                 entry["passed"] = entry["passed"] and "买入100股" in report.text
             if name in {"historical_execution", "absence_as_nonexecution", "compound_absence_as_nonexecution"} and factual_client:
                 projection = report.artifact["execution_projections"].get("answer", {})
