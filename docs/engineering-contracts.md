@@ -111,7 +111,10 @@ in the linked regression tests, not in expanding prose exception lists.
   imply execution failure. Incomplete output must not become automatic learning.
 - Model-declared gaps are semantic claims. The existing reviewer may dismiss a
   gap only when it is outside the task or cites validated report facts/calculations
-  already providing the requested content. Preserve the original claim and review
+  already providing the requested content. Numeric value bindings inside natural
+  paragraphs count as validated report facts; identity-only bindings and bare
+  references do not establish that a value was provided. Clearing a duplicate gap
+  cannot approve unsupported prose or erase other findings. Preserve the original claim and review
   in the artifact. Missing/invalid reviews retain gaps; deterministic evidence and
   execution failures cannot be dismissed by this review.
 - Publication and correction use the same original receipts and deadline.

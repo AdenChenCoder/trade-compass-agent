@@ -606,3 +606,33 @@ def test_unit_presence_requires_runtime_quantity_binding(origin, field, unit):
     from trade_compass_agent.runtime.report_body import runtime_bound_quantity_issue
     segments = [{"origin": origin, "field": field, "quantity_unit": unit, "text": "4.55%"}]
     assert not runtime_bound_quantity_issue({"text": "4.55%"}, segments)
+
+
+@pytest.mark.parametrize("genuine_gap", [True, False])
+@pytest.mark.parametrize("supported", [True, False])
+def test_bound_gap_review_keeps_local_factual_and_coverage_roles_independent(genuine_gap, supported):
+    def writer(system, user):
+        payload = json.loads(user)
+        if "schema" in payload:
+            doc = compose(payload)
+            doc["items"].append({"id": "gap", "type": "gap", "section": "market",
+                                 "text": "缺少营收资料。" if genuine_gap else "缺少收盘价资料。"})
+            return json.dumps(doc)
+        assert payload["inferences"] == [] and payload["receipts"] == []
+        assert len(payload["verified_items"]) == 2
+        return json.dumps({"reviews": [], "coverage": {"complete": True, "missing": []},
+            "gap_reviews": [{"id": "gap", "status": "required" if genuine_gap else "already_present",
+                "refs": [] if genuine_gap else [payload["verified_items"][0]["id"]],
+                "reason": "仍无营收资料。" if genuine_gap else "已有收盘价。"}]})
+    def checker(system, user):
+        payload = json.loads(user)
+        if "paragraphs" in payload:
+            return json.dumps(body_reply(payload))
+        assert "task" not in payload and "gaps" not in payload
+        return json.dumps(assess(payload, "entailed" if supported else "unknown"))
+    report = publish_report(task="说明收盘价与资料缺口。", draft="", tool_results=RECEIPTS,
+                            run_scope="local-bound-gap", call=writer, fact_review_call=checker, max_calls=2)
+    assert (report.verification["status"] == "complete") is (supported and not genuine_gap)
+    assert ("22元/股升至23元/股" in report.text) is supported
+    assert any(f["code"] == "declared_gap" for f in report.verification["findings"]) is genuine_gap
+    assert report.artifact["factual_model_calls"] == report.artifact["body_review_model_calls"] == 1

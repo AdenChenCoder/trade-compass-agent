@@ -50,6 +50,10 @@ _prices = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars
 _position_prose = "600928 西安银行持有1000股，成本10元/股，估值11元/股，浮动盈亏1000元。"
 _price_prose = "002415在2025年1月1日和1月2日的收盘价分别为22元/股和23元/股。"
 SCOPE_CASES = {
+    "bound_duplicate_gap": ("002415在2025-01-01的收盘价为22元/股。", True, _prices,
+                            "说明002415在2025年1月1日的收盘价。"),
+    "bound_genuine_gap": ("002415在2025-01-01的收盘价为22元/股。", True, _prices,
+                          "说明002415在2025年1月1日的收盘价及该公司的营收资料。"),
     "holding_observation": (_position_prose, True, _holding, "说明当前持仓观察。"),
     "currency_missing": ("002415在2025年1月1日的收盘价为22。", False, _prices, "说明资料中002415在2025年1月1日的收盘价。"),
     "currency_shared_unit": ("以下价格均以元/股计。002415在2025年1月1日的收盘价为22。", True, _prices, "说明资料中002415在2025年1月1日的收盘价。"),
@@ -165,8 +169,16 @@ def main():
                         parts = [{"type": "text", "text": "002415在"},
                                  {"type": "value", "ref": close_id, "field": "date"},
                                  {"type": "text", "text": "的收盘价为22元/股。"}]
-                    return json.dumps({"schema_version": 1, "items": [{"id": "answer", "section": "overview",
-                        "type": "paragraph", "parts": parts, "refs": refs}]}, ensure_ascii=False)
+                    items = [{"id": "answer", "section": "overview", "type": "paragraph", "parts": parts, "refs": refs}]
+                    if name in {"bound_duplicate_gap", "bound_genuine_gap"}:
+                        first = next(group["rows"][0][0] for group in payload["facts"] if group["metric"] == "close")
+                        items[0]["parts"] = [
+                            {"type": "value", "ref": first, "field": "subject"}, {"type": "text", "text": "在"},
+                            {"type": "value", "ref": first, "field": "date"}, {"type": "text", "text": "的收盘价为"},
+                            {"type": "value", "ref": first, "field": "value_with_unit"}, {"type": "text", "text": "。"}]
+                        items.append({"id": "gap", "section": "overview", "type": "gap",
+                            "text": "缺少营收资料。" if name == "bound_genuine_gap" else "缺少002415在2025年1月1日的收盘价。"})
+                    return json.dumps({"schema_version": 1, "items": items}, ensure_ascii=False)
                 facts = [dict(zip(payload["fact_columns"], row, strict=True))
                          for group in payload["facts"] if group["metric"] == "close" for row in group["rows"]]
                 parts = [{"type": "value", "ref": facts[0]["id"], "field": "subject"},
@@ -238,9 +250,20 @@ def main():
                          and report.artifact["body_review_model_calls"] == int(bool(factual_client))
                          and ((coverage_complete is False and report.verification["report"] == "partial")
                               if name == "hidden_result" else
+                              (report.verification["status"] == "incomplete") if name == "bound_genuine_gap" else
                               (report.verification["status"] == "complete") if expected else
                               (prose not in report.text
                                and report.verification["report"] == "partial")))
+            if name in {"bound_duplicate_gap", "bound_genuine_gap"}:
+                gap = (report.artifact.get("review") or {}).get("gap_reviews", [])
+                correct_gap = len(gap) == 1 and gap[0]["id"] == "gap" and gap[0]["status"] == (
+                    "required" if name == "bound_genuine_gap" else "already_present")
+                if name == "bound_genuine_gap":
+                    entry["passed"] = (entry["passed"] and actual is True and correct_gap and prose in report.text
+                        and report.verification["status"] == "incomplete" and "缺少营收资料" in report.text
+                        and any(f["code"] == "declared_gap" for f in report.verification["findings"]))
+                else:
+                    entry["passed"] = entry["passed"] and correct_gap and prose in report.text and "缺少" not in report.text
             if name in {"missing_percentage_unit", "currency_missing"} and factual_client:
                 # The body-only boundary must catch this, even if evidence
                 # entailment would silently supply the omitted reader unit.

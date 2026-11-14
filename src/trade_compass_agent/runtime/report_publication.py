@@ -449,6 +449,15 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
             verified_items = {item.id: rendered[item.id] for item in document.items
                               if isinstance(item, (Observation, Calculation)) and item.id in rendered}
             if gaps:
+                # Numeric bindings in paragraphs are the same owned report
+                # facts as explicit observations. References or identity-only
+                # spans do not establish that a value was supplied to the reader.
+                for row in review_input["inferences"]:
+                    for segment in row["segments"]:
+                        ref = segment.get("ref")
+                        if segment.get("field") == "value_with_unit" and ref in catalog.facts:
+                            fact = catalog.resolve(ref)
+                            verified_items[fact.id] = fact.display()
                 review_input["gaps"] = [{"id": item.id, "text": item.text} for item in gaps]
                 review_input["verified_items"] = [{"id": key, "rendered": text} for key, text in verified_items.items()]
             try:

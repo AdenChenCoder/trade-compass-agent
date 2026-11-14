@@ -431,3 +431,47 @@ def test_all_rejected_prose_retains_cited_readable_evidence(observation):
     assert report.verification["data"] == "available"
     assert report.artifact["reader_body"] == body.strip()
     assert calls[-1]["receipts"] == report.artifact["receipts"]
+
+
+@pytest.mark.parametrize("binding", ["value", "subject", "reference_only"])
+@pytest.mark.parametrize("genuine_gap", [True, False])
+@pytest.mark.parametrize("supported", [True, False])
+def test_bound_report_fact_can_resolve_duplicate_gap_without_approving_prose(tmp_path, binding, genuine_gap, supported):
+    reviews = []
+    def call(system, user):
+        payload = json.loads(user)
+        if "schema" in payload:
+            fact = next(f for f in report_facts(payload) if f["metric"] == "close")
+            parts = ([value(fact["id"], "subject"), text("在"), value(fact["id"], "date"),
+                      text("的收盘价为"), value(fact["id"]), text("。")]
+                     if binding == "value" else
+                     [value(fact["id"], "subject"), text("。")]
+                     if binding == "subject" else [text("关注该证券的收盘价。")])
+            return json.dumps({"schema_version": 1, "items": [
+                {"id": "answer", "type": "paragraph", "section": "market", "parts": parts, "refs": [fact["id"]]},
+                {"id": "gap", "type": "gap", "section": "market",
+                 "text": "缺少营收资料。" if genuine_gap else "缺少002415在2026年11月10日的收盘价。"}]})
+        reviews.append(payload)
+        fact_id = payload["inferences"][0]["evidence"][0]["id"]
+        return json.dumps({"reviews": [{"id": "answer", "supported": supported,
+            "reason": "资料支持所写内容。" if supported else "句子中的含义尚不能支持。"}],
+            "coverage": {"complete": True, "missing": []},
+            "gap_reviews": [{"id": "gap", "status": "required" if genuine_gap else "already_present",
+                "refs": [] if genuine_gap else [fact_id],
+                "reason": "仍无营收资料。" if genuine_gap else "报告已给出相同证券相同日期的收盘价。"}]})
+    result = publish_report(task="说明002415在2026年11月10日的收盘价及资料缺口。", draft="",
+                            tool_results=RECEIPTS, run_scope="bound-gap", call=call, max_calls=2)
+    resolves = binding == "value" and not genuine_gap
+    assert (result.verification["status"] == "complete") is (resolves and supported)
+    assert any(f["code"] == "declared_gap" for f in result.verification["findings"]) is not resolves
+    if binding == "value":
+        assert any(row["id"] == reviews[0]["inferences"][0]["evidence"][0]["id"]
+                   for row in reviews[0]["verified_items"])
+    else:
+        assert reviews[0]["verified_items"] == []
+    assert ("缺少营收资料。" in result.text) is genuine_gap
+    ref = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/"report_artifacts"/(ref["artifact_id"]+".json")).read_text())
+    assert saved["published_text"] == result.text
+    assert any(item["type"] == "gap" for item in saved["document"]["items"])
+    assert saved["review"]["gap_reviews"][0]["refs"] == ([] if genuine_gap else [reviews[0]["inferences"][0]["evidence"][0]["id"]])
