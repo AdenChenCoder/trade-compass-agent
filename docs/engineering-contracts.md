@@ -28,6 +28,11 @@ in the linked regression tests, not in expanding prose exception lists.
   Adjacent bound fields retain a runtime formatting separator, so a date and
   amount cannot concatenate into a different token. This whitespace is part of
   the exact reviewed and saved body; it supplies no factual or connective meaning.
+  Percentage display uses runtime-owned decimal rounding to two places when the
+  magnitude is at least 0.01 percent, with half-even ties. Smaller nonzero values
+  retain their original precision so presentation cannot turn them into zero.
+  Review receives this display value alongside the unchanged raw fact; receipts,
+  calculations and persisted factual values retain their original precision.
 - Review the actual reader presentation. No model rewrites approved paragraphs
   afterwards. Save the final consumer text alongside evidence and review; runtime
   availability notices may be appended without changing reviewed prose. Sources
@@ -71,6 +76,14 @@ in the linked regression tests, not in expanding prose exception lists.
   Before evidence review, the same local model independently partitions and types
   the body without task instructions, receipts or other source evidence. Exact
   text reconstruction is required; omission or rewriting fails this contract.
+  Reuse these exact spans as independently assessed assertions, including a
+  conclusion joined to otherwise correct measurements. Give each assertion a
+  runtime-owned ID and require exactly one assessment per ID. A paragraph passes
+  only when all its assertions pass. Supply its original paragraph and evidence
+  once as context for references, ellipsis, units and scope; paragraph wording is
+  not evidence. Matching activity measurements cannot establish unobserved actors'
+  actions or causes. Missing, duplicate or unknown assertion assessments fail
+  the review rather than silently dropping a claim.
   This body-only review also identifies quantities whose units or numerical scale
   are not established by the reader context. Evidence review cannot supply a
   missing convention or override that finding. Explicit shared units and

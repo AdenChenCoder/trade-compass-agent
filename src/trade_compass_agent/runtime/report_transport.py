@@ -95,7 +95,7 @@ class ReportTransport:
                           {"type": "text", "text": "为"},
                           {"type": "value", "ref": ref, "field": "value_with_unit"},
                           {"type": "text", "text": "。"}],
-                "rendered": f"{sample.subject}的{sample.label}为{sample.value}{sample.unit}。",
+                "rendered": f"{sample.subject}的{sample.label}为{sample.display_value_with_unit}。",
             }
 
     def encode_document(self, document):

@@ -69,7 +69,7 @@ def render_readable_document(document, rendered, findings, catalog, *, execution
     def compact(fact):
         identity = " · ".join(x for x in (fact.subject, fact.account) if x)
         return (f"{_plain(identity) + '：' if identity else ''}{_plain(fact.label)} "
-                f"{_plain(fact.value)}{_plain(fact.unit)}（{_plain(_date(fact))}）{reference(fact)}")
+                f"{_plain(fact.display_value_with_unit)}（{_plain(_date(fact))}）{reference(fact)}")
 
     def observations(items):
         groups = defaultdict(list)
@@ -82,7 +82,7 @@ def render_readable_document(document, rendered, findings, catalog, *, execution
             if len(facts) == 1:
                 fact = facts[0]
                 blocks.append(f"- {'**' + _plain(identity) + '**：' if identity else ''}"
-                              f"{_plain(fact.label)} {_plain(fact.value)}{_plain(fact.unit)}{reference(fact)}  \n"
+                              f"{_plain(fact.label)} {_plain(fact.display_value_with_unit)}{reference(fact)}  \n"
                               f"  {_plain(_date(fact))}")
                 continue
             if identity:
@@ -95,7 +95,7 @@ def render_readable_document(document, rendered, findings, catalog, *, execution
                 label = _plain(fact.label)
                 if len(dates) != 1:
                     label += f" · {_plain(_date(fact))}"
-                rows.append(f"| {label}{reference(fact)} | {_plain(fact.value)}{_plain(fact.unit)} |")
+                rows.append(f"| {label}{reference(fact)} | {_plain(fact.display_value_with_unit)} |")
             blocks.append("\n".join(rows))
         return "\n\n".join(blocks)
 

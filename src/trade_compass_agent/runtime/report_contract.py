@@ -10,7 +10,7 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN, localcontext
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
@@ -128,9 +128,22 @@ class Fact:
     timeframe: str = ""
     scope: str = ""
 
+    @property
+    def display_value_with_unit(self) -> str:
+        value = self.value
+        if self.kind == 'percentage' and self.unit == '%':
+            number = Decimal(value)
+            if number == 0:
+                value = '0'
+            elif abs(number) >= Decimal('0.01'):
+                with localcontext() as display_context:
+                    display_context.rounding = ROUND_HALF_EVEN
+                    value = f'{number:.2f}'.rstrip('0').rstrip('.')
+        return value + self.unit
+
     def display(self) -> str:
         context = " · ".join(x for x in (self.subject, self.account) if x)
-        return f"{context + '：' if context else ''}{self.label} {self.value}{self.unit}（{self.context()}）"
+        return f"{context + '：' if context else ''}{self.label} {self.display_value_with_unit}（{self.context()}）"
 
     def context(self) -> str:
         """Exact observation context shared by audit and reader presentations."""
@@ -548,7 +561,7 @@ def paragraph_segments(item: Paragraph, document: ReportDocument, catalog: Evide
         else:
             fact = catalog.resolve(entry.ref if isinstance(entry, Observation) else ref)
             unit = fact.unit if part.field == "value_with_unit" else ""
-            value = {"value_with_unit": fact.value + fact.unit, "subject": fact.subject,
+            value = {"value_with_unit": fact.display_value_with_unit, "subject": fact.subject,
                      "account": fact.account, "date": _date(fact) if fact.observed_at else "",
                      "label": fact.label}[part.field]
             if not value:

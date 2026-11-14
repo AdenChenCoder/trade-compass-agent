@@ -31,6 +31,82 @@ def assess(payload, verdict="entailed"):
                             for row in payload["statements"]]}
 
 
+@pytest.mark.parametrize('fault', ['none', 'missing', 'duplicate', 'unknown_id'])
+@pytest.mark.parametrize('legitimate', [True, False])
+def test_each_assertion_must_be_reviewed_before_the_complete_paragraph_is_published(tmp_path, fault, legitimate):
+    prefix = '300406的量比为0.594倍，换手率为1.18%。'
+    conclusion = '这些统计不足以判断交易主体是否卖出。' if legitimate else '这些统计证明非主力出货。'
+    receipts = [('compute_volume_ratio', json.dumps({'symbol': '300406', 'volume_ratio': 0.594, 'turnover_pct': 1.18}))]
+    seen = []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'c0', 'type': 'paragraph', 'section': 'market',
+                'parts': [{'type': 'text', 'text': prefix + conclusion}], 'refs': [f['id'] for f in report_facts(payload)]}]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'c0', 'parts': [
+                {'text': text, 'kind': 'other', 'outcome': 'none', 'extent': 'none'} for text in [prefix, conclusion]]}]})
+        seen.append(payload)
+        assert [row['text'] for row in payload['statements']] == [prefix, conclusion]
+        assert {row['context_id'] for row in payload['statements']} == {'p0'}
+        assert payload['contexts']['p0']['text'] == prefix + conclusion
+        assert len(payload['contexts']['p0']['evidence']) == 3  # identity, ratio, turnover
+        reply = assess(payload)
+        reply['assessments'][1]['verdict'] = 'entailed' if legitimate else 'unknown'
+        if fault == 'missing':
+            reply['assessments'].pop()
+        elif fault == 'duplicate':
+            reply['assessments'][1] = reply['assessments'][0]
+        elif fault == 'unknown_id':
+            reply['assessments'][1]['id'] = 'unrequested-claim'
+        return json.dumps(reply)
+    result = publish_report(task='说明成交活跃度及资料局限。', draft='', tool_results=receipts,
+        run_scope='assertion-coverage', call=writer, fact_review_call=checker, max_calls=2)
+    supported = legitimate and fault == 'none'
+    assert len(seen) == 1
+    assert (result.verification['status'] == 'complete') is supported
+    assert (conclusion in result.artifact['reader_body']) is supported
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text and saved['factual_review_input'] == seen[0]
+    assert saved['verification']['status'] == ('complete' if supported else 'incomplete')
+
+
+@pytest.mark.parametrize('value,display', [(0.42287699999999995, '0.42%'), (-0.42287699999999995, '-0.42%'),
+                                         (0.004, '0.004%'), (-0.004, '-0.004%'), (0, '0%')])
+def test_percent_reader_precision_preserves_source_values_and_real_nonzero_changes(tmp_path, value, display):
+    receipts = [('get_market_pulse', json.dumps({'as_of': '2026-11-12',
+        'sectors': [{'name': '金融行业', 'change_pct': value}]}))]
+    expected_raw = str(value)
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            fact = next(f for f in report_facts(payload) if f['metric'] == 'change_pct')
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'percentage', 'section': 'market', 'type': 'paragraph',
+                'parts': [{'type': 'text', 'text': '金融行业的涨跌幅为'},
+                          {'type': 'value', 'ref': fact['id'], 'field': 'value_with_unit'}, {'type': 'text', 'text': '。'}], 'refs': []}]})
+        assert display in payload['report']
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            return json.dumps(body_reply(payload))
+        evidence = next(f for row in payload['contexts'].values() for f in row['evidence'] if f['metric'] == 'change_pct')
+        assert evidence['display_value_with_unit'] == display
+        assert evidence['value'] == expected_raw
+        return json.dumps(assess(payload))
+    result = publish_report(task='说明所给金融行业涨跌幅。', draft='', tool_results=receipts,
+        run_scope='percentage-precision', call=writer, fact_review_call=checker, max_calls=2)
+    assert result.verification['status'] == 'complete' and display in result.text
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['receipts'][0]['result'] == receipts[0][1]
+    assert next(f['value'] for f in saved['facts'] if f['metric'] == 'change_pct') == expected_raw
+
+
 def body_reply(payload):
     assert set(payload) == {"paragraphs"}
     return {"quantity_issues": [], "paragraphs": [{"id": row["id"], "parts": [{"text": row["text"], "kind": "other",
@@ -57,7 +133,7 @@ def publish(fact_reply, *, max_calls=2, coverage_missing=False, check_active=lam
         if "paragraphs" in payload:
             return json.dumps(body_reply(payload))
         factual.append(payload)
-        assert set(payload) == {"statements", "receipts", "execution_records", "report_context", "request_context"}
+        assert set(payload) == {"statements", "contexts", "receipts", "execution_records", "report_context", "request_context"}
         assert payload["request_context"] == {"role": "requirements", "text": "task instruction marker"}
         assert payload["receipts"][0]["result"] == RECEIPTS[0][1]
         assert "untrusted draft marker" not in user
@@ -113,7 +189,7 @@ def test_rule_context_remains_separate_from_evidence_and_cannot_authorize_execut
         assert payload["request_context"] == {"role": "requirements", "text": task}
         assert payload["receipts"][0]["result"] == RECEIPTS[0][1]
         assert payload["execution_records"] == []
-        assert all(f["value"] != "30" for row in payload["statements"] for f in row["evidence"])
+        assert all(f["value"] != "30" for row in payload["contexts"].values() for f in row["evidence"])
         return json.dumps(assess(payload))
     result = publish_report(task=task, draft="already bought; untrusted draft", tool_results=RECEIPTS,
         run_scope="policy-provenance", call=writer, fact_review_call=checker, max_calls=2)
@@ -628,7 +704,7 @@ def test_bound_unit_presence_cannot_override_sentence_truth_or_author_quantity(a
             return json.dumps(result)
         factual.append(payload)
         assert payload["statements"][0]["text"] == "价格变动比例为4.55%。"
-        trace, = payload["statements"][0]["calculations"]
+        trace, = payload["contexts"][payload["statements"][0]["context_id"]]["calculations"]
         assert trace["display_value_with_unit"] == "4.55%"
         assert trace["result"] == "4.545454545454545454545454545"
         return json.dumps(assess(payload, verdict))

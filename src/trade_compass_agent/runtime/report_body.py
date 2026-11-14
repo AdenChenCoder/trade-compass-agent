@@ -5,6 +5,7 @@ from __future__ import annotations
 BODY_MEANING = """Read ONLY the supplied reader paragraphs. You have no execution evidence and must not decide truth or justify a claim.
 Classify assertions about the execution of an actor's state-changing operations: submitting, filling, rejecting or cancelling orders, or saving/deleting memory records. The classification target is an operation performed by an actor, NOT financial performance or observations of market/account state. Affirmative and negative outcomes both count. Do not soften a categorical outcome into uncertainty, or turn missing receipts into a negative outcome. Proposals, conditions, historical events, and inability to confirm an outcome are different meanings.
 Partition EACH input text into contiguous parts at assertion boundaries. Copy text exactly, including punctuation/spacing; concatenating parts must reproduce the input byte-for-byte. Do not rewrite, normalize, add qualifiers, or omit any text. Split independent assertions when possible; retain sufficient original context to classify their meaning.
+Each part should contain one independently assessable predicate, including conjoined factual, causal, actor-behavior and qualitative assertions. Keep negation, conditions and embedding attached to the proposition they qualify. Do not group a new conclusion with neighboring measurements merely because they share a sentence; the original paragraph remains available to resolve fragments.
 Return JSON: {"quantity_issues":[{"id":"paragraph id","text":"exact problematic quantity assertion span","reason":"missing unit or ratio scale in the reader body"}],"paragraphs":[{"id":"input id","parts":[{"text":"exact original span","kind":"current_outcome|historical_outcome|plan|availability|other","outcome":"performed|not_performed|unknown|none","extent":"operation|whole_run|none"}]}]}.
 current_outcome means the text ASSERTS that an actor's state-changing operation was performed, rejected, or not performed in this run, including categorical non-execution. Price movement, return, valuation, holdings and balance observations are other, even when they describe the current run or changes over time; they do not themselves assert that the actor submitted an order or wrote memory. historical_outcome concerns a past state-changing operation, not a past price observation. For it, outcome must be performed or not_performed, and extent must distinguish a specific operation from an assertion covering the whole run. A specific rejected attempt is not an assertion that no actions occurred anywhere in the run.
 Resolve the proposition the author actually commits to, preserving negation, conditions and embedding. A decision about representing an operation in a report is not a decision about performing that operation. Mentioning an operation as the object of a reporting rule does not assert its occurrence or non-occurrence. Conversely, affirming a business outcome still commits to that outcome even when introduced as a confirmation or explanation. Classify the asserted business state, not the occurrence of an operation word inside another proposition.
@@ -79,3 +80,26 @@ def runtime_bound_quantity_issue(issue, segments):
         locations.append((start, start + len(issue["text"])))
         cursor = start + 1
     return bool(locations) and all(any(a <= start and end <= b for a, b in boundaries) for start, end in locations)
+
+
+def factual_assertions(inferences, body_meaning):
+    """Reuse the validated body partition; no new wording or truth heuristic.
+
+    Evidence and paragraph context are stored once. Opaque runtime IDs separate
+    assertion coverage from author-controlled paragraph and fact IDs.
+    """
+    contexts, statements, owners = {}, [], {}
+    for row in inferences:
+        identifier = row['id']
+        context_id = f'p{len(contexts)}'
+        contexts[context_id] = {key: value for key, value in row.items() if key not in {'id', 'segments'}}
+        parts = (body_meaning or {}).get(identifier, [{'text': row['text'], 'kind': 'other'}])
+        kept = [part['text'] for part in parts if part['kind'] != 'current_outcome']
+        if ''.join(kept) != row['text']:
+            raise ValueError('factual assertion partition differs from reviewed body')
+        owners[identifier] = []
+        for text in kept:
+            claim_id = f'c{len(statements)}'
+            statements.append({'id': claim_id, 'context_id': context_id, 'text': text})
+            owners[identifier].append(claim_id)
+    return contexts, statements, owners

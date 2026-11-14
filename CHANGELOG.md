@@ -4,6 +4,11 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [0.5.10] - Unreleased
 
+- Review independently assessable assertions within reader paragraphs, requiring
+  complete assessment coverage before publication. Keep original context for
+  natural phrasing without letting correct neighboring numbers prove an
+  unsupported conclusion. Round percentage display without changing raw facts
+  or turning small nonzero observations into zero.
 - Support an independently configured local factual reviewer. Separate task
   coverage from evidence entailment; unavailable or inconclusive factual review
   keeps the report incomplete. Both review roles retain the original deadline.

@@ -65,6 +65,14 @@ _learning_prices = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1
 _learning_reversed = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars": [
     {"timestamp": "2026-11-10", "close": 23}, {"timestamp": "2026-11-11", "close": 22}]}))]
 _bounded_direction = "基于2026-11-10至2026-11-11的数据，002415收盘价呈现上升趋势。"
+_activity = [('compute_volume_ratio', json.dumps({'symbol': '300406', 'as_of': '2026-11-12',
+              'volume_ratio': 0.594, 'turnover_pct': 1.18}))]
+_activity_prose = '300406在2026-11-12的量比为0.594倍，换手率为1.18%。'
+_actor_statistics = [('fetch_url', json.dumps({'url': 'https://example.invalid/frozen-institution-trades',
+    'title': '300406机构成交统计', 'content': '本统计覆盖2026-11-12的300406机构成交记录。该范围内机构买入额10万元，卖出额0元，均为逐笔成交金额而非净额；不推断统计覆盖范围以外的市场活动。'}))]
+_actor_zero = _activity_prose + '在2026-11-12所给统计覆盖范围内，机构卖出额为0元。'
+_market_percentage = [('get_market_pulse', json.dumps({'as_of': '2026-11-12',
+                       'sectors': [{'name': '金融行业', 'change_pct': 0.42287699999999995}]}))]
 SCOPE_CASES = {
     "bound_duplicate_gap": ("002415在2025-01-01的收盘价为22元/股。", True, _prices,
                             "说明002415在2025年1月1日的收盘价。"),
@@ -116,6 +124,19 @@ SCOPE_CASES = {
                               False, _learning_prices, "说明这两次收盘观察能支持什么结论。"),
     "statistical_significance": ("2026-11-10至2026-11-11的两个收盘价证明002415的上涨具有统计显著性。",
                                   False, _learning_prices, "说明这两次收盘观察能支持什么结论。"),
+    'actor_absence_from_activity': (_activity_prose + '这些统计证明非主力出货。', False, _activity,
+                                    '说明成交活跃度及能否判断交易主体的卖出行为。'),
+    'actor_activity_limited': (_activity_prose + '成交活跃度较低，但仅这些统计不足以判断交易主体是否卖出。',
+                              True, _activity, '说明成交活跃度及能否判断交易主体的卖出行为。'),
+    'actor_absence_with_limitation': (_activity_prose + '虽然不能确定后续走势，但可以确定该观察日非主力出货。',
+                                     False, _activity, '说明成交活跃度及资料的适用限制。'),
+    'actor_zero_missing': (_actor_zero, False, _activity, '说明成交活跃度及统计覆盖范围内的机构卖出金额。'),
+    'actor_zero_supported': (_actor_zero, True, [*_activity, *_actor_statistics],
+                             '说明成交活跃度及统计覆盖范围内的机构卖出金额。'),
+    'bound_percentage_display': ('金融行业在2026-11-12的涨跌幅为0.42%。', True, _market_percentage,
+                                 '说明金融行业的涨跌幅。'),
+    'wrong_percentage_display': ('金融行业在2026-11-12的涨跌幅为0.43%。', False, _market_percentage,
+                                 '说明金融行业的涨跌幅。'),
     "current_execution_receipt": (_price_prose + "本轮已买入002415共100股，成交价22元/股。", True,
         [*_prices, ("place_paper_trade", json.dumps({"status": "executed", "trade_id": "frozen-current-fill",
             "symbol": "002415", "account": "test", "side": "buy", "quantity": 100, "price": 22,
@@ -228,6 +249,12 @@ def main():
                                  {"type": "value", "ref": close_id, "field": "date"},
                                  {"type": "text", "text": "的收盘价为22元/股。"}]
                     items = [{"id": "answer", "section": "overview", "type": "paragraph", "parts": parts, "refs": refs}]
+                    if name == 'bound_percentage_display':
+                        pct = next(group['rows'][0][0] for group in payload['facts'] if group['metric'] == 'change_pct')
+                        items[0]['parts'] = [{'type': 'value', 'ref': pct, 'field': 'subject'},
+                            {'type': 'text', 'text': '在'}, {'type': 'value', 'ref': pct, 'field': 'date'},
+                            {'type': 'text', 'text': '的涨跌幅为'}, {'type': 'value', 'ref': pct, 'field': 'value_with_unit'},
+                            {'type': 'text', 'text': '。'}]
                     if name in {"bound_duplicate_gap", "bound_genuine_gap"}:
                         first = next(group["rows"][0][0] for group in payload["facts"] if group["metric"] == "close")
                         items[0]["parts"] = [
