@@ -128,6 +128,15 @@ class Fact:
     timeframe: str = ""
     scope: str = ""
 
+    def observation_date(self, timezone_name: str) -> str | None:
+        """Calendar date of the original observation, never its retrieval."""
+        if not self.observed_at:
+            return None
+        stamp = datetime.fromisoformat(self.observed_at)
+        if stamp.tzinfo:
+            stamp = stamp.astimezone(ZoneInfo(timezone_name))
+        return stamp.date().isoformat()
+
     @property
     def display_value_with_unit(self) -> str:
         value = self.value

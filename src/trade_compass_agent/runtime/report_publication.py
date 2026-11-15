@@ -201,7 +201,27 @@ refer to reference_date in reference_timezone; a null reference_date means that 
 is unknown, not the latest evidence date or the review machine's date. Displayed dates
 use display_timezone, including daily bars whose UTC timestamp crosses a calendar day.
 Preserve source observation times; retrieval time cannot make a historical observation current.
+Assess four dimensions independently BEFORE the overall verdict. checks must contain:
+identity_scope: entity, account, metric, source coverage and population scope;
+time: the assertion's actual time commitment versus the source observation date;
+quantity: value, unit, scale, precision and numerical relationships;
+support: empirical conclusions, actor/causal commitments, reasoning scope and rule compliance.
+Each dimension is entailed, contradicted, unknown, or not_applicable. Use not_applicable
+only when the assertion makes NO commitment in that dimension, never because another
+dimension matches or because a mixed statement was labelled judgment. In particular,
+an asserted current valuation still makes a temporal commitment inside an opinion.
+For time, explicitly compare asserted dates with observed_date in the display timezone
+and the runtime reference date. observed_date is derived from the unchanged original
+observed_at; it is NOT retrieval time. A prior-day value cannot establish today's or
+the current value merely because it was retrieved today or is the latest provided.
+An explicitly dated historical value remains valid even when it is not current.
+The comparison must name the claimed and observed dates when temporal currency is
+asserted, including within a recommendation or judgment. Unknown dates stay unknown.
 Return only JSON: {"assessments":[{"id":"input id","comparison":"brief target-claim evidence comparison, at most two short sentences",
+"checks":{"identity_scope":"entailed|contradicted|unknown|not_applicable",
+"time":"entailed|contradicted|unknown|not_applicable",
+"quantity":"entailed|contradicted|unknown|not_applicable",
+"support":"entailed|contradicted|unknown|not_applicable"},
 "verdict":"entailed|contradicted|unknown"}]}.
 Include every input id exactly once. Use entailed only if EVERY factual commitment
 in that item is supported and its evidence-scoped reasoning respects the evidence's limits.
@@ -494,7 +514,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "inferences": [{"id": item.id, "text": prose[item.id],
                 "segments": paragraph_segments(item, document, catalog) if isinstance(item, Paragraph)
                             else [{"origin": "author", "text": item.text}],
-                "evidence": [{**asdict(fact), "display_value_with_unit": fact.display_value_with_unit}
+                "evidence": [{**asdict(fact), "display_value_with_unit": fact.display_value_with_unit,
+                              "observed_date": fact.observation_date(report_context['display_timezone'])}
                              for fact in evidence[item.id][0]],
                 "calculations": evidence[item.id][1]} for item in inferences]}
             # Track actual reader content before any reviewer filters it.
@@ -615,13 +636,27 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     assessments = factual_review["assessments"]
                     if (set(factual_review) != {"assessments"} or not isinstance(assessments, list)
                             or len(assessments) != len(statements)
-                            or any(not isinstance(row, dict) or set(row) != {"id", "comparison", "verdict"}
+                            or any(not isinstance(row, dict) or set(row) != {"id", "comparison", "checks", "verdict"}
                                    or not isinstance(row["id"], str)
                                    or row["verdict"] not in {"entailed", "contradicted", "unknown"}
                                    or not isinstance(row["comparison"], str) or not row["comparison"].strip()
-                                   or len(row["comparison"]) > 5000 for row in assessments)
+                                   or len(row["comparison"]) > 5000
+                                   or not isinstance(row['checks'], dict)
+                                   or set(row['checks']) != {'identity_scope', 'time', 'quantity', 'support'}
+                                   or any(not isinstance(value, str) or value not in {
+                                       'entailed', 'contradicted', 'unknown', 'not_applicable'}
+                                       for value in row['checks'].values()) for row in assessments)
                             or {row["id"] for row in assessments} != {row['id'] for row in statements}):
                         raise ValueError("invalid factual review")
+                    # A blanket approval cannot hide an unresolved dimension.
+                    # These are typed semantic outcomes, not prose truth rules.
+                    for assessment in assessments:
+                        assessment['reported_verdict'] = assessment['verdict']
+                        checks = set(assessment['checks'].values())
+                        if 'contradicted' in checks:
+                            assessment['verdict'] = 'contradicted'
+                        elif 'unknown' in checks and assessment['verdict'] == 'entailed':
+                            assessment['verdict'] = 'unknown'
                     by_assertion = {row['id']: row for row in assessments}
                     original_text = {row['id']: row['text'] for row in statements}
                     rows = []

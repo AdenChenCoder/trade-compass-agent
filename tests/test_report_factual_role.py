@@ -27,8 +27,65 @@ def compose(payload):
 
 
 def assess(payload, verdict="entailed"):
-    return {"assessments": [{"id": row["id"], "comparison": "比较最终陈述与原始资料。", "verdict": verdict}
+    return {"assessments": [{"id": row["id"], "comparison": "比较最终陈述与原始资料。", "verdict": verdict,
+                            "checks": {key: verdict for key in ('identity_scope', 'time', 'quantity', 'support')}}
                             for row in payload["statements"]]}
+
+
+@pytest.mark.parametrize('dimension', ['identity_scope', 'time', 'quantity', 'support'])
+@pytest.mark.parametrize('verdict', ['entailed', 'unknown', 'contradicted', 'not_applicable'])
+def test_each_review_dimension_controls_persisted_consumer_result(tmp_path, dimension, verdict):
+    def reply(payload, _):
+        result = assess(payload)
+        result['assessments'][0]['checks'][dimension] = verdict
+        return result
+    result, _, _ = publish(reply)
+    supported = verdict in {'entailed', 'not_applicable'}
+    assert result.artifact['review_valid']
+    assert (result.verification['status'] == 'complete') is supported
+    assert ('22元/股升至23元/股' in result.text) is supported
+    row = result.artifact['factual_review']['assessments'][0]
+    assert row['reported_verdict'] == 'entailed'
+    assert row['verdict'] == (verdict if not supported else 'entailed')
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text
+    assert saved['verification']['status'] == ('complete' if supported else 'incomplete')
+    assert not any(key in result.text for key in ('identity_scope', 'checks', 'reported_verdict'))
+
+
+@pytest.mark.parametrize('fault', ['missing_checks', 'missing_dimension', 'unknown_dimension', 'invalid_status', 'bool_status'])
+def test_incomplete_dimension_review_is_unavailable_not_a_successful_fact_check(fault):
+    def reply(payload, _):
+        result = assess(payload)
+        row = result['assessments'][0]
+        if fault == 'missing_checks':
+            del row['checks']
+        elif fault == 'missing_dimension':
+            del row['checks']['time']
+        elif fault == 'unknown_dimension':
+            row['checks']['other'] = 'entailed'
+        else:
+            row['checks']['time'] = True if fault == 'bool_status' else 'approved'
+        return result
+    result, _, _ = publish(reply)
+    assert not result.artifact['review_valid']
+    assert result.verification['status'] == 'incomplete'
+    assert '22元/股升至23元/股' not in result.text
+    assert any(f['code'] == 'review_unavailable' for f in result.verification['findings'])
+
+
+@pytest.mark.parametrize('as_of,expected,utc_date', [
+    ('20261111', '2026-11-11', '2026-11-10'), ('20261112', '2026-11-12', '2026-11-11'), (None, None, None)])
+def test_review_observation_date_comes_from_source_not_retrieval(as_of, expected, utc_date):
+    from trade_compass_agent.runtime.report_contract import EvidenceCatalog
+    raw = json.dumps({'_meta': {'timestamp': '2026-11-12T15:10:51'},
+                      'symbol': '600928', 'pb': 0.4572, 'as_of': as_of})
+    catalog = EvidenceCatalog.build([('get_fundamentals', raw)], run_scope='dates')
+    fact = next(f for f in catalog.facts.values() if f.metric == 'pb')
+    assert fact.observation_date('Asia/Shanghai') == expected
+    assert fact.observation_date('UTC') == utc_date
+    assert catalog.receipts[0]['result'] == raw
 
 
 @pytest.mark.parametrize('fault', ['none', 'missing', 'duplicate', 'unknown_id'])
@@ -103,6 +160,7 @@ def test_percent_reader_precision_preserves_source_values_and_real_nonzero_chang
         assert evidence['display_value_with_unit'] == display
         assert evidence['value'] == expected_raw
         assert evidence['observed_at'] is None
+        assert evidence['observed_date'] is None
         return json.dumps(assess(payload))
     result = publish_report(task='说明所给金融行业涨跌幅。', draft='', tool_results=receipts,
         run_scope='percentage-precision', call=writer, fact_review_call=checker, max_calls=2)

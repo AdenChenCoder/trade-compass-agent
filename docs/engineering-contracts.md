@@ -68,7 +68,17 @@ in the linked regression tests, not in expanding prose exception lists.
   typed calculations, current execution records and the final statements. The original
   task is supplied separately as requirements context: it can establish a requested
   decision rule, but cannot prove market/account facts, causal premises or execution.
-  Drafts and coverage decisions are not evidence. Each statement
+  Drafts and coverage decisions are not evidence. The local assessor returns
+  separate identity/scope, time, quantity and inferential-support checks for
+  every assertion. The runtime combines them with the overall verdict; an
+  unknown or contradictory dimension cannot be overridden by a blanket approval.
+  Missing or malformed dimensions make review unavailable, not a correct
+  rejection. Supply the observation's calendar date in the display timezone
+  alongside its unchanged original timestamp. Current claims must respect that
+  date even within a judgment; retrieval time and latest-available status cannot
+  make a prior-day quantity current. Explicitly dated historical values remain
+  usable. These checks stay in internal evidence, never reader copy.
+  Each statement
   must be entailed; contradictory or unknown statements are withheld. Missing,
   malformed or unavailable assessments cannot fall back to writer approval.
   Assess actual factual commitments while preserving negation, conditions and

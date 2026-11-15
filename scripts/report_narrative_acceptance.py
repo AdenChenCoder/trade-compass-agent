@@ -170,14 +170,26 @@ _dated_price = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", 
     {"timestamp": "2025-01-02", "close": 22}]}))]
 _utc_price = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars": [
     {"timestamp": "2025-01-01T16:00:00+00:00", "close": 22}]}))]
+_current_valuation_prose = ('600928 西安银行。基本面方面，公司当前市净率为0.4572倍，'
+                            '深度破净状态提供了较高的估值安全边际。')
+_valuation_base = {'_meta': {'source': 'sample', 'timestamp': '2026-11-12T15:10:51', 'freshness': 'realtime'},
+                   'symbol': '600928', 'name': '西安银行', 'pb': 0.4572}
+_fresh_valuation = [('get_fundamentals', json.dumps({**_valuation_base, 'as_of': '20261112'}))]
+_stale_valuation = [('get_fundamentals', json.dumps({**_valuation_base, 'as_of': '20261111'}))]
 TIME_CASES = {
     "relative_current": ("今天002415收盘价为22元/股。", True, _dated_price, "2025-01-02"),
     "relative_stale": ("今天002415收盘价为22元/股。", False, _dated_price, "2025-01-03"),
     "relative_unknown": ("今天002415收盘价为22元/股。", False, _dated_price, None),
     "utc_display_date": ("002415在2025-01-02的收盘价为22元/股。", True, _utc_price, "2025-01-03"),
     "utc_wrong_date": ("002415在2025-01-01的收盘价为22元/股。", False, _utc_price, "2025-01-03"),
+    'pb_fresh_current': (_current_valuation_prose, True, _fresh_valuation, '2026-11-12'),
+    'pb_stale_current': (_current_valuation_prose, False, _stale_valuation, '2026-11-12'),
+    'pb_stale_explicit': (_current_valuation_prose.replace('公司当前市净率',
+        '按2026年11月11日的数据，公司市净率'), True, _stale_valuation, '2026-11-12'),
 }
 CASES.update({name: (prose, expected) for name, (prose, expected, _, _) in TIME_CASES.items()})
+TIME_CASE_TASKS = {name: '根据所给资料说明600928的市净率及所述估值判断。'
+                   for name in ('pb_fresh_current', 'pb_stale_current', 'pb_stale_explicit')}
 
 
 def main():
@@ -336,7 +348,7 @@ def main():
         started = time.monotonic()
         try:
             with llm_request_deadline(started + deadline_seconds):
-                task = ("说明所给日线资料中的收盘价及其日期。" if name in TIME_CASES else
+                task = (TIME_CASE_TASKS.get(name, "说明所给日线资料中的收盘价及其日期。") if name in TIME_CASES else
                         SCOPE_CASES[name][3] if name in SCOPE_CASES else
                         "说明这两个观察日收盘价变化，仅在存在本轮执行记录时报告成交。")
                 if name in {"hidden_result", "compact_percentage", "visible_result", "missing_percentage_unit", "correct_percentage",
