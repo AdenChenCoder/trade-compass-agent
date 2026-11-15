@@ -70,6 +70,11 @@ def test_empirical_commitment_cannot_publish_on_analysis_basis(tmp_path, asserti
                     part['assertion_kind'] = assertion_kind
                 elif row['id'] == 'plan':
                     part.update(assertion_kind='judgment', kind='plan')
+                original = next(p for p in payload['paragraphs'] if p['id'] == row['id'])
+                row['parts'] = [{'through': original['source_units'][-1]['id'],
+                    'operation_meaning': 'proposal_or_decision' if row['id'] == 'plan' else 'no_operation_claim',
+                    'claim_kind': part['assertion_kind'], 'time_commitment': 'calendar_or_other',
+                    'operation_outcome': 'none', 'operation_extent': 'none'}]
             return json.dumps(result)
         result = assess(payload)
         for row, statement in zip(result['assessments'], payload['statements'], strict=True):
@@ -865,8 +870,34 @@ def body_reply(payload):
         "outcome": "none", "extent": "none"}]} for row in payload["paragraphs"]]}
 
 
+@pytest.mark.parametrize('change', [
+    {'claim_kind': 'availability'}, {'operation_meaning': 'other'},
+    {'time_commitment': 'reference_date'}, {'kind': 'other'},
+])
+def test_mixed_body_wire_axes_cannot_publish_a_valid_price(change):
+    def checker(system, user):
+        payload = json.loads(user)
+        assert 'paragraphs' in payload  # Invalid BODY must never reach FACT.
+        row = payload['paragraphs'][0]
+        part = {'through': row['source_units'][-1]['id'], 'operation_meaning': 'no_operation_claim',
+                'claim_kind': 'observation', 'time_commitment': 'calendar_or_other',
+                'operation_outcome': 'none', 'operation_extent': 'none', **change}
+        return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [part]}]})
+    def writer(system, user):
+        payload = json.loads(user)
+        assert 'schema' in payload
+        return json.dumps(compose(payload))
+    result = publish_report(task='说明所给价格。', draft='', tool_results=RECEIPTS,
+        run_scope='invalid-body-wire', call=writer, fact_review_call=checker, max_calls=2)
+    assert result.verification['status'] == 'incomplete' and not result.artifact['review_valid']
+    assert result.artifact['model_calls'] == 2 and result.artifact['factual_model_calls'] == 0
+    assert result.artifact['attempts'][-1]['review_error_type'] == 'BodyMeaningError'
+    assert '22元/股升至23元/股' not in result.artifact['reader_body']
+
+
 @pytest.mark.parametrize('prefix', ['针对收盘价记录的核对，', '针对持仓逻辑是否仍成立的问题，', '并非没有观察资料，', '若只看已提供的记录；', '说明👩‍💻（e\u0301），'])
-def test_source_unit_selection_preserves_all_reader_text_without_model_copying(tmp_path, prefix):
+@pytest.mark.parametrize('wire_format', ['legacy', 'explicit_axes'])
+def test_source_unit_selection_preserves_all_reader_text_without_model_copying(tmp_path, prefix, wire_format):
     expected = prefix + '002415在2025-01-01的收盘价为22元/股。'
     def writer(system, user):
         payload = json.loads(user)
@@ -886,6 +917,10 @@ def test_source_unit_selection_preserves_all_reader_text_without_model_copying(t
             part.pop('text')
             part.pop('referents')
             part['through'] = row['source_units'][-1]['id']
+            if wire_format == 'explicit_axes':
+                part = {'through': part['through'], 'operation_meaning': 'no_operation_claim',
+                    'claim_kind': 'observation', 'time_commitment': 'calendar_or_other',
+                    'operation_outcome': 'none', 'operation_extent': 'none'}
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [part]}]})
         assert payload['statements'][0]['text'] == expected
         return json.dumps(assess(payload))
@@ -952,10 +987,12 @@ def test_selected_source_units_preserve_bound_dates_after_execution_projection(d
         if 'paragraphs' in payload:
             row = payload['paragraphs'][0]
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [
-                {'through': row['source_units'][0]['id'], 'kind': 'current_outcome', 'assertion_kind': 'actor_activity',
-                 'time_scope': 'other', 'referents': {}, 'outcome': 'performed', 'extent': 'operation'},
-                {'through': row['source_units'][-1]['id'], 'kind': 'other', 'assertion_kind': 'observation',
-                 'time_scope': 'reference_date', 'referents': {}, 'outcome': 'none', 'extent': 'none'}]}]})
+                {'through': row['source_units'][0]['id'], 'operation_meaning': 'current_business_operation',
+                 'claim_kind': 'actor_activity', 'time_commitment': 'calendar_or_other',
+                 'operation_outcome': 'performed', 'operation_extent': 'operation'},
+                {'through': row['source_units'][-1]['id'], 'operation_meaning': 'no_operation_claim',
+                 'claim_kind': 'observation', 'time_commitment': 'task_now',
+                 'operation_outcome': 'none', 'operation_extent': 'none'}]}]})
         assert '已买入' not in payload['statements'][0]['text']
         return json.dumps(assess(payload))
     result = publish_report(task='说明价格与执行状态。', draft='',
