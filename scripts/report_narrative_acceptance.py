@@ -172,7 +172,10 @@ _utc_price = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "b
     {"timestamp": "2025-01-01T16:00:00+00:00", "close": 22}]}))]
 _current_valuation_prose = ('600928 西安银行。基本面方面，公司当前市净率为0.4572倍，'
                             '深度破净状态提供了较高的估值安全边际。')
-_valuation_base = {'_meta': {'source': 'sample', 'timestamp': '2026-11-12T15:10:51', 'freshness': 'realtime'},
+# Frozen producer-shaped evidence, explicitly not a live provider check. The
+# producer's "sample" flag excludes observations and would invalidate this pair.
+_valuation_base = {'_meta': {'source': 'tushare', 'timestamp': '2026-11-12T15:10:51', 'freshness': 'realtime'},
+                   'provider': 'tushare', 'has_real_fundamentals': True, 'data_status': 'available',
                    'symbol': '600928', 'name': '西安银行', 'pb': 0.4572}
 _fresh_valuation = [('get_fundamentals', json.dumps({**_valuation_base, 'as_of': '20261112'}))]
 _stale_valuation = [('get_fundamentals', json.dumps({**_valuation_base, 'as_of': '20261111'}))]
@@ -190,6 +193,24 @@ TIME_CASES = {
 CASES.update({name: (prose, expected) for name, (prose, expected, _, _) in TIME_CASES.items()})
 TIME_CASE_TASKS = {name: '根据所给资料说明600928的市净率及所述估值判断。'
                    for name in ('pb_fresh_current', 'pb_stale_current', 'pb_stale_explicit')}
+
+
+def valuation_fixture_checks(selected):
+    """Require the intended fact before a negative can prove anything about time."""
+    from trade_compass_agent.runtime.report_contract import EvidenceCatalog
+    checked = {}
+    for name in selected:
+        if name not in TIME_CASE_TASKS:
+            continue
+        catalog = EvidenceCatalog.build(TIME_CASES[name][2], run_scope='fixture-preflight')
+        facts = [f for f in catalog.facts.values() if f.entity == '600928' and f.metric == 'pb']
+        expected_date = '2026-11-12' if name == 'pb_fresh_current' else '2026-11-11'
+        if (len(facts) != 1 or facts[0].value != '0.4572' or facts[0].unit != '倍'
+                or facts[0].observation_date('Asia/Shanghai') != expected_date):
+            raise RuntimeError(f'{name}: frozen valuation fixture lost its value, unit or observation date')
+        checked[name] = {'value': facts[0].value, 'unit': facts[0].unit,
+                         'observed_at': facts[0].observed_at, 'observed_date': expected_date}
+    return checked
 
 
 def main():
@@ -225,7 +246,8 @@ def main():
               "model": args.model, "fact_model": args.fact_model, "cases": [], "plan": CASES, "retries": 0, "business_calls": 0,
               "selected_cases": list(selected), "unselected_cases": [name for name in CASES if name not in selected],
               "full_corpus": len(selected) == len(CASES),
-              "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
+              "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+              "fixture_checks": valuation_fixture_checks(selected)}
     (root/"plan.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
     config = AppConfig(data_dir=root/"data", memory_dir=root/"memory",
                        llm=LLMConfig(provider="lmstudio", model=args.model, api_key_env="", max_retries=0, timeout=120,
