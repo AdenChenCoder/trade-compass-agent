@@ -44,6 +44,9 @@ in the linked regression tests, not in expanding prose exception lists.
   a requested result present only in source notes does not count as an answer.
   Material gaps and uncertain execution outcomes
   stay visible in the body. Legacy saved text remains readable without regeneration.
+  The parser may discard an exact empty text token, which contributes no reader
+  characters. Preserve every nonempty character, strict field validation, the raw
+  response and the minimum-content requirement; an empty report is not a repair.
 
 - Natural paragraph writing uses the model's reasoning path, with bounded output
   and application-side schema validation. Non-thinking mode serves internal
@@ -171,6 +174,11 @@ in the linked regression tests, not in expanding prose exception lists.
   research judgments through their factual premises and reasoning scope rather
   than rejecting them solely for being subjective. None of these distinctions
   exempts adjacent empirical, causal or participant claims from evidence review.
+  An analytical assessment of a holding rationale is not an attribution of the
+  investor's private beliefs or a completed strategy change. The time dimension
+  checks empirical observation dates, not whether a proposed future action has
+  already occurred. Pure proposals have no empirical time commitment; dated
+  factual premises remain independently applicable and cannot be waived.
   This body-only review also identifies quantities whose units or numerical scale
   are not established by the reader context. Evidence review cannot supply a
   missing convention or override that finding. Explicit shared units and

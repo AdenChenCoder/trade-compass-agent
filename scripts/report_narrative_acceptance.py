@@ -159,6 +159,20 @@ SCOPE_CASES = {
     'watchpoint_with_fictitious_fill': (_price_prose +
         '若之后收盘价超过24元/股，再重新评估是否增持。本轮已经买入002415共100股。',
         False, _prices, '报告所给两个观察日的收盘价，并提出一个后续观察条件，不要求本轮执行交易。'),
+    'thesis_judgment_supported': ('按2025年1月2日的数据，600928市净率为0.8倍。'
+        '我认为估值折价这一持有理由仍可保留，但仅凭该指标不能保证安全边际或后续收益。',
+        True, _company, '说明所给市净率，评估估值折价是否仍可作为持有理由，并说明判断的限制。'),
+    'thesis_judgment_reordered': ('仅这一项估值指标不足以保证安全边际或收益；'
+        '不过，600928在2025年1月2日的市净率为0.8倍，依此分析，估值折价的持有理由仍可保留。',
+        True, _company, '说明所给市净率，评估估值折价是否仍可作为持有理由，并说明判断的限制。'),
+    'thesis_judgment_false_premise': ('按2025年1月2日的数据，600928市净率为0.8倍。'
+        '我认为估值折价这一持有理由仍可保留，但仅凭该指标不能保证安全边际或后续收益。',
+        False, [('get_fundamentals', json.dumps({'symbol': '600928', 'name': '西安银行',
+            'as_of': '2025-01-02', 'pb': 1.8}))],
+        '说明所给市净率，评估估值折价是否仍可作为持有理由，并说明判断的限制。'),
+    'thesis_judgment_overclaim': ('按2025年1月2日的数据，600928市净率为0.8倍。'
+        '我认为这个估值足以保证持有不会亏损。', False, _company,
+        '说明所给市净率，评估估值折价是否仍可作为持有理由，并说明判断的限制。'),
     "current_execution_receipt": (_price_prose + "本轮已买入002415共100股，成交价22元/股。", True,
         [*_prices, ("place_paper_trade", json.dumps({"status": "executed", "trade_id": "frozen-current-fill",
             "symbol": "002415", "account": "test", "side": "buy", "quantity": 100, "price": 22,

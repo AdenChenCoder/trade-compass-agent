@@ -8,7 +8,7 @@ from report_contract_helpers import report_facts
 from trade_compass_agent.runtime.compression.budget import estimate_tokens
 from trade_compass_agent.runtime.report_contract import EvidenceCatalog
 from trade_compass_agent.runtime.report_publication import publish_report
-from trade_compass_agent.runtime.report_transport import ReportTransport
+from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items
 
 
 def market_receipts():
@@ -16,6 +16,49 @@ def market_receipts():
         "bars": [{"timestamp": (date(2026, 10, 1) + timedelta(days=i)).isoformat(),
                   "open": 10+i/10, "high": 11+i/10, "low": 9+i/10, "close": 10.5+i/10,
                   "volume": 1000+i} for i in range(40)]})) for symbol in ["000001", "000002", "000003", "000004", "000005", "000006", "000007", "000008"]]
+
+
+@pytest.mark.parametrize('position', [0, 1, 3])
+def test_zero_character_prose_does_not_erase_a_readable_holding_after_reopen(tmp_path, position):
+    receipts = [('get_bars', json.dumps({'symbol': '600928', 'bars': [
+        {'timestamp': '2025-01-02', 'close': 3.79}]}))]
+    calls = []
+    def writer(system, user):
+        payload = json.loads(user)
+        calls.append(payload)
+        if 'schema' in payload:
+            ref = next(f['id'] for f in report_facts(payload) if f['metric'] == 'close')
+            parts = [{'type': 'text', 'text': ' 600928收盘价为'},
+                     {'type': 'value', 'ref': ref, 'field': 'value_with_unit'},
+                     {'type': 'text', 'text': '。\n'}]
+            parts.insert(position, {'type': 'text', 'text': ''})
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'holding', 'section': 'positions',
+                'type': 'paragraph', 'parts': parts, 'refs': []}]})
+        assert payload['inferences'][0]['text'] == ' 600928收盘价为3.79元/股。\n'
+        return '{"reviews":[{"id":"holding","supported":true,"reason":""}],"coverage":{"complete":true,"missing":[]}}'
+    result = publish_report(task='说明600928所给收盘价。', draft='', tool_results=receipts,
+        run_scope='zero-character', call=writer, max_calls=2)
+    assert result.verification['status'] == 'complete' and len(calls) == 2
+    assert '600928收盘价为3.79元/股。' in result.text
+    from trade_compass_agent.runtime.report_publication import persist_publication
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text
+    assert saved['review_input']['inferences'][0]['text'] == ' 600928收盘价为3.79元/股。\n'
+    assert saved['receipts'][0]['result'] == receipts[0][1]
+    assert {'type': 'text', 'text': ''} in json.loads(saved['attempts'][0]['response'])['items'][0]['parts']
+
+
+@pytest.mark.parametrize('parts', [
+    [{'type': 'text', 'text': ''}],
+    [{'type': 'text', 'text': '', 'unrecognized': True}, {'type': 'text', 'text': '有内容。'}],
+    [{'type': 'text', 'text': None}, {'type': 'text', 'text': '有内容。'}],
+    [{'type': 'value', 'ref': '', 'field': ''}, {'type': 'text', 'text': '有内容。'}],
+])
+def test_zero_character_canonicalization_cannot_accept_an_empty_or_malformed_paragraph(parts):
+    document, findings, errors = parse_report_items({'schema_version': 1, 'items': [
+        {'id': 'bad', 'type': 'paragraph', 'section': 'overview', 'parts': parts, 'refs': []}]})
+    assert not document.items and findings[0].code == 'invalid_structure' and errors
 
 
 def test_full_large_catalog_fits_without_losing_values_or_scopes():

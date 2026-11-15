@@ -188,7 +188,14 @@ def parse_report_items(value):
     items, findings, errors = [], [], []
     for index, raw in enumerate(value["items"]):
         try:
-            item = ReportDocument.model_validate({"schema_version": 1, "items": [raw]}).items[0]
+            candidate = raw
+            if isinstance(raw, dict) and raw.get('type') == 'paragraph' and isinstance(raw.get('parts'), list):
+                # An exact empty text token contributes no reader characters.
+                # Keep whitespace, extra keys and every other invalid shape for
+                # strict validation. An all-empty paragraph still fails minItems.
+                candidate = {**raw, 'parts': [part for part in raw['parts']
+                    if part != {'type': 'text', 'text': ''}]}
+            item = ReportDocument.model_validate({"schema_version": 1, "items": [candidate]}).items[0]
             items.append(item)
         except ValidationError as exc:
             identifier = raw.get("id") if isinstance(raw, dict) else None
