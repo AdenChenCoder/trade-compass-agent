@@ -29,6 +29,8 @@ fi
   src/trade_compass_agent/llm/native_runtime.py \
   src/trade_compass_agent/llm/native_session.py \
   src/trade_compass_agent/llm/connection.py \
+  src/trade_compass_agent/llm/lmstudio_context.py \
+  tests/test_native_context_counter.py \
   tests/test_native_agents.py \
   tests/test_native_runtime.py \
   tests/test_native_budgets.py \

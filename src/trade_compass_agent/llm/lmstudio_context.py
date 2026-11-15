@@ -7,6 +7,10 @@ import json
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
+from uuid import uuid4
+
+from httpx import AsyncClient
+from httpx_ws import aconnect_ws
 
 
 @dataclass(frozen=True)
@@ -60,20 +64,55 @@ def _chat_history(messages: list[dict]) -> dict:
 
 
 async def _measure(host: str, model_id: str, request: dict) -> ContextMeasurement | None:
-    from lmstudio import AsyncClient
-
-    async with AsyncClient(api_host=host) as client:
-        # Never load a model or change its load configuration during preflight.
-        model = next((m for m in await client.llm.list_loaded() if m.identifier == model_id), None)
-        if model is None:
+    # SDK 1.5's websocket uses the transport's 64 KiB receive default. A large
+    # prompt-template reply closes that connection before counting can finish.
+    # Use the same native, read-only RPC protocol with a bounded frame size;
+    # never patch the shared SDK, load a model or run a prediction to count it.
+    async with AsyncClient(trust_env=False) as client, aconnect_ws(
+        f'ws://{host}/llm', client=client, max_message_size_bytes=8 * 1024 * 1024,
+        queue_size=8, keepalive_ping_interval_seconds=None,
+    ) as websocket:
+        # These ephemeral identifiers have the same resource-lifetime semantics
+        # as the SDK's ClientBase authVersion=1 handshake, not a saved app identity.
+        await websocket.send_json({'authVersion': 1, 'clientIdentifier': str(uuid4()),
+                                   'clientPasskey': str(uuid4())})
+        auth = await websocket.receive_json()
+        if not isinstance(auth, dict) or auth.get('success') is not True:
             return None
+        call_id = 0
+        async def rpc(endpoint, parameter=None):
+            nonlocal call_id
+            if endpoint not in {'listLoaded', 'getModelInfo', 'applyPromptTemplate', 'countTokens'}:
+                raise ValueError('token counter only permits read-only operations')
+            identifier = call_id
+            call_id += 1
+            message = {'type': 'rpcCall', 'callId': identifier, 'endpoint': endpoint}
+            if parameter is not None:
+                message['parameter'] = parameter
+            await websocket.send_json(message)
+            result = await websocket.receive_json()
+            if (not isinstance(result, dict) or result.get('type') != 'rpcResult'
+                    or type(result.get('callId')) is not int or result['callId'] != identifier):
+                raise ValueError('invalid token counter RPC result')
+            return result['result']
+
+        loaded = await rpc('listLoaded')
+        if not any(model.get('identifier') == model_id for model in loaded):
+            return None
+        specifier = {'type': 'query', 'query': {'identifier': model_id}}
+        info = await rpc('getModelInfo', {'specifier': specifier, 'throwIfNotFound': True})
+        window = info['contextLength']
         if "prompt" in request:
             formatted = request["prompt"]
         else:
-            formatted = await model.apply_prompt_template(
-                _chat_history(request.get("messages", [])),
-                {"toolDefinitions": request.get("tools") or []},
-            )
+            response = await rpc('applyPromptTemplate', {
+                'specifier': specifier, 'history': _chat_history(request.get('messages', [])),
+                'predictionConfigStack': {'layers': []},
+                'opts': {'toolDefinitions': request.get('tools') or []},
+            })
+            formatted = response['formatted']
+        if not isinstance(formatted, str):
+            raise ValueError('invalid formatted prompt')
         public_texts = []
         for message in request.get("messages", []):
             text = message.get("content") or ""
@@ -81,11 +120,16 @@ async def _measure(host: str, model_id: str, request: dict) -> ContextMeasuremen
                 function = call["function"]
                 text += "\n" + function["name"] + " " + str(function.get("arguments") or "")
             public_texts.append(text)
-        tokenized = await model.tokenize(public_texts) if public_texts else []
-        count, window = await model.count_tokens(formatted), await model.get_context_length()
-        if count < 0 or window <= 0:
+        async def count_tokens(text):
+            count = (await rpc('countTokens', {'specifier': specifier, 'inputString': text}))['tokenCount']
+            if type(count) is not int or count < 0:
+                raise ValueError('invalid tokenizer count')
+            return count
+        count = await count_tokens(formatted)
+        public_counts = [await count_tokens(text) + 4 for text in public_texts]
+        if type(window) is not int or window <= 0:
             return None
-        return ContextMeasurement(count, window, tuple(len(tokens) + 4 for tokens in tokenized))
+        return ContextMeasurement(count, window, tuple(public_counts))
 
 
 def measure_context(
@@ -93,7 +137,7 @@ def measure_context(
 ) -> ContextMeasurement | None:
     """Return template/tokenizer measurements, or use the caller's safe fallback.
 
-    Native SDK access is limited to local HTTP servers. Other deployments and
+    Native counter access is limited to local HTTP servers. Other deployments and
     callers already owning an event loop use a bounded read-only worker.
     """
     address = urlparse(base_url)

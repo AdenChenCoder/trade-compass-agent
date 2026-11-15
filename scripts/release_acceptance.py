@@ -33,6 +33,7 @@ SUITES = (
     "test_native_agents.py",
     "test_native_budgets.py",
     "test_lmstudio_execution.py",
+    "test_native_context_counter.py",
 )
 
 

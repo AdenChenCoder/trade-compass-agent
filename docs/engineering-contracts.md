@@ -362,6 +362,13 @@ Regression entry points:
 - Tool-sequence reasoning is transient operational context. Account for its input
   tokens separately from recent-source protection; exclude it from public session
   records and factual summary inputs.
+- Local context preflight counts the complete prompt, tool definitions and private
+  reasoning with the loaded model's tokenizer and actual loaded window. A byte
+  limit on a tokenizer connection is not a token limit. Use bounded read-only
+  transport that accommodates large valid prompts; never load, unload or predict
+  to obtain a count. Preserve the parent deadline, output reserve and conservative
+  fallback when measurement is unavailable. Do not omit source data or user
+  history to make a transport limitation look like a fitting request.
 
 Regression entry points:
 [budgets](../tests/test_native_budgets.py),
