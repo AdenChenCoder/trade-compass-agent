@@ -80,10 +80,10 @@ in the linked regression tests, not in expanding prose exception lists.
   usable. Before evidence is supplied, body interpretation separately fixes
   whether an observation is asserted as of the task's present date. Review
   cannot reinterpret that commitment as latest available. Temporal evidence
-  links must be runtime-owned observations in the assertion's business scope.
-  Already supplied facts may be referenced across paragraphs only when entity,
-  account, timeframe and observation scope match; paragraph selection is not
-  source ownership. This permission does not prove relevance or support.
+  links must be runtime-owned observations already supplied in this report.
+  Paragraph selection is not source ownership: comparisons may span securities,
+  accounts, timeframes and observation scopes. Ownership alone does not prove
+  semantic identity, relevance or support; these dimensions remain independent.
   Numeric bindings remain tied to their original context and mandatory even
   if the assessor omits them. The runtime compares those
   source dates in the task's reference timezone with the task date and can withhold a statement despite an
@@ -98,6 +98,11 @@ in the linked regression tests, not in expanding prose exception lists.
   reports are not rewritten. A present research opinion is not itself a new market measurement;
   its independently asserted empirical premises still need their own support.
   These checks stay in internal evidence, never reader copy.
+  An invalid temporal reference makes that assertion unavailable, not false.
+  Persist this distinction and withhold its paragraph while preserving other
+  independently verified analysis. A completed rejection elsewhere can justify
+  the one existing genuine body revision; an annotation error alone cannot
+  trigger a review retry. The final selected report must complete all checks.
   Each statement
   must be entailed; contradictory or unknown statements are withheld. Missing,
   malformed or unavailable assessments cannot fall back to writer approval.

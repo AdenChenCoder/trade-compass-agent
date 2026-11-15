@@ -467,7 +467,9 @@ def main():
                          changed_prose=changed_prose, model_calls=report.artifact["model_calls"],
                          body_model_calls=report.artifact["body_review_model_calls"],
                          factual_model_calls=report.artifact["factual_model_calls"],
+                         unavailable_assertions=len(report.artifact.get('factual_assessment_errors', {})),
                          passed=report.artifact["review_valid"]
+                         and not report.artifact.get('factual_assessment_errors')
                          and (final_supported if normal_publication else actual is expected)
                          and 1 <= len(calls) <= (2 if normal_publication else 1)
                          and len(factual_calls) == local_calls

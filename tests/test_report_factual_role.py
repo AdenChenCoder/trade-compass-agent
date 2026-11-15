@@ -212,8 +212,8 @@ def test_temporal_links_must_belong_to_the_assertion_context(fault):
 
 
 @pytest.mark.parametrize('other_day,supported', [('2025-01-02', True), ('2025-01-01', False)])
-@pytest.mark.parametrize('other_scope', ['same', 'entity', 'account', 'timeframe', 'adjustment'])
-def test_other_paragraph_date_link_respects_run_business_scope_and_date(tmp_path, other_day, supported, other_scope):
+@pytest.mark.parametrize('other_scope', ['same', 'entity', 'account', 'timeframe', 'adjustment', 'unknown_ref'])
+def test_owned_provenance_is_independent_of_semantic_scope_and_date(tmp_path, other_day, supported, other_scope):
     first = {'symbol': '002415', 'account': 'short_stock', 'timeframe': '1d', 'adjustment': 'unadjusted',
              'bars': [{'timestamp': '2025-01-02', 'close': 22}]}
     second = {'symbol': '002415', 'account': 'short_stock', 'timeframe': '1d', 'adjustment': 'unadjusted',
@@ -249,26 +249,75 @@ def test_other_paragraph_date_link_respects_run_business_scope_and_date(tmp_path
             return json.dumps(result)
         result = assess(payload)
         high = next(f['id'] for f in payload['contexts']['p1']['evidence'] if f['metric'] == 'high')
-        result['assessments'][0]['time_evidence'] = [high]
+        result['assessments'][0]['time_evidence'] = ['not-a-run-fact'] if other_scope == 'unknown_ref' else [high]
         return json.dumps(result)
     result = publish_report(task='核对当日观察并保留另一条注明日期的记录。', draft='',
         tool_results=[('get_bars', json.dumps(first)), ('get_bars', json.dumps(second))],
-        run_scope='cross-paragraph-date', call=writer, fact_review_call=checker, max_calls=2,
+        run_scope='cross-paragraph-date', call=writer, fact_review_call=checker,
+        max_calls=4 if other_scope == 'unknown_ref' else 2,
         reference_date='2025-01-02')
-    assert result.artifact['review_valid'] is (other_scope == 'same')
-    assert (result.verification['status'] == 'complete') is (supported and other_scope == 'same')
-    if other_scope == 'same':
+    assert result.artifact['review_valid'] is (other_scope != 'unknown_ref')
+    assert (result.verification['status'] == 'complete') is (supported and other_scope != 'unknown_ref')
+    if other_scope != 'unknown_ref':
         timing = result.artifact['temporal_checks']['c0']
         assert timing['status'] == ('entailed' if supported else 'unknown')
         assert {row['observed_date'] for row in timing['evidence']} == {'2025-01-02', other_day}
     else:
         assert any(row['code'] == 'review_unavailable' for row in result.verification['findings'])
-        assert any(row.get('review_error_code') == 'temporal_evidence_outside_scope'
-                   and row['stage'] == 'factual_review' and row['assertion_id'] == 'c0'
-                   for row in result.artifact['attempts'])
+        assert result.artifact['factual_assessment_errors']['c0']['code'] == 'temporal_reference_not_in_run_facts'
+        assert not result.artifact['review_feedback_valid']
+        assert not result.artifact.get('revision_attempts') and result.artifact['model_calls'] == 4
+        assert '24元/股' in result.artifact['reader_body'], 'valid other paragraph must survive an annotation error'
     reference = persist_publication(tmp_path, result)
     saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
     assert saved['published_text'] == result.text
+
+
+def test_partial_review_can_repair_a_verified_error_once_without_resampling_annotation_failures(tmp_path):
+    counts = {'compose': 0, 'body': 0, 'fact': 0}
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            counts['compose'] += 1
+            corrected = 'revision' in payload
+            ref = next(f['id'] for f in report_facts(payload) if f['metric'] == 'close')
+            parts = [{'type': 'text', 'text': '002415收盘价为'},
+                     {'type': 'value', 'ref': ref, 'field': 'value_with_unit'}]
+            if corrected:
+                parts = [{'type': 'text', 'text': '002415在'}, {'type': 'value', 'ref': ref, 'field': 'date'},
+                         {'type': 'text', 'text': '的收盘价为'}, *parts[1:]]
+            return json.dumps({'schema_version': 1, 'items': [
+                {'id': 'price', 'section': 'overview', 'type': 'paragraph', 'parts': parts, 'refs': []},
+                {'id': 'meaning', 'section': 'overview', 'type': 'paragraph', 'parts': [
+                    {'type': 'text', 'text': '这些统计不足以确认交易主体。' if corrected else '这些统计证明非主力出货。'}],
+                 'refs': [ref]}]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            counts['body'] += 1
+            return json.dumps(body_reply(payload))
+        counts['fact'] += 1
+        result = assess(payload)
+        if counts['fact'] == 1:
+            result['assessments'][0]['time_evidence'] = ['not-a-run-fact']
+            result['assessments'][1]['checks']['support'] = 'unknown'
+        return json.dumps(result)
+    result = publish_report(task='报告观察价格并说明能否据此判断交易主体。', draft='', tool_results=RECEIPTS,
+        run_scope='partial-review-repair', call=writer, fact_review_call=checker, max_calls=4)
+    assert result.artifact['review_valid'] and result.verification['status'] == 'complete'
+    assert counts == {'compose': 2, 'body': 2, 'fact': 2} and result.artifact['model_calls'] == 8
+    assert '不足以确认交易主体' in result.artifact['reader_body']
+    first, final = result.artifact['revision_attempts']
+    assert not first['review_valid'] and first['review_feedback_valid']
+    assert set(first['factual_assessment_errors']) == {'c0'}
+    assert first['factual_review']['assessments'][1]['verdict'] == 'unknown'
+    assert 'validation_status' not in first['factual_review']['assessments'][1]
+    assert final['review_valid'] and not final['factual_assessment_errors']
+    assert result.artifact['selected_attempt'] == 1 and result.artifact['revision_changed_body']
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text and saved['receipts'] == result.artifact['receipts']
 
 
 def test_newer_fact_in_another_paragraph_cannot_refresh_an_old_bound_pb():

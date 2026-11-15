@@ -146,6 +146,7 @@ reviews 必须覆盖 inferences 的每个 id 且各一次；inferences 为空时
 _REVISION = (
     "这是一次依据审查反馈的正文修订。revision是上一版文档及核验结果，不是新证据。"
     "修正不受支持的表达，补齐原始依据已有但正文遗漏的任务答案；保留已支持的内容。"
+    "未完成核验不等于事实错误，只根据已完成核验指出的实际内容问题修正；不要为改变审查结果而空泛改写。"
     "不能为通过核验而删除任务要求、编造事实或改变真实数据缺口。"
     "required_gaps由程序保留，无法靠改写或删除解除。修订后的完整正文仍须重新核验。"
 )
@@ -236,11 +237,12 @@ Date-only observations retain their supplied date; do not invent an instant for 
 time_scope preserves the body-only temporal commitment; reference_date cannot be
 reinterpreted as latest available. For every assessment return time_evidence, an array
 of exact fact IDs already supplied in contexts which support its observation time.
-A fact selected in another paragraph is eligible only when its entity, account,
-timeframe and scope match a fact in this statement's context. Paragraph selection
-does not create source ownership. Matching scope alone does not prove relevance or
-the assertion: compare the actual observation and date. Never borrow a different
-security, account or observation scope. Use [] for non-observation discourse. Bound fact/date refs are
+Facts may be selected in any paragraph of this run: comparisons can legitimately
+span securities, accounts, periods and observation scopes. Paragraph selection
+does not create source ownership, and owned provenance does not prove semantic
+identity, relevance or support. Independently verify each observation's actual
+role in the assertion. time_evidence contains fact IDs, never receipt IDs or
+document IDs. Use [] for non-observation discourse. Bound fact/date refs are
 runtime-owned and remain required even if omitted from your selection. The runtime
 independently compares these source dates with the preserved current-date commitment.
 Return only JSON: {"assessments":[{"id":"input id","comparison":"brief target-claim evidence comparison, at most two short sentences",
@@ -420,6 +422,9 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     protected_gaps = {item["id"]: item for item in (revision or {}).get("required_gaps", [])}
     document = None
     review_valid = False
+    review_feedback_valid = False
+    factual_assessment_errors = {}
+    assertion_owners, by_assertion = {}, {}
     review_input = None
     coverage_review_input = factual_review_input = factual_response = factual_review = None
     body_review_input = body_response = body_meaning = None
@@ -689,11 +694,24 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         if not set([*statement['bound_fact_refs'], *statement['time_fact_refs']]) <= available:
                             raise ReportEvidenceScopeError('runtime_binding_outside_context', statement['id'])
                         context = temporal_evidence_context(context, contexts)
-                        if not set(assessment['time_evidence']) <= {fact['id'] for fact in context['evidence']}:
-                            raise ReportEvidenceScopeError('temporal_evidence_outside_scope', statement['id'])
                         assessment['reported_verdict'] = assessment['verdict']
                         assessment['reported_checks'] = dict(assessment['checks'])
-                        timing = check_statement_time(statement, assessment, context, report_context)
+                        available = {fact['id'] for fact in context['evidence']}
+                        unknown_refs = set(assessment['time_evidence']) - available
+                        timing_assessment = assessment if not unknown_refs else {
+                            **assessment, 'time_evidence': [ref for ref in assessment['time_evidence'] if ref in available]}
+                        timing = check_statement_time(statement, timing_assessment, context, report_context)
+                        if unknown_refs:
+                            # Keep other independently assessed assertions usable.
+                            # Never promote an invalid reference to a fact or count
+                            # this row as a completed semantic rejection.
+                            factual_assessment_errors[statement['id']] = {
+                                'stage': 'factual_review', 'code': 'temporal_reference_not_in_run_facts',
+                                'invalid_reference_count': len(unknown_refs)}
+                            assessment['validation_status'] = 'unavailable'
+                            timing.update(status='unknown', reason='temporal_evidence_unavailable')
+                            assessment['checks']['time'] = 'unknown'
+                            assessment['comparison'] += ' 该条陈述的时间依据尚未完成核验。'
                         temporal_checks[statement['id']] = timing
                         if timing['status'] == 'unknown' and assessment['checks']['time'] != 'contradicted':
                             assessment['checks']['time'] = 'unknown'
@@ -705,6 +723,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         elif 'unknown' in checks and assessment['verdict'] == 'entailed':
                             assessment['verdict'] = 'unknown'
                     by_assertion = {row['id']: row for row in assessments}
+                    review_feedback_valid = any(row['id'] not in factual_assessment_errors
+                        and row['verdict'] != 'entailed' for row in assessments)
                     original_text = {row['id']: row['text'] for row in statements}
                     rows = []
                     for identifier, claim_ids in assertion_owners.items():
@@ -741,12 +761,20 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     if row["supported"] or execution_projections.get(item.id, {}).get("analysis_supported"):
                         rendered[item.id] = prose[item.id]
                     if not row["supported"] and item.id not in unconfirmed_execution:
-                        findings.append(Finding("analysis", "insufficient_support", row["reason"], item.id, tuple(item.refs)))
-                review_valid = True
+                        claim_ids = assertion_owners.get(item.id, []) if fact_call else []
+                        unavailable = [key for key in claim_ids if key in factual_assessment_errors]
+                        confirmed = [key for key in claim_ids if key not in factual_assessment_errors
+                                     and by_assertion[key]['verdict'] != 'entailed'] if fact_call else []
+                        if unavailable:
+                            findings.append(Finding('review', 'review_unavailable', '该部分研判尚未完成核验', item.id))
+                        if not unavailable or confirmed:
+                            findings.append(Finding("analysis", "insufficient_support", row["reason"], item.id, tuple(item.refs)))
+                review_valid = not factual_assessment_errors
             except TurnInterruptedError:
                 raise
             except Exception as exc:
                 check_active()
+                review_feedback_valid = False
                 findings.append(Finding("review", "review_unavailable", "报告完整性及研判依据尚未完成核验"))
                 findings.extend(Finding("review", "review_unavailable", "该项研判尚未完成核验", item.id) for item in inferences)
                 diagnostic = {"review_error_type": type(exc).__name__}
@@ -788,12 +816,13 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "factual_review_input": factual_review_input, "factual_response": factual_response,
                 "temporal_checks": temporal_checks,
                 "factual_review": factual_review,
+                "factual_assessment_errors": factual_assessment_errors, "review_feedback_valid": review_feedback_valid,
                 "revision_input": revision, "reader_body": reader_body or text,
                 "candidate_body_sha256": candidate_body_sha256,
                 "published_text": text, "attempts": attempts}
     publication = Publication(text, result, artifact)
     required_gaps = [item for item in document.items if isinstance(item, Gap) and item.id not in dismissed_gaps] if document else []
-    needs_revision = review_valid and (any(not row["supported"] for row in review["reviews"])
+    needs_revision = (review_valid or review_feedback_valid) and (any(not row["supported"] for row in review["reviews"])
         or (not review["coverage"]["complete"]
             and (review["coverage"].get("repairable", False) or not required_gaps)))
     if revision is None and remaining() >= 2 and needs_revision:
@@ -826,7 +855,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                          and has_verified_content(publication) and not has_verified_content(revised))
         changed_body = revised.artifact["candidate_body_sha256"] != candidate_body_sha256
         selected = revised if revised.artifact["review_valid"] and changed_body and not lost_analysis else publication
-        keys = ("document", "verification", "review", "review_valid", "review_input", "revision_input", "attempts", "published_text",
+        keys = ("document", "verification", "review", "review_valid", "review_feedback_valid", "factual_assessment_errors", "review_input", "revision_input", "attempts", "published_text",
                 "candidate_body_sha256",
                 "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues", "bound_quantity_checks",
                 "coverage_review_input", "factual_review_input", "factual_response", "factual_review", "temporal_checks")

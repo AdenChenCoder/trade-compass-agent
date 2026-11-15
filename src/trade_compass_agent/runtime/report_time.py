@@ -5,21 +5,16 @@ from trade_compass_agent.runtime.report_contract import PORTFOLIO_OPERATIONS, ob
 
 
 def temporal_evidence_context(context, contexts):
-    """Paragraph selection is not ownership of the run's source observations.
+    """Source ownership belongs to the run, not the writer's paragraph selection.
 
-    Share only already supplied runtime facts in the same typed business scope.
-    This permits source comparison, not approval: every bound observation and
-    linked date still passes the normal time check.
+    Comparisons may legitimately cross securities, accounts and periods.
+    Membership establishes provenance only; semantic scope and all original
+    bound observations still require their independent checks.
     """
-    def scope(fact):
-        return tuple(fact[key] for key in ('entity', 'account', 'timeframe', 'scope'))
-
-    owners = {scope(fact) for fact in context['evidence'] if fact['entity'] or fact['account']}
     facts = {fact['id']: fact for fact in context['evidence']}
     for other in contexts.values():
         for fact in other['evidence']:
-            if scope(fact) in owners:
-                facts.setdefault(fact['id'], fact)
+            facts.setdefault(fact['id'], fact)
     return {**context, 'evidence': list(facts.values())}
 
 
