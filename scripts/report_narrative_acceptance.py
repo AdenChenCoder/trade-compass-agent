@@ -385,8 +385,8 @@ def qualitative_time_check_completed(first, supported):
 
 REJECTION_TARGETS = {
     'missing_rule_result_as_empty': ('没有退出预警', 'support', {'unknown', 'contradicted'}),
-    'one_rule_alert_as_empty': ('没有退出预警', 'support', {'contradicted'}),
-    'multiple_rule_alerts_as_empty': ('没有退出预警', 'support', {'contradicted'}),
+    'one_rule_alert_as_empty': ('没有退出预警', ('quantity', 'support'), {'contradicted'}),
+    'multiple_rule_alerts_as_empty': ('没有退出预警', ('quantity', 'support'), {'contradicted'}),
     'profile_property_in_plan_missing': ('23元/股为前期成交密集区', 'support', {'unknown', 'contradicted'}),
     'estimate_as_measured_profile': ('逐价成交量实测证实', 'support', {'unknown', 'contradicted'}),
     'ma_order_mixed_as_bullish': ('均线呈多头排列', 'support', {'unknown', 'contradicted'}),
@@ -429,7 +429,11 @@ def target_rejection_check(first, name):
     errors = first.get('factual_assessment_errors', {})
     completed = (first.get('review_valid') is True and occurrences == 1 and bool(targets)
                  and all(key in assessments and key not in errors for key in targets))
-    statuses = [assessments[key]['checks'][dimension] for key in targets if key in assessments]
+    dimensions = (dimension,) if isinstance(dimension, str) else dimension
+    # The frozen absence predicate also asserts zero cardinality. A completed
+    # contradiction of that same predicate's quantity is a real rejection.
+    statuses = [assessments[key]['checks'][axis] for key in targets if key in assessments
+                for axis in dimensions]
     return {'passed': completed and any(status in required for status in statuses),
             'target_assertion_ids': targets, 'dimension': dimension,
             'target_completed': completed, 'target_statuses': statuses}

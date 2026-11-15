@@ -119,13 +119,15 @@ def test_thesis_negative_requires_its_own_completed_inferential_rejection(
 
 
 @pytest.mark.parametrize('case', ['one_rule_alert_as_empty', 'multiple_rule_alerts_as_empty'])
-@pytest.mark.parametrize('status,passed', [('entailed', False), ('unknown', False), ('contradicted', True)])
-def test_nonempty_alert_result_requires_completed_contradiction(case, status, passed):
+@pytest.mark.parametrize('status,rejected', [('entailed', False), ('unknown', False), ('contradicted', True)])
+@pytest.mark.parametrize('dimension,applicable', [('support', True), ('quantity', True), ('time', False), ('identity_scope', False)])
+def test_nonempty_alert_result_requires_completed_contradiction(case, status, rejected, dimension, applicable):
     first = {'review_valid': True, 'factual_assessment_errors': {},
         'factual_review_input': {'statements': [
             {'id': 'c0', 'context_id': 'p0', 'text': '所给规则扫描没有退出预警。'}]},
-        'factual_review': {'assessments': [{'id': 'c0', 'checks': {'support': status}}]}}
-    assert NARRATIVE['target_rejection_check'](first, case)['passed'] is passed
+        'factual_review': {'assessments': [{'id': 'c0', 'checks': {**dict.fromkeys(
+            ('identity_scope', 'time', 'quantity', 'support'), 'entailed'), dimension: status}}]}}
+    assert NARRATIVE['target_rejection_check'](first, case)['passed'] is (rejected and applicable)
 
 
 def test_thesis_numeric_negative_requires_a_contradiction_at_the_known_quantity():
