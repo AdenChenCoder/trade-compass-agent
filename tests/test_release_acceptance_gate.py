@@ -62,8 +62,8 @@ def test_qualitative_time_control_checks_completed_temporal_outcome(
 @pytest.mark.parametrize('case,target_text', [
     ('thesis_judgment_overclaim', '我认为这个估值足以保证持有不会亏损。'),
     ('compound_actor_from_activity', '结合上述开盘价、收盘价及0.594倍量比，可以确定该日非主力出货。'),
-    ('ma_mixed_as_bullish', '002415在2025-01-02的均线呈多头排列。'),
-    ('ma_bullish_denied', '002415在2025-01-02的均线尚未构成多头排列。'),
+    ('ma_order_mixed_as_bullish', '002415在2025-01-02的均线呈多头排列。'),
+    ('ma_order_bullish_denied', '002415在2025-01-02的均线尚未构成多头排列。'),
 ])
 def test_thesis_negative_requires_its_own_completed_inferential_rejection(
     target_status, unrelated_status, dimension, available, passed, case, target_text,
@@ -241,3 +241,12 @@ def test_requested_calculation_must_be_visible_not_an_unrelated_result():
     artifact["document"]["items"][-1]["parts"][0]["ref"] = "other"
     with pytest.raises(RuntimeError, match="not the body"):
         MODEL["check_report"](detail, artifact, receipt, missing=False)
+
+
+def test_semantic_fixture_names_never_silently_replace_existing_scope_cases():
+    assert not set(NARRATIVE['SCOPE_CASES']).intersection(NARRATIVE['TIME_CASES'])
+    for name, (prose, expected, _, _) in NARRATIVE['SCOPE_CASES'].items():
+        assert NARRATIVE['CASES'][name] == (prose, expected)
+    for name in ['ma_order_mixed_as_bullish', 'ma_order_bullish_supported',
+                 'ma_order_mixed_not_bullish', 'ma_order_bullish_denied']:
+        assert name in NARRATIVE['CASES']

@@ -85,10 +85,10 @@ _ma_mixed = [('compute_ma', json.dumps({'symbol': '002415', 'timeframe': '1d',
 _ma_bullish = [('compute_ma', json.dumps({'symbol': '002415', 'timeframe': '1d',
     '_meta': {'as_of': '2025-01-02'}, 'ma': {'MA5': 24, 'MA10': 23, 'MA20': 20, 'MA60': 18}, 'trend': 'bullish_alignment'}))]
 SCOPE_CASES = {
-    'ma_mixed_as_bullish': ('002415在2025-01-02的均线呈多头排列。', False, _ma_mixed, '说明所给日期的均线排列。'),
-    'ma_bullish_supported': ('002415在2025-01-02的均线呈多头排列。', True, _ma_bullish, '说明所给日期的均线排列。'),
-    'ma_mixed_not_bullish': ('002415在2025-01-02的均线尚未构成多头排列。', True, _ma_mixed, '说明所给日期的均线排列。'),
-    'ma_bullish_denied': ('002415在2025-01-02的均线尚未构成多头排列。', False, _ma_bullish, '说明所给日期的均线排列。'),
+    'ma_order_mixed_as_bullish': ('002415在2025-01-02的均线呈多头排列。', False, _ma_mixed, '说明所给日期的均线排列。'),
+    'ma_order_bullish_supported': ('002415在2025-01-02的均线呈多头排列。', True, _ma_bullish, '说明所给日期的均线排列。'),
+    'ma_order_mixed_not_bullish': ('002415在2025-01-02的均线尚未构成多头排列。', True, _ma_mixed, '说明所给日期的均线排列。'),
+    'ma_order_bullish_denied': ('002415在2025-01-02的均线尚未构成多头排列。', False, _ma_bullish, '说明所给日期的均线排列。'),
     "bound_duplicate_gap": ("002415在2025-01-01的收盘价为22元/股。", True, _prices,
                             "说明002415在2025年1月1日的收盘价。"),
     "bound_genuine_gap": ("002415在2025-01-01的收盘价为22元/股。", True, _prices,
@@ -355,8 +355,8 @@ def qualitative_time_check_completed(first, supported):
 
 
 REJECTION_TARGETS = {
-    'ma_mixed_as_bullish': ('均线呈多头排列', 'support', {'unknown', 'contradicted'}),
-    'ma_bullish_denied': ('均线尚未构成多头排列', 'support', {'unknown', 'contradicted'}),
+    'ma_order_mixed_as_bullish': ('均线呈多头排列', 'support', {'unknown', 'contradicted'}),
+    'ma_order_bullish_denied': ('均线尚未构成多头排列', 'support', {'unknown', 'contradicted'}),
     'thesis_judgment_false_premise': ('600928市净率为0.8倍', 'quantity', {'contradicted'}),
     'thesis_judgment_overclaim': ('这个估值足以保证持有不会亏损', 'support', {'unknown', 'contradicted'}),
     'actor_absence_from_activity': ('这些统计证明非主力出货', 'support', {'unknown', 'contradicted'}),
