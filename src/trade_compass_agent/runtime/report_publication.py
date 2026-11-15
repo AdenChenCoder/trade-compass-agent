@@ -25,6 +25,7 @@ from trade_compass_agent.runtime.report_body import (
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
 from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts
 from trade_compass_agent.runtime.report_time import check_statement_time, temporal_evidence_context
+from trade_compass_agent.runtime.report_support import check_support_basis
 
 
 @dataclass
@@ -234,6 +235,17 @@ identity_scope: entity, account, metric, source coverage and population scope;
 time: the assertion's actual time commitment versus the source observation date;
 quantity: value, unit, scale, precision and numerical relationships;
 support: empirical conclusions, actor/causal commitments, reasoning scope and rule compliance.
+Before the checks, classify support_basis by what the SOURCES establish for this
+exact predicate, not by the presence of related numbers. direct means the source
+records the asserted property or relationship itself. calculated means a supplied,
+runtime-validated calculation establishes it. reasoned means a bounded analytical
+evaluation, proposal or evidence limitation, not an observed event. none means
+the sources do not establish it; not_applicable is only non-empirical discourse.
+A measured pattern can support a bounded interpretation while leaving its actors
+and causes unobserved. Such an actor or causal assertion cannot use reasoned or
+calculated as proof: preserve the original commitment and mark support unknown.
+Do not call that basis direct merely because its numerical premises are observed.
+Neither a matching value nor a citation proves a different property or relationship.
 Each dimension is entailed, contradicted, unknown, or not_applicable. Use not_applicable
 only when the assertion makes NO commitment in that dimension, never because another
 dimension matches or because a mixed statement was labelled judgment. In particular,
@@ -278,6 +290,7 @@ merely because the observed change is described qualitatively. If the actual
 observation time is unknown or incompatible, preserve that uncertainty instead.
 Return only JSON: {"assessments":[{"id":"input id","time_evidence":["exact source fact id"],
 "comparison":"brief target-claim evidence comparison, at most two short sentences",
+"support_basis":"direct|calculated|reasoned|none|not_applicable",
 "checks":{"identity_scope":"entailed|contradicted|unknown|not_applicable",
 "time":"entailed|contradicted|unknown|not_applicable",
 "quantity":"entailed|contradicted|unknown|not_applicable",
@@ -477,6 +490,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     coverage_review_input = factual_review_input = factual_response = factual_review = None
     body_review_input = body_response = body_meaning = None
     execution_projections, body_quantity_issues, bound_quantity_checks, temporal_checks = {}, {}, {}, {}
+    support_basis_checks = {}
     reader_body = ""
     candidate_body_sha256 = None
     findings, rendered, traces = [], {}, {}
@@ -719,7 +733,9 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     assessments = factual_review["assessments"]
                     if (set(factual_review) != {"assessments"} or not isinstance(assessments, list)
                             or len(assessments) != len(statements)
-                            or any(not isinstance(row, dict) or set(row) != {"id", "comparison", "checks", "time_evidence", "verdict"}
+                            or any(not isinstance(row, dict) or set(row) not in (
+                                       {"id", "comparison", "checks", "time_evidence", "verdict"},
+                                       {"id", "comparison", "checks", "time_evidence", "verdict", "support_basis"})
                                    or not isinstance(row["id"], str)
                                    or row["verdict"] not in {"entailed", "contradicted", "unknown"}
                                    or not isinstance(row["comparison"], str) or not row["comparison"].strip()
@@ -766,6 +782,20 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             assessment['checks']['time'] = 'unknown'
                             assessment['comparison'] += ' 该条陈述的时间依据尚未完成核验。'
                         temporal_checks[statement['id']] = timing
+                        support = check_support_basis(statement, assessment)
+                        support_basis_checks[statement['id']] = support
+                        if support['status'] == 'unavailable':
+                            error = factual_assessment_errors.setdefault(statement['id'], {
+                                'stage': 'factual_review', 'code': support['reason']})
+                            if error['code'] != support['reason']:
+                                error.setdefault('additional_codes', []).append(support['reason'])
+                            assessment['validation_status'] = 'unavailable'
+                            assessment['checks']['support'] = 'unknown'
+                            assessment['comparison'] += ' 该条陈述的依据尚未完成核验。'
+                        elif support['status'] == 'unknown':
+                            if assessment['checks']['support'] != 'contradicted':
+                                assessment['checks']['support'] = 'unknown'
+                            assessment['comparison'] += ' 所给依据尚不能证实这项断言。'
                         if timing['status'] == 'unknown' and assessment['checks']['time'] != 'contradicted':
                             assessment['checks']['time'] = 'unknown'
                             dates = ', '.join(str(row['comparison_date']) for row in timing['evidence']) or '未提供'
@@ -870,6 +900,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "bound_quantity_checks": bound_quantity_checks,
                 "factual_review_input": factual_review_input, "factual_response": factual_response,
                 "temporal_checks": temporal_checks,
+                "support_basis_checks": support_basis_checks,
                 "factual_review": factual_review,
                 "factual_assessment_errors": factual_assessment_errors, "review_feedback_valid": review_feedback_valid,
                 "revision_input": revision, "reader_body": reader_body or text,
@@ -897,6 +928,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     'checks': assessment['checks'], 'verdict': assessment['verdict'],
                     'comparison': assessment['comparison'],
                     'temporal_check': temporal_checks[identifier],
+                    'support_basis_check': support_basis_checks[identifier],
                 })
         revised = _publish_report(task=task, draft=draft, tool_results=tool_results, run_scope=run_scope,
             call=call, run_id=run_id, current_tool_results=current_tool_results,
@@ -936,7 +968,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
         keys = ("document", "verification", "review", "review_valid", "review_feedback_valid", "factual_assessment_errors", "review_input", "revision_input", "attempts", "published_text",
                 "candidate_body_sha256",
                 "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues", "bound_quantity_checks",
-                "coverage_review_input", "factual_review_input", "factual_response", "factual_review", "temporal_checks")
+                "coverage_review_input", "factual_review_input", "factual_response", "factual_review", "temporal_checks",
+                "support_basis_checks")
         history = [{key: attempt.artifact[key] for key in keys} for attempt in (publication, revised)]
         selected.artifact["revision_attempts"] = history
         selected.artifact["selected_attempt"] = int(selected is revised)

@@ -28,9 +28,122 @@ def compose(payload):
 
 def assess(payload, verdict="entailed"):
     return {"assessments": [{"id": row["id"], "comparison": "比较最终陈述与原始资料。", "verdict": verdict,
+                            "support_basis": "direct",
                             "time_evidence": [],
                             "checks": {key: verdict for key in ('identity_scope', 'time', 'quantity', 'support')}}
                             for row in payload["statements"]]}
+
+
+@pytest.mark.parametrize('assertion_kind', ['actor_activity', 'causal_relation'])
+@pytest.mark.parametrize('basis,supported,unavailable', [
+    ('direct', True, False), ('reasoned', False, False), ('calculated', False, False),
+    ('none', False, False), ('not_applicable', False, False),
+    (None, False, True), ('not-a-basis', False, True), ([], False, True),
+])
+def test_empirical_commitment_cannot_publish_on_analysis_basis(tmp_path, assertion_kind, basis, supported, unavailable):
+    claim = ('在所给统计覆盖范围内，002415在2025-01-02的机构卖出额为0元。'
+             if assertion_kind == 'actor_activity' else
+             '所给公司行动记录证实，002415在2025-01-02的历史复权价差由分红形成。')
+    plan = '建议继续观察；若之后收盘价超过24元/股，再重新评估持仓。'
+    receipts = [*RECEIPTS, ('fetch_url', json.dumps({'url': 'https://example.invalid/source',
+        'content': claim}))]
+    calls = []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            document = compose(payload)
+            refs = [f['id'] for f in report_facts(payload)]
+            document['items'].extend([
+                {'id': 'claim', 'type': 'paragraph', 'section': 'assessment', 'parts': [claim], 'refs': refs},
+                {'id': 'plan', 'type': 'paragraph', 'section': 'plan', 'parts': [plan], 'refs': refs},
+            ])
+            return json.dumps(document)
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        calls.append(payload)
+        if 'paragraphs' in payload:
+            result = body_reply(payload)
+            for row in result['paragraphs']:
+                part = row['parts'][0]
+                if row['id'] == 'claim':
+                    part['assertion_kind'] = assertion_kind
+                elif row['id'] == 'plan':
+                    part.update(assertion_kind='judgment', kind='plan')
+            return json.dumps(result)
+        result = assess(payload)
+        for row, statement in zip(result['assessments'], payload['statements'], strict=True):
+            row['checks']['time'] = 'not_applicable'
+            if statement['context_id'] == 'p1':
+                if basis is None:
+                    row.pop('support_basis')
+                else:
+                    row['support_basis'] = basis
+            elif statement['context_id'] == 'p2':
+                row['support_basis'] = 'reasoned'
+        return json.dumps(result)
+    result = publish_report(task='报告资料并提出后续观察条件。', draft='', tool_results=receipts,
+        run_scope='support-contract', call=writer, fact_review_call=checker, max_calls=2)
+    assert len(calls) == 2 and result.artifact['model_calls'] == 4
+    assert (result.verification['status'] == 'complete') is supported
+    assert (claim in result.artifact['reader_body']) is supported
+    assert '22元/股升至23元/股' in result.artifact['reader_body'] and plan in result.artifact['reader_body']
+    assert result.artifact['review_valid'] is not unavailable
+    target = next(row for row in result.artifact['factual_review']['assessments'] if row['id'] == 'c1')
+    assert target['reported_checks']['support'] == 'entailed'
+    assert target['checks']['support'] == ('entailed' if supported else 'unknown')
+    assert (target.get('validation_status') == 'unavailable') is unavailable
+    if not supported and not unavailable:
+        assert not result.artifact['factual_assessment_errors']  # Completed rejection, not missing review.
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['reader_body'] == result.artifact['reader_body']
+    assert saved['support_basis_checks'] == result.artifact['support_basis_checks']
+    assert [r['result'] for r in saved['receipts']] == [raw for _, raw in receipts]
+
+
+def test_support_feedback_repairs_body_once_and_survives_saved_publication(tmp_path):
+    original = '所给价量变化证明，当日没有机构卖出002415。'
+    corrected = '仅凭所给价量资料，无法确认002415当日卖方身份。'
+    revisions = []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            document = compose(payload)
+            if 'revision' in payload:
+                revisions.append(payload['revision'])
+            text = corrected if revisions else original
+            document['items'].append({'id': 'claim', 'type': 'paragraph', 'section': 'assessment',
+                'parts': [text], 'refs': [f['id'] for f in report_facts(payload)]})
+            return json.dumps(document)
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            result = body_reply(payload)
+            result['paragraphs'][1]['parts'][0]['assertion_kind'] = 'judgment' if revisions else 'actor_activity'
+            return json.dumps(result)
+        result = assess(payload)
+        for row in result['assessments']:
+            row['checks']['time'] = 'not_applicable'
+        result['assessments'][1]['support_basis'] = 'reasoned'
+        return json.dumps(result)
+    result = publish_report(task='说明两日收盘价和价量资料的解释范围。', draft='', tool_results=RECEIPTS,
+        run_scope='support-revision', call=writer, fact_review_call=checker, max_calls=4)
+    assert len(revisions) == 1 and result.artifact['model_calls'] == 8
+    feedback = revisions[0]['factual_feedback'][1]
+    assert feedback['text'] == original and feedback['completed']
+    assert feedback['checks']['support'] == 'unknown'
+    assert feedback['support_basis_check']['reason'] == 'inference_is_not_actor_or_cause_evidence'
+    assert result.verification['status'] == 'complete' and result.artifact['selected_attempt'] == 1
+    assert original not in result.artifact['reader_body'] and corrected in result.artifact['reader_body']
+    assert '22元/股升至23元/股' in result.artifact['reader_body']
+    assert result.artifact['support_basis_checks']['c1']['status'] == 'compatible'
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['reader_body'] == result.artifact['reader_body']
+    assert saved['support_basis_checks'] == result.artifact['support_basis_checks']
+    assert saved['revision_input']['factual_feedback'][1] == feedback
 
 
 @pytest.mark.parametrize('zone,day,stamp,supported,comparison_day', [

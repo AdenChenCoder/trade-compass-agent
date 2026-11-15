@@ -184,6 +184,16 @@ in the linked regression tests, not in expanding prose exception lists.
   commitment and checks the corresponding actors, actions, dates and scope;
   a correct measurement cannot replace the required proof. These internal types
   are neither factual evidence nor reader-facing content.
+  Entailment records whether support is direct source evidence, a validated
+  calculation, bounded reasoning, absent or inapplicable. A body's asserted
+  actor activity or causal relationship cannot be established by a calculation
+  or analytical interpretation alone. Preserve that empirical commitment and
+  withhold it even when the overall model verdict approves. Missing or invalid
+  support metadata is unavailable review, not a completed factual rejection;
+  preserve other independently approved paragraphs. This typed compatibility
+  check does not establish sentence truth: a model can still misidentify the
+  basis, so exact semantic counterexamples and legitimate paired reports remain
+  mandatory. No prose phrases or keywords classify support in the runtime.
   Pass the body-only operation meaning alongside the commitment type. Proposals
   and conditional watchpoints are not completed actions or measured predictions;
   verify their asserted premises and rule compliance without requiring execution

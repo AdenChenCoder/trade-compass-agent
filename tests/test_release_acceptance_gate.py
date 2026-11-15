@@ -116,6 +116,7 @@ def test_narrative_cli_finishes_after_real_source_selector_protocol(tmp_path, mo
                 'through': row['source_units'][-1]['id'], 'kind': 'other', 'assertion_kind': 'observation',
                 'time_scope': 'other', 'outcome': 'none', 'extent': 'none'}]} for row in payload['paragraphs']]})
         return json.dumps({'assessments': [{'id': row['id'], 'comparison': 'Explicit model double.',
+            'support_basis': 'direct',
             'time_evidence': [], 'verdict': 'entailed', 'checks': {key: 'entailed'
                 for key in ('identity_scope', 'time', 'quantity', 'support')}} for row in payload['statements']]})
     monkeypatch.setattr(providers, 'create_chat_client', lambda _: Coverage())
