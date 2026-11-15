@@ -20,12 +20,13 @@ from trade_compass_agent.runtime.report_contract import (
 )
 from trade_compass_agent.runtime.report_execution import execution_evidence
 from trade_compass_agent.runtime.report_body import (
-    BODY_MEANING, BodyMeaningError, reader_source_units, validate_body_meaning, runtime_bound_quantity_issue, factual_assertions,
+    BODY_MEANING, BodyMeaningError, reader_source_units, validate_body_meaning, runtime_bound_quantity_issue, factual_assertions, factual_review_statements,
 )
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
 from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts
 from trade_compass_agent.runtime.report_time import check_statement_time, temporal_evidence_context
 from trade_compass_agent.runtime.report_support import check_support_basis
+from trade_compass_agent.runtime.report_classifications import check_classifications
 
 
 @dataclass
@@ -170,16 +171,8 @@ are the original source records. There is no second copy of candidate paragraphs
 inside source contexts. Matching another reader claim or repeating the author's
 analysis never establishes truth. Compare the target with actual source records
 and typed facts, not with reader wording or task instructions.
-assertion_kind records the body-only interpretation made WITHOUT evidence. It is not
-proof, and it must not be weakened to fit available numbers. In particular, actor_activity
-asserts something about who acted or did not act: compare that commitment with evidence
-about the same actors, actions, instrument, period and scope. A standard technical
-interpretation of a price/volume pattern cannot establish participant identity or actions.
-Likewise distinguish a stated causal relationship from an observed association or an
-explicit hypothesis. A judgment cannot exempt an accompanying empirical commitment.
-meaning_kind preserves the body-only distinction between a plan, historical action,
-record availability and other statements. A plan or recommendation does not assert
-that its action happened: do not demand an execution receipt to prove a proposal.
+Interpret each assertion's actual empirical commitments independently. requirements contains only positive obligations obtained without source evidence: participant_activity, causal_relation, task_present or proposal. A true obligation cannot be weakened. proposal preserves a prospective choice, not a completed execution; its empirical premises remain independently applicable. ABSENCE of an obligation establishes no exemption and is not proof that no such claim occurs. No body category or negative temporal classification is supplied as an authority about reader meaning.
+A conventional market interpretation is not evidence of an unobserved actor, cause or technical property. Ask whether the same source observations could coexist with a materially different asserted actor, cause or property. If so, that property remains unknown. Do not soften the author's categorical claim into a hypothesis or repair its meaning to fit available numbers.
 For judgments and conditional watchpoints, assess their asserted factual premises,
 claimed compliance with requirements and reasoning scope. Do not reject them merely
 because they are opinions, recommendations or hypothetical conditions rather than
@@ -269,8 +262,8 @@ Relative-date assertions use reference_timezone. Convert an observed_at instant 
 that timezone before comparing it with reference_date; observed_date remains the
 reader's display calendar. Different calendar labels can describe the same instant.
 Date-only observations retain their supplied date; do not invent an instant for them.
-time_scope preserves the body-only temporal commitment; reference_date cannot be
-reinterpreted as latest available. For every assessment return time_evidence, an array
+requirements.task_present, when true, requires present-date comparison and cannot
+be weakened. Its absence does not establish historical scope; independently inspect the actual prose for present-time commitments. For every assessment return time_evidence, an array
 of exact fact IDs already supplied in contexts which support its observation time.
 Facts may be selected in any paragraph of this run: comparisons can legitimately
 span securities, accounts, periods and observation scopes. Paragraph selection
@@ -288,7 +281,8 @@ An entailed time judgment without a source witness is incomplete review metadata
 unless the statement already has runtime-owned bound/date refs. Do not use []
 merely because the observed change is described qualitatively. If the actual
 observation time is unknown or incompatible, preserve that uncertainty instead.
-Return only JSON: {"assessments":[{"id":"input id","time_evidence":["exact source fact id"],
+Before deciding support, independently record commitments with exactly two booleans: participant_activity and causal_relation. These describe what ANY predicate in the original span asserts, never whether its source supports it. Preserve an asserted actor identity/action/absence or causal explanation even inside an opinion or conventional technical interpretation. Pure plans and evidence limitations do not invent those commitments. Positive requirements cannot be weakened; their absence never establishes an exemption. classifications preserves categorical indicator assertions fixed before evidence, including their scope and negation. observation_dates preserves the author's actual calendar anchors; task_now remains a current observation commitment. Neither metadata list is source evidence or permission to change the reader's meaning.
+Return only JSON: {"assessments":[{"id":"input id","commitments":{"participant_activity":false,"causal_relation":false},"time_evidence":["exact source fact id"],
 "comparison":"brief target-claim evidence comparison, at most two short sentences",
 "support_basis":"direct|calculated|reasoned|unknown|not_applicable",
 "checks":{"identity_scope":"entailed|contradicted|unknown|not_applicable",
@@ -490,7 +484,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     coverage_review_input = factual_review_input = factual_response = factual_review = None
     body_review_input = body_response = body_meaning = None
     execution_projections, body_quantity_issues, bound_quantity_checks, temporal_checks = {}, {}, {}, {}
-    support_basis_checks = {}
+    support_basis_checks, classification_checks = {}, {}
     reader_body = ""
     candidate_body_sha256 = None
     findings, rendered, traces = [], {}, {}
@@ -636,7 +630,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 if body_call and inferences:
                     # First interpret the author's words without task, draft,
                     # source data or receipts that could bias that interpretation.
-                    body_review_input = {"paragraphs": [{'id': key, 'text': value,
+                    body_review_input = {"report_context": report_context, "paragraphs": [{'id': key, 'text': value,
                         'source_units': reader_source_units(value)} for key, value in prose.items()]}
                     body_response = body_call(BODY_MEANING, json.dumps(body_review_input, ensure_ascii=False,
                                                                       separators=(",", ":")))
@@ -723,7 +717,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     factual_review_input = {
                         "report_context": report_context,
                         "request_context": {"role": "requirements", "text": task},
-                        "contexts": contexts, "statements": statements,
+                        "contexts": contexts, "statements": factual_review_statements(statements),
                         "receipts": review_input["receipts"], "execution_records": execution.records,
                     }
                     factual_response = fact_call(_FACT_REVIEW, json.dumps(factual_review_input, ensure_ascii=False,
@@ -735,7 +729,9 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             or len(assessments) != len(statements)
                             or any(not isinstance(row, dict) or set(row) not in (
                                        {"id", "comparison", "checks", "time_evidence", "verdict"},
-                                       {"id", "comparison", "checks", "time_evidence", "verdict", "support_basis"})
+                                       {"id", "comparison", "checks", "time_evidence", "verdict", "support_basis"},
+                                       {"id", "comparison", "checks", "time_evidence", "verdict", "commitments"},
+                                       {"id", "comparison", "checks", "time_evidence", "verdict", "support_basis", "commitments"})
                                    or not isinstance(row["id"], str)
                                    or row["verdict"] not in {"entailed", "contradicted", "unknown"}
                                    or not isinstance(row["comparison"], str) or not row["comparison"].strip()
@@ -800,6 +796,12 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             assessment['checks']['time'] = 'unknown'
                             dates = ', '.join(str(row['comparison_date']) for row in timing['evidence']) or '未提供'
                             assessment['comparison'] += f" 时点核对（{timing['comparison_timezone']}）：任务日期{timing['expected_date'] or '未提供'}，依据日期{dates}，尚不能确认所断言的当前值。"
+                        categorical = check_classifications(statement, timing_assessment, context)
+                        classification_checks[statement['id']] = categorical
+                        if categorical['status'] == 'unknown':
+                            if assessment['checks']['support'] != 'contradicted':
+                                assessment['checks']['support'] = 'unknown'
+                            assessment['comparison'] += ' 原文所断言的指标分类与本轮计算尚不能对应。'
                         checks = set(assessment['checks'].values())
                         if 'contradicted' in checks:
                             assessment['verdict'] = 'contradicted'
@@ -900,7 +902,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "bound_quantity_checks": bound_quantity_checks,
                 "factual_review_input": factual_review_input, "factual_response": factual_response,
                 "temporal_checks": temporal_checks,
-                "support_basis_checks": support_basis_checks,
+                "support_basis_checks": support_basis_checks, "classification_checks": classification_checks,
                 "factual_review": factual_review,
                 "factual_assessment_errors": factual_assessment_errors, "review_feedback_valid": review_feedback_valid,
                 "revision_input": revision, "reader_body": reader_body or text,
@@ -929,6 +931,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     'comparison': assessment['comparison'],
                     'temporal_check': temporal_checks[identifier],
                     'support_basis_check': support_basis_checks[identifier],
+                    'classification_check': classification_checks[identifier],
                 })
         revised = _publish_report(task=task, draft=draft, tool_results=tool_results, run_scope=run_scope,
             call=call, run_id=run_id, current_tool_results=current_tool_results,
@@ -969,7 +972,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "candidate_body_sha256",
                 "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues", "bound_quantity_checks",
                 "coverage_review_input", "factual_review_input", "factual_response", "factual_review", "temporal_checks",
-                "support_basis_checks")
+                "support_basis_checks", "classification_checks")
         history = [{key: attempt.artifact[key] for key in keys} for attempt in (publication, revised)]
         selected.artifact["revision_attempts"] = history
         selected.artifact["selected_attempt"] = int(selected is revised)

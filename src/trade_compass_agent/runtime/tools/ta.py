@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from trade_compass_agent.runtime.market_stack import MarketStack
+from trade_compass_agent.runtime.indicator_values import moving_average_alignment
 
 
 def _bars_to_df(stack: MarketStack, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
@@ -229,12 +230,4 @@ def tool_compute_ma(
 
 
 def _ma_trend_summary(ma_values: dict[str, float]) -> str:
-    sorted_mas = sorted(ma_values.items(), key=lambda kv: int(kv[0][2:]))
-    if len(sorted_mas) < 2:
-        return "insufficient_data"
-    values = [v for _, v in sorted_mas]
-    if all(values[i] >= values[i + 1] for i in range(len(values) - 1)):
-        return "bullish_alignment"
-    if all(values[i] <= values[i + 1] for i in range(len(values) - 1)):
-        return "bearish_alignment"
-    return "mixed"
+    return moving_average_alignment(ma_values)

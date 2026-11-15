@@ -135,6 +135,9 @@ class Fact:
     @property
     def display_value_with_unit(self) -> str:
         value = self.value
+        if self.kind == 'classification' and self.metric == 'ma_alignment':
+            return {'bullish_alignment': '多头排列', 'bearish_alignment': '空头排列',
+                    'mixed': '混合排列', 'insufficient_data': '资料不足'}[value]
         if self.kind == 'percentage' and self.unit == '%':
             number = Decimal(value)
             if number == 0:
@@ -378,11 +381,14 @@ class EvidenceCatalog:
                 continue
             metric = {"O": "open", "H": "high", "L": "low", "C": "close", "V": "volume"}.get(key, key) if compact_bar else key
             descriptor = FIELDS.get(metric)
+            if tool == 'compute_ma' and not path and key == 'trend' and isinstance(item, str) and item in {
+                    'bullish_alignment', 'bearish_alignment', 'mixed', 'insufficient_data'}:
+                metric, descriptor = 'ma_alignment', ('均线排列', '', 'classification')
             if path.endswith("/ma") and key.startswith("MA") and key[2:].isdigit():
                 descriptor = (key, "元/股", "moving_average")
             if descriptor and isinstance(item, (str, int, float)) and not isinstance(item, bool):
                 label, unit, kind = descriptor
-                if kind not in {"identity", "quotation"}:
+                if kind not in {"identity", "quotation", "classification"}:
                     try:
                         _number(item)
                     except ValueError:
@@ -543,6 +549,11 @@ def inference_evidence(item: Inference | Paragraph, document: ReportDocument, ca
                 facts[fact.id] = fact
         else:
             raise ValueError("研判引用不属于本轮事实或已验证计算")
+    # Computed categorical results belong to the same owned observation as
+    # their operands; retain them alongside the numbers and original receipt.
+    selected_receipts = {fact.receipt_id for fact in facts.values()}
+    facts.update({fact.id: fact for fact in catalog.facts.values()
+                  if fact.kind == 'classification' and fact.receipt_id in selected_receipts})
     return list(facts.values()), list(calculations.values())
 
 

@@ -23,6 +23,9 @@ def check_statement_time(statement, assessment, context, report_context):
     result = {'scope': statement['time_scope'], 'expected_date': expected,
               'comparison_timezone': report_context['reference_timezone'],
               'evidence': [], 'status': 'not_applicable', 'reason': 'not_current_observation'}
+    if 'unresolved' in statement.get('observation_dates', []):
+        result.update(status='unknown', reason='asserted_date_unresolved')
+        return result
     if statement['time_scope'] != 'reference_date':
         return result
     if (statement['assertion_kind'] in {'judgment', 'discourse'}

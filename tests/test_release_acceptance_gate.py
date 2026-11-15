@@ -62,6 +62,8 @@ def test_qualitative_time_control_checks_completed_temporal_outcome(
 @pytest.mark.parametrize('case,target_text', [
     ('thesis_judgment_overclaim', '我认为这个估值足以保证持有不会亏损。'),
     ('compound_actor_from_activity', '结合上述开盘价、收盘价及0.594倍量比，可以确定该日非主力出货。'),
+    ('ma_mixed_as_bullish', '002415在2025-01-02的均线呈多头排列。'),
+    ('ma_bullish_denied', '002415在2025-01-02的均线尚未构成多头排列。'),
 ])
 def test_thesis_negative_requires_its_own_completed_inferential_rejection(
     target_status, unrelated_status, dimension, available, passed, case, target_text,
@@ -117,6 +119,7 @@ def test_narrative_cli_finishes_after_real_source_selector_protocol(tmp_path, mo
                 'time_scope': 'other', 'outcome': 'none', 'extent': 'none'}]} for row in payload['paragraphs']]})
         return json.dumps({'assessments': [{'id': row['id'], 'comparison': 'Explicit model double.',
             'support_basis': 'direct',
+            'commitments': {'participant_activity': False, 'causal_relation': False},
             'time_evidence': [], 'verdict': 'entailed', 'checks': {key: 'entailed'
                 for key in ('identity_scope', 'time', 'quantity', 'support')}} for row in payload['statements']]})
     monkeypatch.setattr(providers, 'create_chat_client', lambda _: Coverage())

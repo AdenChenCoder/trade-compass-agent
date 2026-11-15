@@ -1,5 +1,6 @@
 """Classify reader assertions without source evidence or prose truth heuristics."""
 from __future__ import annotations
+from datetime import date
 
 
 BODY_MEANING = """Read ONLY the supplied reader paragraphs. No task instructions, execution evidence or source records are supplied. Interpret the author's exact commitments; do not decide truth or repair the meaning to fit your knowledge.
@@ -8,7 +9,8 @@ Each part should contain an independently assessable predicate, including conjoi
 Independently identify what EACH part commits to before any evidence is seen. claim_kind is observation (a stated observed fact or available-record claim), comparison (a relationship between observations), actor_activity (an actor's identity, action or absence of action), causal_relation (one thing causing or explaining another), judgment (a recommendation or interpretation without an additional empirical commitment), or discourse (framing or a convention without a factual claim). This is meaning classification, NOT a truth verdict. Split changed commitment types where a source-unit boundary permits. When a unit contains several predicates, preserve them all and classify its empirical commitment rather than hiding observations or actor activity inside a judgment. An actor's asserted behavior remains actor_activity even when presented as technical analysis, an explanation or an opinion. Preserve qualifications and hypothetical scope; do not invent an assertion of actual activity from a proposed action or an inability to identify actors.
 Classify the proposition, not its grammatical tense. An analyst's assessment of whether a holding rationale remains persuasive is a judgment, not a report of the investor's private mental state or a completed strategy change. Any separately asserted market premises remain observations, comparisons or causal/actor claims. An attribution of what an investor actually believed, decided or executed is a different proposition and must retain that commitment.
 For each part independently return claim_kind: observation, comparison, actor_activity, causal_relation, judgment or discourse. This category is separate from operation_code. Recommendations and bounded interpretations are judgment unless the same part additionally asserts an empirical property; preserve that empirical commitment.
-as_of_task_now is a boolean. Use true ONLY for an empirical observation the author asserts as current at the task's present business date, including a current value inside a judgment. It does not mean that a date is mentioned or can be referenced. A calendar-dated sample without an additional present-time assertion uses false. Referring back to an established calendar date keeps that calendar anchor. The report's topic and sample date do not assert present currency. Preserve a separate current-time assertion even beside an explicit date. Pure proposals, future watchpoints, discourse and a present opinion without a current empirical premise use false. You have no evidence from which to infer an observation time.
+observation_dates preserves the actual calendar anchors of the author's EMPIRICAL observations. It is an array of ISO YYYY-MM-DD dates, the token task_now for an empirical claim at the task's present time, or unresolved for an empirical date expression that cannot be resolved. Use the actual dates explicitly established by the reader and retain them through subsequent references and ellipsis; a dated sample does not become task_now just because it is observed. task_now is a relative commitment, not a synonym for any observed fact. A present value inside an opinion retains task_now. Preserve both an explicit date and an additional present-time assertion when both occur. Pure plans/future conditions/opinions/discourse without empirical premises use []. report_context contains only runtime calendar/timezone context, not instructions or source answers. Do not invent dates from evidence, a sample's apparent freshness or the report topic.
+classifications records categorical indicator properties the reader actually asserts, without deciding truth. It is an array of {"property":"moving_average_order","value":"bullish_alignment|bearish_alignment|mixed","operator":"eq|ne","scope":"all_mentioned|explicit_subset","periods":[]}. operator is eq for an asserted category and ne for its denial; preserve negation, rather than changing it into an opposite category. Record an asserted ordering/alignment of moving averages; preserve the author's claimed category even if you doubt it. all_mentioned concerns the stated moving-average system; explicit_subset preserves only periods explicitly named in the prose, as positive integers. Do not invent period numbers from price values, infer an ordering from merely being above a moving average, or strengthen a bounded trend opinion into an assertion about every moving average. Other empirical commitments retain claim_kind and still need factual assessment. Use [] when no such categorical ordering is asserted.
 operation_code is ONE integer selecting a complete operation meaning. It concerns an actor's state-changing order or memory operation, not price/return/valuation/holding/balance observations. Market movements are code 0 even when current. These labels classify meaning, not whether the claim is true:
 0: No assertion about a business operation, and no proposal or unconfirmed operation.
 1: A proposed action, recommendation, conditional watchpoint or authored choice/decision; it does not itself assert execution. This is usually a judgment; retain separately asserted empirical premises.
@@ -23,8 +25,8 @@ operation_code is ONE integer selecting a complete operation meaning. It concern
 10: Categorical non-execution is asserted for a whole HISTORICAL run.
 A decision to continue holding or refrain from buying is code 1, not confirmation that an order did or did not occur. Split an additional completed-operation assertion where a source-unit boundary permits. A rejected attempt does not mean no actions occurred anywhere in the run. Do not soften categorical outcomes into uncertainty or turn absent records into non-execution.
 Resolve the proposition the author commits to, preserving negation, conditions and embedding. Mentioning an operation as the subject of a reporting rule does not assert its occurrence or non-occurrence. Reporting an outcome, proposing an action and performing it are different meanings. A past price observation is not a historical order. Never use a business-operation label as claim_kind; select one of its six categories independently.
-Return only JSON: {"quantity_issues":[{"id":"paragraph id","text":"exact problematic quantity span","reason":"missing unit or numerical scale"}],"paragraphs":[{"id":"input paragraph id","parts":[{"through":"exact source unit id","operation_code":0,"claim_kind":"observation","as_of_task_now":false}]}]}.
-Include every paragraph exactly once and every original source unit in contiguous order. operation_code must be an integer from 0 through 10, claim_kind one of its six categories, and as_of_task_now true or false. Do not supply invented labels, copied reader text, evidence hints or extra fields.
+Return only JSON: {"quantity_issues":[{"id":"paragraph id","text":"exact problematic quantity span","reason":"missing unit or numerical scale"}],"paragraphs":[{"id":"input paragraph id","parts":[{"through":"exact source unit id","operation_code":0,"claim_kind":"observation","observation_dates":[],"classifications":[]}]}]}.
+Include every paragraph exactly once and every original source unit in contiguous order. operation_code must be an integer from 0 through 10, claim_kind one of its six categories, observation_dates an array of the permitted date anchors, and classifications the categorical assertions array. Do not supply invented labels, copied reader text, evidence hints or extra fields.
 Independently inspect whether the reader body itself establishes the meaning of each stated quantity: its dimensional unit and, for ratios/rates, its numerical scale. Do not calculate an implied intended number from other values, use outside conventions to supply a missing percentage sign, or repair what the author probably intended. A dimensional quantity needs a unit established in its assertion or an explicit shared convention in these paragraphs. A bare ratio/rate numeral without an explicit fraction, ratio scale or percent convention is ambiguous. Intrinsically dimensionless multiples such as valuation ratios do not require a currency or percent unit. Securities identifiers, dates, counts and qualitative directions are not missing-unit quantities.
 quantity_issues lists ONLY quantity meaning not established by the body. Copy an exact existing text span with its paragraph id for each issue. Use [] when all quantities are clear. This is NOT evidence review: an unambiguously stated factual error must not be marked as a quantity clarity issue. All paragraphs form one reader context; an explicitly shared unit/scale remains valid across clauses and paragraphs. Do not require repeated units or a fixed phrase. Do not infer a missing convention from evidence, calculated answers, or numerical plausibility."""
 
@@ -38,7 +40,9 @@ def _canonical_part(part):
     fields = {'operation_code', 'claim_kind', 'as_of_task_now'}
     if not isinstance(part, dict) or not fields.intersection(part):
         return part  # Existing selector and exact-quote responses remain readable.
-    if set(part) != {'through', *fields}:
+    legacy = set(part) == {'through', 'operation_code', 'claim_kind', 'as_of_task_now'}
+    current = set(part) == {'through', 'operation_code', 'claim_kind', 'observation_dates', 'classifications'}
+    if not legacy and not current:
         raise BodyMeaningError('invalid_body_wire_part')
     operations = (
         ('other', 'none', 'none'), ('plan', 'none', 'none'), ('availability', 'unknown', 'none'),
@@ -48,12 +52,48 @@ def _canonical_part(part):
         ('historical_outcome', 'performed', 'whole_run'), ('historical_outcome', 'not_performed', 'whole_run'),
     )
     if (type(part['operation_code']) is not int or not 0 <= part['operation_code'] < len(operations)
-            or type(part['as_of_task_now']) is not bool):
+            or legacy and type(part['as_of_task_now']) is not bool):
         raise BodyMeaningError('invalid_body_wire_part')
+    extra = {} if legacy else _observation_commitments(part)
+    current_time = part['as_of_task_now'] if legacy else 'task_now' in extra['observation_dates']
     kind, outcome, extent = operations[part['operation_code']]
     return {'through': part['through'], 'kind': kind, 'assertion_kind': part['claim_kind'],
-            'time_scope': 'reference_date' if part['as_of_task_now'] else 'other',
-            'outcome': outcome, 'extent': extent}
+            'time_scope': 'reference_date' if current_time else 'other',
+            'outcome': outcome, 'extent': extent, **extra}
+
+
+def _observation_commitments(part):
+    anchors, classifications = part['observation_dates'], part['classifications']
+    if (not isinstance(anchors, list) or len(anchors) > 20
+            or any(not isinstance(anchor, str) for anchor in anchors)
+            or len(set(anchors)) != len(anchors)
+            or not isinstance(classifications, list) or len(classifications) > 20):
+        raise BodyMeaningError('invalid_observation_commitment')
+    for anchor in anchors:
+        if anchor not in {'task_now', 'unresolved'}:
+            try:
+                valid = date.fromisoformat(anchor).isoformat() == anchor
+            except ValueError:
+                valid = False
+            if not valid:
+                raise BodyMeaningError('invalid_observation_commitment')
+    values = []
+    for claim in classifications:
+        if (not isinstance(claim, dict) or set(claim) not in (
+                {'property', 'value', 'scope', 'periods'}, {'property', 'value', 'operator', 'scope', 'periods'})
+                or any(not isinstance(claim.get(key), str) for key in ('property', 'value', 'scope'))
+                or not isinstance(claim.get('operator', 'eq'), str)
+                or claim['property'] != 'moving_average_order'
+                or claim['value'] not in {'bullish_alignment', 'bearish_alignment', 'mixed'}
+                or claim.get('operator', 'eq') not in {'eq', 'ne'}
+                or claim['scope'] not in {'all_mentioned', 'explicit_subset'}
+                or not isinstance(claim['periods'], list)
+                or any(type(period) is not int or period <= 0 for period in claim['periods'])
+                or len(set(claim['periods'])) != len(claim['periods'])
+                or (claim['periods'] != [] if claim['scope'] == 'all_mentioned' else len(claim['periods']) < 2)):
+            raise BodyMeaningError('invalid_observation_commitment')
+        values.append({**claim, 'operator': claim.get('operator', 'eq')})
+    return {'observation_dates': anchors, 'classifications': values}
 
 
 def reader_source_units(text):
@@ -100,8 +140,9 @@ def validate_body_meaning(value, paragraphs):
             positions = {unit['id']: index for index, unit in enumerate(units)}
             selected, cursor = [], 0
             for part in parts:
-                if (not isinstance(part, dict) or set(part) != {
-                        'through', 'kind', 'assertion_kind', 'time_scope', 'outcome', 'extent'}
+                if (not isinstance(part, dict) or set(part) not in (
+                        {'through', 'kind', 'assertion_kind', 'time_scope', 'outcome', 'extent'},
+                        {'through', 'kind', 'assertion_kind', 'time_scope', 'outcome', 'extent', 'observation_dates', 'classifications'})
                         or not isinstance(part['through'], str) or part['through'] not in positions
                         or positions[part['through']] < cursor):
                     raise BodyMeaningError('invalid_source_unit_selection')
@@ -115,8 +156,10 @@ def validate_body_meaning(value, paragraphs):
         # Exact quoted responses remain readable for compatibility, with the
         # original strict reconstruction check. New inference uses selectors.
         for part in parts:
-            if (not isinstance(part, dict) or set(part) != {"text", "kind", "assertion_kind", "time_scope", "outcome", "extent"}
-                    or any(not isinstance(part[key], str) for key in part) or not part["text"]
+            if (not isinstance(part, dict) or set(part) not in (
+                    {"text", "kind", "assertion_kind", "time_scope", "outcome", "extent"},
+                    {"text", "kind", "assertion_kind", "time_scope", "outcome", "extent", 'observation_dates', 'classifications'})
+                    or any(not isinstance(part[key], str) for key in ('text', 'kind', 'assertion_kind', 'time_scope', 'outcome', 'extent')) or not part["text"]
                     or part["kind"] not in {"current_outcome", "historical_outcome", "plan", "availability", "other"}
                     or part["assertion_kind"] not in {"observation", "comparison", "actor_activity", "causal_relation", "judgment", "discourse"}
                     or part['time_scope'] not in {'reference_date', 'other'}
@@ -126,6 +169,10 @@ def validate_body_meaning(value, paragraphs):
             if part["kind"] == "current_outcome":
                 if part["outcome"] not in {"performed", "not_performed"} or part["extent"] not in {"operation", "whole_run"}:
                     raise BodyMeaningError("invalid current outcome meaning")
+            if 'observation_dates' in part:
+                part.update(_observation_commitments(part))
+                if (part['time_scope'] == 'reference_date') != ('task_now' in part['observation_dates']):
+                    raise BodyMeaningError('conflicting_observation_commitment')
         if "".join(part["text"] for part in parts) != paragraphs[row["id"]]:
             raise BodyMeaningError("body partition omitted or rewrote text")
         result[row["id"]] = parts
@@ -204,6 +251,28 @@ def factual_assertions(inferences, body_meaning):
                                'assertion_kind': part['assertion_kind'], 'meaning_kind': part['kind'],
                                'time_scope': part['time_scope'],
                                'bound_fact_refs': list(dict.fromkeys(ref for s in owned for ref in s['fact_refs'])),
-                               'time_fact_refs': list(dict.fromkeys(ref for s in owned for ref in s['date_refs']))})
+                               'time_fact_refs': list(dict.fromkeys(ref for s in owned for ref in s['date_refs'])),
+                               **{key: part[key] for key in ('observation_dates', 'classifications') if key in part}})
             owners[identifier].append(claim_id)
     return contexts, statements, owners
+
+
+def factual_review_statements(statements):
+    """Negative body categories cannot exempt claims from independent review."""
+    result = []
+    for statement in statements:
+        row = {key: value for key, value in statement.items()
+               if key not in {'assertion_kind', 'meaning_kind', 'time_scope'}}
+        required = {}
+        if statement['assertion_kind'] == 'actor_activity':
+            required['participant_activity'] = True
+        if statement['assertion_kind'] == 'causal_relation':
+            required['causal_relation'] = True
+        if statement['time_scope'] == 'reference_date':
+            required['task_present'] = True
+        if statement['meaning_kind'] == 'plan':
+            required['proposal'] = True
+        if required:
+            row['requirements'] = required
+        result.append(row)
+    return result

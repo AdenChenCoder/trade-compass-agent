@@ -49,6 +49,7 @@ fi
   tests/test_report_reading.py \
   tests/test_report_narrative.py \
   tests/test_report_factual_role.py \
+  tests/test_report_classifications.py \
   tests/test_report_transport.py \
   tests/test_report_scheduler_contract.py \
   tests/test_report_incident_annotations.py \
@@ -57,6 +58,8 @@ fi
   src/trade_compass_agent/runtime/report_execution.py \
   src/trade_compass_agent/runtime/report_publication.py \
   src/trade_compass_agent/runtime/report_body.py \
+  src/trade_compass_agent/runtime/report_classifications.py \
+  src/trade_compass_agent/runtime/indicator_values.py \
   src/trade_compass_agent/runtime/report_reading.py \
   src/trade_compass_agent/runtime/report_transport.py \
   tests/test_tool_evidence_boundaries.py \

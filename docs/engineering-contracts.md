@@ -27,6 +27,11 @@ in the linked regression tests, not in expanding prose exception lists.
   not a substitute for this review.
   Composition also receives the original structured tool records: a numeric
   catalogue must not discard deterministic classifications or source limitations.
+  Computed moving-average alignment is also a typed categorical fact, retaining
+  the original receipt, observation time and indicator scope. Its reader display
+  uses the business category; the raw source value and historical records remain
+  unchanged. Calculation and publication share the same alignment operation,
+  including its existing equality and insufficient-data behavior.
   These records provide context, not another fact-reference namespace; original
   receipts remain unchanged and numeric bindings still use the fact catalogue.
   Adjacent bound fields retain a runtime formatting separator, so a date and
@@ -132,11 +137,16 @@ in the linked regression tests, not in expanding prose exception lists.
   without gaps or overlap and end at the last unit. The runtime restores exact
   original characters, including framing, negation, conditions and whitespace;
   addressing boundaries assign no semantic categories or truth verdicts.
-  Body wire fields separately represent one complete operation state, claim kind
-  and a task-present boolean. The operation code chooses a valid combination of
+  Body wire fields separately represent one complete operation state, claim kind,
+  actual observation-date anchors and categorical indicator assertions. Explicit
+  calendar anchors remain ISO dates; `task_now` preserves an additional present
+  observation commitment and `unresolved` remains unknown. Provide runtime calendar
+  and timezone context without task instructions or source evidence. A dated
+  sample must not become current merely because it is an empirical observation.
+  The operation code chooses a valid combination of
   meaning, outcome and scope instead of asking the model to cross-fill three
   related fields. Exact typed decoding maps into the existing canonical types
-  before review and persistence; legacy selectors and
+  before review and persistence; earlier boolean wire annotations, legacy selectors and
   exact quoted responses remain readable. Reject mixed field namespaces and
   illegal values rather than guessing a category or repairing reader meaning.
   Strictly reconstructed quoted responses remain readable for compatibility.
@@ -205,6 +215,20 @@ in the linked regression tests, not in expanding prose exception lists.
   check does not establish sentence truth: a model can still misidentify the
   basis, so exact semantic counterexamples and legitimate paired reports remain
   mandatory. No prose phrases or keywords classify support in the runtime.
+  The factual assessor independently records participant and causal commitments;
+  either stage's positive commitment requires the corresponding direct evidence.
+  Negative body classifications cannot exempt a statement from that assessment.
+  Missing or malformed independent commitments remain unavailable review.
+  Categorical moving-average assertions fixed before evidence retain their scope
+  and equality/inequality predicate. Publication checks the actual owned moving
+  averages using the calculation's operation, despite an optimistic model verdict.
+  Bound observations cannot be replaced by another security or date selected by
+  the assessor. Explicit period subsets do not assert the whole system's order;
+  unavailable periods or ambiguous source scope remain unknown. Preserve these
+  checks, raw verdicts and original assertions through revision and saved history.
+  Correct extraction of meaning is still a model obligation, not established by
+  an enum or a valid evidence reference; paired real-model and full-report checks
+  remain mandatory.
   Pass the body-only operation meaning alongside the commitment type. Proposals
   and conditional watchpoints are not completed actions or measured predictions;
   verify their asserted premises and rule compliance without requiring execution

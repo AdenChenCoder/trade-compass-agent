@@ -29,6 +29,7 @@ def compose(payload):
 def assess(payload, verdict="entailed"):
     return {"assessments": [{"id": row["id"], "comparison": "比较最终陈述与原始资料。", "verdict": verdict,
                             "support_basis": "direct",
+                            "commitments": {"participant_activity": False, "causal_relation": False},
                             "time_evidence": [],
                             "checks": {key: verdict for key in ('identity_scope', 'time', 'quantity', 'support')}}
                             for row in payload["statements"]]}
@@ -39,6 +40,7 @@ def assess(payload, verdict="entailed"):
     ('direct', True, False), ('reasoned', False, False), ('calculated', False, False),
     ('unknown', False, False), ('not_applicable', False, False),
     (None, False, True), ('not-a-basis', False, True), ([], False, True),
+    ('missing_commitments', False, True), ('invalid_commitments', False, True),
 ])
 def test_empirical_commitment_cannot_publish_on_analysis_basis(tmp_path, assertion_kind, basis, supported, unavailable):
     claim = ('在所给统计覆盖范围内，002415在2025-01-02的机构卖出额为0元。'
@@ -81,6 +83,11 @@ def test_empirical_commitment_cannot_publish_on_analysis_basis(tmp_path, asserti
             if statement['context_id'] == 'p1':
                 if basis is None:
                     row.pop('support_basis')
+                elif basis in ('missing_commitments', 'invalid_commitments'):
+                    if basis == 'missing_commitments':
+                        row.pop('commitments')
+                    else:
+                        row['commitments']['participant_activity'] = 'false'
                 else:
                     row['support_basis'] = basis
             elif statement['context_id'] == 'p2':
@@ -799,9 +806,10 @@ def test_each_assertion_must_be_reviewed_before_the_complete_paragraph_is_publis
                 for text, category in [(prefix, 'observation'), (conclusion, 'judgment' if legitimate else 'actor_activity')]]}]})
         seen.append(payload)
         assert [row['text'] for row in payload['statements']] == [prefix, conclusion]
-        assert [row['assertion_kind'] for row in payload['statements']] == [
-            'observation', 'judgment' if legitimate else 'actor_activity']
-        assert [row['meaning_kind'] for row in payload['statements']] == ['other', 'other']
+        assert [row.get('requirements', {}) for row in payload['statements']] == [
+            {}, {} if legitimate else {'participant_activity': True}]
+        assert all(not {'assertion_kind', 'meaning_kind', 'time_scope'}.intersection(row)
+                   for row in payload['statements'])
         assert {row['context_id'] for row in payload['statements']} == {'p0'}
         assert 'text' not in payload['contexts']['p0']
         assert set(payload['contexts']['p0']) == {'evidence', 'calculations'}
@@ -864,7 +872,7 @@ def test_percent_reader_precision_preserves_source_values_and_real_nonzero_chang
 
 
 def body_reply(payload):
-    assert set(payload) == {"paragraphs"}
+    assert set(payload) == {"paragraphs", "report_context"}
     return {"quantity_issues": [], "paragraphs": [{"id": row["id"], "parts": [{"text": row["text"], "kind": "other", "assertion_kind": "observation", "time_scope": "other", "referents": {},
         "outcome": "none", "extent": "none"}]} for row in payload["paragraphs"]]}
 
@@ -1050,7 +1058,7 @@ def test_only_supported_final_body_reaches_reader_and_reopened_artifact(tmp_path
     assert saved["coverage_review_input"] == primary[-1]
     assert saved["factual_review_input"] == factual[0]
     assert saved["factual_review"]["assessments"][0]["verdict"] == verdict
-    assert set(saved["body_review_input"]) == {"paragraphs"}
+    assert set(saved["body_review_input"]) == {"paragraphs", "report_context"}
     assert saved["body_meaning"]["answer"][0]["text"] == factual[0]["statements"][0]["text"]
 
 
@@ -1069,7 +1077,7 @@ def test_rule_context_remains_separate_from_evidence_and_cannot_authorize_execut
     def checker(system, user):
         payload = json.loads(user)
         if "paragraphs" in payload:
-            assert set(payload) == {"paragraphs"}
+            assert set(payload) == {"paragraphs", "report_context"}
             return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "decision", "parts": [
                 {"text": text, "kind": meaning, "time_scope": "other", "referents": {}, "assertion_kind": "judgment" if meaning == "plan" else "actor_activity", "outcome": "none" if meaning == "plan" else "not_performed",
                  "extent": "none" if meaning == "plan" else "operation"}]}]})
@@ -1077,8 +1085,9 @@ def test_rule_context_remains_separate_from_evidence_and_cannot_authorize_execut
         assert payload["request_context"] == {"role": "requirements", "text": task}
         assert payload["receipts"][0]["result"] == RECEIPTS[0][1]
         assert payload["execution_records"] == []
-        assert [row['meaning_kind'] for row in payload['statements']] == ['plan']
-        assert [row['assertion_kind'] for row in payload['statements']] == ['judgment']
+        assert [row['requirements'] for row in payload['statements']] == [{'proposal': True}]
+        assert all(not {'assertion_kind', 'meaning_kind', 'time_scope'}.intersection(row)
+                   for row in payload['statements'])
         assert all(f["value"] != "30" for row in payload["contexts"].values() for f in row["evidence"])
         return json.dumps(assess(payload))
     result = publish_report(task=task, draft="already bought; untrusted draft", tool_results=RECEIPTS,
@@ -1172,7 +1181,7 @@ def test_missing_or_unfaithful_body_interpretation_cannot_reach_coverage_or_fact
     def checker(system, user):
         payload = json.loads(user)
         calls.append(payload)
-        assert set(payload) == {"paragraphs"}
+        assert set(payload) == {"paragraphs", "report_context"}
         if fault == "timeout":
             raise TimeoutError("body interpretation unavailable")
         result = body_reply(payload)
@@ -1215,7 +1224,7 @@ def test_execution_only_report_uses_receipt_without_empty_prose_or_source_marker
         assert "买入100股" in payload["report"] and claim not in payload["report"]
         return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
     def checker(system, user):
-        assert set(json.loads(user)) == {"paragraphs"}
+        assert set(json.loads(user)) == {"paragraphs", "report_context"}
         return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "outcome", "parts": [{"text": claim, "kind": "current_outcome", "assertion_kind": "actor_activity", "time_scope": "other", "referents": {},
             "outcome": "performed", "extent": "operation"}]}]})
     result = publish_report(task="报告成交结果", draft="", tool_results=[("place_paper_trade", json.dumps(receipt))],
@@ -1506,7 +1515,7 @@ def test_body_quantity_meaning_cannot_be_repaired_by_evidence_approval(tmp_path,
 def test_malformed_body_quantity_assessment_is_not_silent_approval(fault):
     def checker(system, user):
         payload = json.loads(user)
-        assert set(payload) == {"paragraphs"}
+        assert set(payload) == {"paragraphs", "report_context"}
         body = body_reply(payload)
         issue = {"id": "answer", "text": payload["paragraphs"][0]["text"], "reason": "需要明确单位。"}
         body["quantity_issues"] = [issue]

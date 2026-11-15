@@ -4,6 +4,9 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [0.5.10] - Unreleased
 
+- Preserve explicit historical dates separately from current observations, and
+  check stated moving-average categories against the same calculation used by
+  the tools. Normal period subsets and negated categories keep their meaning.
 - Review independently assessable assertions within reader paragraphs, requiring
   complete assessment coverage before publication. Keep original context for
   natural phrasing without letting correct neighboring numbers prove an
