@@ -16,6 +16,24 @@ MODEL = runpy.run_path(str(ROOT / "scripts/release_model_acceptance.py"))
 NARRATIVE = runpy.run_path(str(ROOT / 'scripts/report_narrative_acceptance.py'))
 
 
+def test_profile_controls_change_evidence_without_changing_the_reader_claim():
+    cases = NARRATIVE['SCOPE_CASES']
+    missing = cases['profile_property_in_plan_missing']
+    supplied = cases['profile_property_in_plan_supported']
+    assert missing[0] == supplied[0] and missing[3] == supplied[3]
+    assert missing[1] is False and supplied[1] is True
+    assert supplied[2][:-1] == missing[2] and supplied[2][-1][0] == 'fetch_url'
+    negative = cases['estimate_as_measured_profile']
+    positive = cases['estimated_pressure_plan']
+    assert negative[2] == positive[2] and not negative[1] and positive[1]
+    from trade_compass_agent.runtime.report_contract import EvidenceCatalog
+    evidence = EvidenceCatalog.build(positive[2], run_scope='chip-fixture')
+    upper = next(f for f in evidence.facts.values() if f.metric == 'cost_90_high')
+    assert upper.value == '23' and upper.unit == '元/股' and upper.kind == 'chip_cost'
+    assert upper.observed_at == '2025-01-02'
+    assert json.loads(upper.scope)['method'] == 'eastmoney_cyq_algorithm'
+
+
 @pytest.mark.parametrize('selected,cases,passed', [
     (['normal'], [{'case': 'normal', 'passed': True}], True),
     ([], [], False),
@@ -64,6 +82,8 @@ def test_qualitative_time_control_checks_completed_temporal_outcome(
     ('compound_actor_from_activity', '结合上述开盘价、收盘价及0.594倍量比，可以确定该日非主力出货。'),
     ('ma_order_mixed_as_bullish', '002415在2025-01-02的均线呈多头排列。'),
     ('ma_order_bullish_denied', '002415在2025-01-02的均线尚未构成多头排列。'),
+    ('profile_property_in_plan_missing', '上方23元/股为前期成交密集区，突破仍需观察成交量。'),
+    ('estimate_as_measured_profile', '002415在2025-01-02的逐价成交量实测证实，23元附近是该日成交最密集的价位。'),
 ])
 def test_thesis_negative_requires_its_own_completed_inferential_rejection(
     target_status, unrelated_status, dimension, available, passed, case, target_text,

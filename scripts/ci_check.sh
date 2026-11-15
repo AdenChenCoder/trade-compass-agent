@@ -50,6 +50,7 @@ fi
   tests/test_report_narrative.py \
   tests/test_report_factual_role.py \
   tests/test_report_classifications.py \
+  tests/test_report_chip_facts.py \
   tests/test_report_transport.py \
   tests/test_report_scheduler_contract.py \
   tests/test_report_incident_annotations.py \

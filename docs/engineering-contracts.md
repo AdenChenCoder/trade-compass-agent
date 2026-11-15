@@ -40,6 +40,10 @@ in the linked regression tests, not in expanding prose exception lists.
   date. No post-review replacement or shortened incomplete answer repairs it.
   These records provide context, not another fact-reference namespace; original
   receipts remain unchanged and numeric bindings still use the fact catalogue.
+  Numeric field meaning belongs to its producer. A chip-distribution average or
+  cost interval is a dated estimate, separate from an account's holding cost or
+  an observed transaction price. Preserve its method and scope through bindings,
+  review and saved reports; a change in that estimate is not a stock return.
   Adjacent bound fields retain a runtime formatting separator, so a date and
   amount cannot concatenate into a different token. This whitespace is part of
   the exact reviewed and saved body; it supplies no factual or connective meaning.

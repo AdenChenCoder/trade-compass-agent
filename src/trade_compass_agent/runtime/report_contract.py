@@ -215,6 +215,15 @@ FIELDS = {
     "snippet": ("来源摘要", "", "quotation"), "excerpt": ("来源原文", "", "quotation"),
     "text": ("来源原文", "", "quotation"),
 }
+# The same producer key may describe a different business quantity. In CYQ,
+# avg_cost is a distribution estimate, never the owner's portfolio entry cost.
+CHIP_FIELDS = {
+    "avg_cost": ("筹码平均成本估算", "元/股", "chip_cost"),
+    "cost_90_low": ("90%筹码成本估算下沿", "元/股", "chip_cost"),
+    "cost_90_high": ("90%筹码成本估算上沿", "元/股", "chip_cost"),
+    "cost_70_low": ("70%筹码成本估算下沿", "元/股", "chip_cost"),
+    "cost_70_high": ("70%筹码成本估算上沿", "元/股", "chip_cost"),
+}
 EVIDENCE_TOOLS = frozenset({
     "analyze_portfolio", "get_bars", "batch_get_bars", "sina_realtime_quote",
     "get_market_pulse", "get_market_constraints", "get_fund_flow", "get_chip_distribution",
@@ -381,6 +390,8 @@ class EvidenceCatalog:
                 continue
             metric = {"O": "open", "H": "high", "L": "low", "C": "close", "V": "volume"}.get(key, key) if compact_bar else key
             descriptor = FIELDS.get(metric)
+            if tool == 'get_chip_distribution' and not path and metric in CHIP_FIELDS:
+                descriptor = None if value.get('unavailable') is True else CHIP_FIELDS[metric]
             if tool == 'compute_ma' and not path and key == 'trend' and isinstance(item, str) and item in {
                     'bullish_alignment', 'bearish_alignment', 'mixed', 'insufficient_data'}:
                 metric, descriptor = 'ma_alignment', ('均线排列', '', 'classification')
@@ -397,7 +408,7 @@ class EvidenceCatalog:
                     unit = {"shares": "股", "lots": "手"}.get(context.get("volume_unit"), "单位未提供")
                 if kind in {"price", "moving_average"} and (context.get("price_unit") == "index_points" or path.startswith("/indices/")):
                     unit = "点"
-                if kind in {"price", "cost", "entry", "exit"} and _number(item) <= 0:
+                if kind in {"price", "cost", "chip_cost", "entry", "exit"} and _number(item) <= 0:
                     continue
                 if tool in PORTFOLIO_OPERATIONS | {"analyze_portfolio"}:
                     if "/recent_trades/" in path:
@@ -418,6 +429,10 @@ class EvidenceCatalog:
                 fid = hashlib.sha256((rid + pointer).encode()).hexdigest()[:24]
                 subject = " ".join(context.get(k, "") for k in ("symbol", "name")).strip()
                 scope = {k: context[k] for k in ("timeframe", "adjustment", "classification", "url") if context.get(k)}
+                if kind == 'chip_cost':
+                    scope['estimate'] = 'chip_cost_distribution'
+                    if isinstance(meta.get('source'), str) and meta['source']:
+                        scope['method'] = meta['source']
                 if tool == "get_fund_flow":
                     category = path.split("/")[1] if path else ""
                     if category in {"industry_flow", "concept_flow"}:
@@ -471,7 +486,7 @@ def calculate(item: Calculation, catalog: EvidenceCatalog) -> tuple[str, dict]:
     if item.operation in {"difference", "change_pct", "compare"}:
         if not (facts[0].entity or facts[0].account) or len({(f.entity, f.account, f.timeframe, f.scope) for f in facts}) != 1:
             raise ValueError("不能混用不同标的或账户的数值")
-        price_kinds = {"price", "cost", "entry", "exit", "moving_average"}
+        price_kinds = {"price", "cost", "chip_cost", "entry", "exit", "moving_average"}
         if len({f.metric for f in facts}) != 1 and not all(f.kind in price_kinds for f in facts):
             raise ValueError("不能混用不同含义的指标")
     if item.operation in {"compare", "difference", "share_pct"}:

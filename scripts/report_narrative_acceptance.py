@@ -84,7 +84,25 @@ _ma_mixed = [('compute_ma', json.dumps({'symbol': '002415', 'timeframe': '1d',
     '_meta': {'as_of': '2025-01-02'}, 'ma': {'MA5': 22, 'MA10': 23, 'MA20': 20, 'MA60': 18}, 'trend': 'mixed'}))]
 _ma_bullish = [('compute_ma', json.dumps({'symbol': '002415', 'timeframe': '1d',
     '_meta': {'as_of': '2025-01-02'}, 'ma': {'MA5': 24, 'MA10': 23, 'MA20': 20, 'MA60': 18}, 'trend': 'bullish_alignment'}))]
+_chip_bars = [('get_bars', json.dumps({'symbol': '002415', 'timeframe': '1d', 'bars': [
+    {'timestamp': '2025-01-02', 'open': 22, 'high': 23, 'low': 21, 'close': 22.8, 'volume': 1000}]}))]
+_profile = [*_chip_bars, ('fetch_url', json.dumps({'symbol': '002415', 'as_of': '2025-01-02',
+    'url': 'https://example.invalid/frozen-volume-profile',
+    'content': '002415在2025-01-02的逐价成交量分布统计显示，23元附近为前期成交密集区。'}))]
+_chip_plan = ('002415在2025-01-02的日线最高价为23元/股。后续以21元/股为防守观察位，'
+    '上方23元/股为前期成交密集区，突破仍需观察成交量。')
+_chip_estimate = [('get_chip_distribution', json.dumps({'symbol': '002415', 'date': '2025-01-02',
+    '_meta': {'source': 'eastmoney_cyq_algorithm', 'timestamp': '2025-01-03T15:10:00+08:00'},
+    'avg_cost': 22, 'cost_90_low': 20, 'cost_90_high': 23, 'cost_70_low': 20.5, 'cost_70_high': 21.5,
+    'concentration': '集中', 'note': '基于日K线与换手率的筹码成本分布算法估算，不是逐价成交量实测。'}))]
 SCOPE_CASES = {
+    'profile_property_in_plan_missing': (_chip_plan, False, _chip_bars, '根据所给日期的资料给出后续观察位，并说明依据。'),
+    'profile_property_in_plan_supported': (_chip_plan, True, _profile, '根据所给日期的资料给出后续观察位，并说明依据。'),
+    'estimated_pressure_plan': ('002415在2025-01-02的筹码算法估算中，90%成本区间上沿为23元/股；'
+        '据此可把23元附近作为后续压力观察位，但这不是逐价成交量的实测结论。', True, _chip_estimate,
+        '说明所给日期的筹码成本估算、可据此提出的观察位及其局限。'),
+    'estimate_as_measured_profile': ('002415在2025-01-02的逐价成交量实测证实，23元附近是该日成交最密集的价位。',
+        False, _chip_estimate, '说明所给日期的成本分布估算，保留方法和证据局限。'),
     'ma_order_mixed_as_bullish': ('002415在2025-01-02的均线呈多头排列。', False, _ma_mixed, '说明所给日期的均线排列。'),
     'ma_order_bullish_supported': ('002415在2025-01-02的均线呈多头排列。', True, _ma_bullish, '说明所给日期的均线排列。'),
     'ma_order_mixed_not_bullish': ('002415在2025-01-02的均线尚未构成多头排列。', True, _ma_mixed, '说明所给日期的均线排列。'),
@@ -355,6 +373,8 @@ def qualitative_time_check_completed(first, supported):
 
 
 REJECTION_TARGETS = {
+    'profile_property_in_plan_missing': ('23元/股为前期成交密集区', 'support', {'unknown', 'contradicted'}),
+    'estimate_as_measured_profile': ('逐价成交量实测证实', 'support', {'unknown', 'contradicted'}),
     'ma_order_mixed_as_bullish': ('均线呈多头排列', 'support', {'unknown', 'contradicted'}),
     'ma_order_bullish_denied': ('均线尚未构成多头排列', 'support', {'unknown', 'contradicted'}),
     'thesis_judgment_false_premise': ('600928市净率为0.8倍', 'quantity', {'contradicted'}),

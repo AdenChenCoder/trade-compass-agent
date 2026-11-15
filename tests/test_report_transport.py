@@ -50,6 +50,7 @@ def test_internal_evidence_format_does_not_receive_reader_only_category_examples
         payload = json.loads(user)
         if 'schema' not in payload:
             return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        assert 'display_values' not in system
         assert 'categorical_rendering_example' not in payload
         assert all('display_values' not in group for group in payload['facts'])
         ref = next(f['id'] for f in report_facts(payload) if f['kind'] == 'classification')
