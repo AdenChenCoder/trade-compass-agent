@@ -153,6 +153,16 @@ about the same actors, actions, instrument, period and scope. A standard technic
 interpretation of a price/volume pattern cannot establish participant identity or actions.
 Likewise distinguish a stated causal relationship from an observed association or an
 explicit hypothesis. A judgment cannot exempt an accompanying empirical commitment.
+meaning_kind preserves the body-only distinction between a plan, historical action,
+record availability and other statements. A plan or recommendation does not assert
+that its action happened: do not demand an execution receipt to prove a proposal.
+For judgments and conditional watchpoints, assess their asserted factual premises,
+claimed compliance with requirements and reasoning scope. Do not reject them merely
+because they are opinions, recommendations or hypothetical conditions rather than
+measurements. A proposed threshold need not already be a historically observed
+support/resistance level; a claim that it IS an established historical level does.
+The same qualification never exempts a new empirical claim about participants,
+causes, quantities or actual outcomes, even when it appears beside a valid plan.
 Spans that only establish framing or a convention make no market claim; do not invent
 one or demand observations for punctuation and connective text.
 Assess EVERY predicate in the target span, not just neighboring measurements. Matching

@@ -150,6 +150,15 @@ SCOPE_CASES = {
                                  '说明金融行业的涨跌幅。'),
     'wrong_percentage_display': ('金融行业的涨跌幅为0.43%。', False, _market_percentage,
                                  '说明金融行业的涨跌幅。'),
+    'prospective_watchpoint': (_price_prose +
+        '建议继续观察。若之后收盘价超过24元/股，再重新评估是否增持；这只是后续观察条件。',
+        True, _prices, '报告所给两个观察日的收盘价，并提出一个后续观察条件，不要求本轮执行交易。'),
+    'watchpoint_with_false_observation': (_price_prose +
+        '当前这两项资料的后一日收盘价已经超过24元/股，所以建议继续观察。',
+        False, _prices, '报告所给两个观察日的收盘价，并提出一个后续观察条件，不要求本轮执行交易。'),
+    'watchpoint_with_fictitious_fill': (_price_prose +
+        '若之后收盘价超过24元/股，再重新评估是否增持。本轮已经买入002415共100股。',
+        False, _prices, '报告所给两个观察日的收盘价，并提出一个后续观察条件，不要求本轮执行交易。'),
     "current_execution_receipt": (_price_prose + "本轮已买入002415共100股，成交价22元/股。", True,
         [*_prices, ("place_paper_trade", json.dumps({"status": "executed", "trade_id": "frozen-current-fill",
             "symbol": "002415", "account": "test", "side": "buy", "quantity": 100, "price": 22,

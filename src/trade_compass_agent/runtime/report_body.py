@@ -103,6 +103,6 @@ def factual_assertions(inferences, body_meaning):
         for part in kept:
             claim_id = f'c{len(statements)}'
             statements.append({'id': claim_id, 'context_id': context_id, 'text': part['text'],
-                               'assertion_kind': part['assertion_kind']})
+                               'assertion_kind': part['assertion_kind'], 'meaning_kind': part['kind']})
             owners[identifier].append(claim_id)
     return contexts, statements, owners

@@ -98,6 +98,13 @@ in the linked regression tests, not in expanding prose exception lists.
   commitment and checks the corresponding actors, actions, dates and scope;
   a correct measurement cannot replace the required proof. These internal types
   are neither factual evidence nor reader-facing content.
+  Pass the body-only operation meaning alongside the commitment type. Proposals
+  and conditional watchpoints are not completed actions or measured predictions;
+  verify their asserted premises and rule compliance without requiring execution
+  receipts or a historical observation of the proposed threshold. Assess bounded
+  research judgments through their factual premises and reasoning scope rather
+  than rejecting them solely for being subjective. None of these distinctions
+  exempts adjacent empirical, causal or participant claims from evidence review.
   This body-only review also identifies quantities whose units or numerical scale
   are not established by the reader context. Evidence review cannot supply a
   missing convention or override that finding. Explicit shared units and

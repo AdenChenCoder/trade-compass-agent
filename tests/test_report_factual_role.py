@@ -54,6 +54,7 @@ def test_each_assertion_must_be_reviewed_before_the_complete_paragraph_is_publis
         assert [row['text'] for row in payload['statements']] == [prefix, conclusion]
         assert [row['assertion_kind'] for row in payload['statements']] == [
             'observation', 'judgment' if legitimate else 'actor_activity']
+        assert [row['meaning_kind'] for row in payload['statements']] == ['other', 'other']
         assert {row['context_id'] for row in payload['statements']} == {'p0'}
         assert payload['contexts']['p0']['text'] == prefix + conclusion
         assert len(payload['contexts']['p0']['evidence']) == 3  # identity, ratio, turnover
@@ -195,6 +196,8 @@ def test_rule_context_remains_separate_from_evidence_and_cannot_authorize_execut
         assert payload["request_context"] == {"role": "requirements", "text": task}
         assert payload["receipts"][0]["result"] == RECEIPTS[0][1]
         assert payload["execution_records"] == []
+        assert [row['meaning_kind'] for row in payload['statements']] == ['plan']
+        assert [row['assertion_kind'] for row in payload['statements']] == ['judgment']
         assert all(f["value"] != "30" for row in payload["contexts"].values() for f in row["evidence"])
         return json.dumps(assess(payload))
     result = publish_report(task=task, draft="already bought; untrusted draft", tool_results=RECEIPTS,
