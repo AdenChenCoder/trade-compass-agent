@@ -52,6 +52,43 @@ def test_qualitative_time_control_checks_completed_temporal_outcome(
     assert NARRATIVE['qualitative_time_check_completed'](first, supported) is passed
 
 
+@pytest.mark.parametrize('target_status,unrelated_status,dimension,available,passed', [
+    ('contradicted', 'entailed', 'support', True, True),
+    ('unknown', 'entailed', 'support', True, True),
+    ('entailed', 'contradicted', 'support', True, False),
+    ('contradicted', 'entailed', 'time', True, False),
+    ('contradicted', 'entailed', 'support', False, False),
+])
+def test_thesis_negative_requires_its_own_completed_inferential_rejection(
+    target_status, unrelated_status, dimension, available, passed,
+):
+    first = {'review_valid': True, 'factual_assessment_errors': {} if available else {'c1': {}},
+        'factual_review_input': {'statements': [
+            {'id': 'c0', 'context_id': 'p0', 'text': '按2025年1月2日的数据，600928市净率为0.8倍。'},
+            {'id': 'c1', 'context_id': 'p0', 'text': '我认为这个估值足以保证持有不会亏损。'}]},
+        'factual_review': {'assessments': [
+            {'id': 'c0', 'checks': {'time': unrelated_status, 'support': 'entailed'}},
+            {'id': 'c1', 'checks': {'time': 'entailed', 'support': 'entailed', dimension: target_status}}]}}
+    result = NARRATIVE['thesis_rejection_check'](first, 'thesis_judgment_overclaim')
+    assert result['passed'] is passed and result['target_assertion_ids'] == ['c1']
+
+
+def test_thesis_numeric_negative_requires_a_contradiction_at_the_known_quantity():
+    first = {'review_valid': True, 'factual_assessment_errors': {},
+        'factual_review_input': {'statements': [
+            {'id': 'c0', 'context_id': 'p0', 'text': '按2025年1月2日的数据，600928市净率为'},
+            {'id': 'c1', 'context_id': 'p0', 'text': '0.8倍。'}]},
+        'factual_review': {'assessments': [
+            {'id': 'c0', 'checks': {'quantity': 'entailed'}},
+            {'id': 'c1', 'checks': {'quantity': 'contradicted'}}]}}
+    result = NARRATIVE['thesis_rejection_check'](first, 'thesis_judgment_false_premise')
+    assert result['passed'] and result['target_assertion_ids'] == ['c0', 'c1']
+    first['factual_review']['assessments'][1]['checks']['quantity'] = 'unknown'
+    assert not NARRATIVE['thesis_rejection_check'](first, 'thesis_judgment_false_premise')['passed']
+    first['factual_review']['assessments'].pop()
+    assert not NARRATIVE['thesis_rejection_check'](first, 'thesis_judgment_false_premise')['passed']
+
+
 @pytest.mark.parametrize('selected', [['natural'], ['natural', 'reordered']])
 def test_narrative_cli_finishes_after_real_source_selector_protocol(tmp_path, monkeypatch, selected):
     from trade_compass_agent.llm import providers

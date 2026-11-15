@@ -346,6 +346,47 @@ def qualitative_time_check_completed(first, supported):
     return bool(timing) and (linked or semantic)
 
 
+THESIS_REJECTION_TARGETS = {
+    'thesis_judgment_false_premise': ('600928市净率为0.8倍', 'quantity', {'contradicted'}),
+    'thesis_judgment_overclaim': ('这个估值足以保证持有不会亏损', 'support', {'unknown', 'contradicted'}),
+}
+
+
+def thesis_rejection_check(first, name):
+    """Locate a frozen test predicate; an unrelated rejection cannot pass it.
+
+    Exact text locates the known fixture only. The real assessor's completed
+    dimensional verdict decides whether that predicate was correctly blocked.
+    This helper does not interpret or classify production prose.
+    """
+    quote, dimension, required = THESIS_REJECTION_TARGETS[name]
+    statements = (first.get('factual_review_input') or {}).get('statements', [])
+    contexts = dict.fromkeys(row['context_id'] for row in statements)
+    targets = []
+    occurrences = 0
+    for context_id in contexts:
+        rows = [row for row in statements if row['context_id'] == context_id]
+        text = ''.join(row['text'] for row in rows)
+        occurrences += text.count(quote)
+        start = text.find(quote)
+        if start < 0:
+            continue
+        offset = 0
+        for row in rows:
+            end = offset + len(row['text'])
+            if offset < start + len(quote) and end > start:
+                targets.append(row['id'])
+            offset = end
+    assessments = {row['id']: row for row in (first.get('factual_review') or {}).get('assessments', [])}
+    errors = first.get('factual_assessment_errors', {})
+    completed = (first.get('review_valid') is True and occurrences == 1 and bool(targets)
+                 and all(key in assessments and key not in errors for key in targets))
+    statuses = [assessments[key]['checks'][dimension] for key in targets if key in assessments]
+    return {'passed': completed and any(status in required for status in statuses),
+            'target_assertion_ids': targets, 'dimension': dimension,
+            'target_completed': completed, 'target_statuses': statuses}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", type=Path, required=True)
@@ -623,6 +664,10 @@ def main():
                     for row in (first.get('factual_review') or {}).get('assessments', []))
                 entry['classification_support_rejection'] = correct_support_rejection
                 entry['passed'] = entry['passed'] and correct_support_rejection
+            if name in THESIS_REJECTION_TARGETS and factual_client:
+                target_check = thesis_rejection_check(first, name)
+                entry['thesis_target_check'] = target_check
+                entry['passed'] = entry['passed'] and target_check['passed']
             if name == 'utc_stale_observation' and factual_client:
                 correct_time_rejection = any(
                     check['comparison_timezone'] == 'UTC' and check['expected_date'] == '2025-01-02'
