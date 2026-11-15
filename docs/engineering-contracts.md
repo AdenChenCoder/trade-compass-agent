@@ -86,6 +86,14 @@ in the linked regression tests, not in expanding prose exception lists.
   not evidence. Matching activity measurements cannot establish unobserved actors'
   actions or causes. Missing, duplicate or unknown assertion assessments fail
   the review rather than silently dropping a claim.
+  Record each span's commitment type before evidence is supplied: observation,
+  comparison, actor activity, causal relationship, judgment or discourse. Split
+  spans when that type changes. An asserted actor identity/action or causal
+  process cannot become a qualitative judgment merely because it accompanies
+  standard technical analysis. The evidence assessor preserves that interpreted
+  commitment and checks the corresponding actors, actions, dates and scope;
+  a correct measurement cannot replace the required proof. These internal types
+  are neither factual evidence nor reader-facing content.
   This body-only review also identifies quantities whose units or numerical scale
   are not established by the reader context. Evidence review cannot supply a
   missing convention or override that finding. Explicit shared units and

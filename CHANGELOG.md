@@ -9,6 +9,9 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
   natural phrasing without letting correct neighboring numbers prove an
   unsupported conclusion. Round percentage display without changing raw facts
   or turning small nonzero observations into zero.
+  Preserve body-only commitment types through review: an actor or causal claim
+  requires its own evidence and cannot become a qualitative interpretation of
+  an otherwise correct measurement.
 - Support an independently configured local factual reviewer. Separate task
   coverage from evidence entailment; unavailable or inconclusive factual review
   keeps the report incomplete. Both review roles retain the original deadline.

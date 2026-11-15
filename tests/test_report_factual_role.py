@@ -48,9 +48,12 @@ def test_each_assertion_must_be_reviewed_before_the_complete_paragraph_is_publis
         payload = json.loads(user)
         if 'paragraphs' in payload:
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'c0', 'parts': [
-                {'text': text, 'kind': 'other', 'outcome': 'none', 'extent': 'none'} for text in [prefix, conclusion]]}]})
+                {'text': text, 'kind': 'other', 'assertion_kind': category, 'outcome': 'none', 'extent': 'none'}
+                for text, category in [(prefix, 'observation'), (conclusion, 'judgment' if legitimate else 'actor_activity')]]}]})
         seen.append(payload)
         assert [row['text'] for row in payload['statements']] == [prefix, conclusion]
+        assert [row['assertion_kind'] for row in payload['statements']] == [
+            'observation', 'judgment' if legitimate else 'actor_activity']
         assert {row['context_id'] for row in payload['statements']} == {'p0'}
         assert payload['contexts']['p0']['text'] == prefix + conclusion
         assert len(payload['contexts']['p0']['evidence']) == 3  # identity, ratio, turnover
@@ -112,7 +115,7 @@ def test_percent_reader_precision_preserves_source_values_and_real_nonzero_chang
 
 def body_reply(payload):
     assert set(payload) == {"paragraphs"}
-    return {"quantity_issues": [], "paragraphs": [{"id": row["id"], "parts": [{"text": row["text"], "kind": "other",
+    return {"quantity_issues": [], "paragraphs": [{"id": row["id"], "parts": [{"text": row["text"], "kind": "other", "assertion_kind": "observation",
         "outcome": "none", "extent": "none"}]} for row in payload["paragraphs"]]}
 
 
@@ -186,7 +189,7 @@ def test_rule_context_remains_separate_from_evidence_and_cannot_authorize_execut
         if "paragraphs" in payload:
             assert set(payload) == {"paragraphs"}
             return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "decision", "parts": [
-                {"text": text, "kind": meaning, "outcome": "none" if meaning == "plan" else "not_performed",
+                {"text": text, "kind": meaning, "assertion_kind": "judgment" if meaning == "plan" else "actor_activity", "outcome": "none" if meaning == "plan" else "not_performed",
                  "extent": "none" if meaning == "plan" else "operation"}]}]})
         observed.append(payload)
         assert payload["request_context"] == {"role": "requirements", "text": task}
@@ -237,8 +240,8 @@ def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path,
         if "paragraphs" in payload:
             assert payload == {"paragraphs": [{"id": "answer", "text": prefix+claim}]}
             return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "answer", "parts": [
-                {"text": prefix, "kind": "other", "outcome": "none", "extent": "none"},
-                {"text": claim, "kind": "current_outcome", "outcome": "not_performed" if receipt_status is None else "performed",
+                {"text": prefix, "kind": "other", "assertion_kind": "observation", "outcome": "none", "extent": "none"},
+                {"text": claim, "kind": "current_outcome", "assertion_kind": "actor_activity", "outcome": "not_performed" if receipt_status is None else "performed",
                  "extent": "whole_run" if receipt_status is None else "operation"}]}]})
         factual_inputs.append(payload)
         assert payload["statements"][0]["text"] == prefix
@@ -275,7 +278,7 @@ def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path,
     assert saved["execution_projections"]["answer"]["removed"][0]["text"] == claim
 
 
-@pytest.mark.parametrize("fault", ["omit", "rewrite", "duplicate", "wrong_id", "wrong_kind", "timeout"])
+@pytest.mark.parametrize("fault", ["omit", "rewrite", "duplicate", "wrong_id", "wrong_kind", "missing_assertion_kind", "unknown_assertion_kind", "timeout"])
 def test_missing_or_unfaithful_body_interpretation_cannot_reach_coverage_or_fact_approval(fault):
     calls = []
     def writer(system, user):
@@ -298,6 +301,10 @@ def test_missing_or_unfaithful_body_interpretation_cannot_reach_coverage_or_fact
             result["paragraphs"].append(row)
         elif fault == "wrong_id":
             row["id"] = "other"
+        elif fault == "missing_assertion_kind":
+            row["parts"][0].pop("assertion_kind")
+        elif fault == "unknown_assertion_kind":
+            row["parts"][0]["assertion_kind"] = "approved_technical_analysis"
         else:
             row["parts"][0]["kind"] = "approved"
         return json.dumps(result)
@@ -321,7 +328,7 @@ def test_execution_only_report_uses_receipt_without_empty_prose_or_source_marker
         return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
     def checker(system, user):
         assert set(json.loads(user)) == {"paragraphs"}
-        return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "outcome", "parts": [{"text": claim, "kind": "current_outcome",
+        return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "outcome", "parts": [{"text": claim, "kind": "current_outcome", "assertion_kind": "actor_activity",
             "outcome": "performed", "extent": "operation"}]}]})
     result = publish_report(task="报告成交结果", draft="", tool_results=[("place_paper_trade", json.dumps(receipt))],
                             run_scope="execution-only", call=writer, fact_review_call=checker, max_calls=2)

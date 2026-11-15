@@ -74,6 +74,12 @@ _actor_zero = _activity_prose + '在2026-11-12所给统计覆盖范围内，机�
 _market_percentage = [('get_market_pulse', json.dumps({'_meta': {'data_as_of': None,
                        'retrieved_at': '2026-11-12T15:00:00+08:00', 'timezone': 'Asia/Shanghai'},
                        'sectors': [{'name': '金融行业', 'change_pct': 0.42287699999999995}]}))]
+_long_activity = [*_activity, ('get_bars', json.dumps({'symbol': '300406', 'timeframe': '1d',
+    '_meta': {'volume_unit': 'shares'}, 'bars': [{'timestamp': '2026-11-12', 'open': 12.9,
+    'high': 13.1, 'low': 12.61, 'close': 12.69, 'volume': 4994800}]}))]
+_long_activity_prose = ('在所给2026-11-12日线样本中，300406开盘价12.9元/股，最高13.1元/股，'
+    '最低12.61元/股，收盘12.69元/股，成交量4994800股。该日量比为0.594倍，换手率为1.18%。'
+    '日线收盘价低于开盘价，收盘位置高于当日最低价。')
 SCOPE_CASES = {
     "bound_duplicate_gap": ("002415在2025-01-01的收盘价为22元/股。", True, _prices,
                             "说明002415在2025年1月1日的收盘价。"),
@@ -134,6 +140,12 @@ SCOPE_CASES = {
     'actor_zero_missing': (_actor_zero, False, _activity, '说明成交活跃度及统计覆盖范围内的机构卖出金额。'),
     'actor_zero_supported': (_actor_zero, True, [*_activity, *_actor_statistics],
                              '说明成交活跃度及统计覆盖范围内的机构卖出金额。'),
+    'compound_actor_from_activity': (_long_activity_prose +
+        '结合上述开盘价、收盘价及0.594倍量比，可以确定该日非主力出货。', False, _long_activity,
+        '报告所给日线价量特征，并说明能否确定卖方身份。'),
+    'compound_activity_limited': (_long_activity_prose +
+        '量比低于1倍，但仅凭所给价量资料，无法识别卖出方是否属于某类主力资金。', True, _long_activity,
+        '报告所给日线价量特征，并说明能否确定卖方身份。'),
     'bound_percentage_display': ('金融行业的涨跌幅为0.42%。', True, _market_percentage,
                                  '说明金融行业的涨跌幅。'),
     'wrong_percentage_display': ('金融行业的涨跌幅为0.43%。', False, _market_percentage,
