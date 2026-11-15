@@ -24,6 +24,7 @@ from trade_compass_agent.runtime.report_body import (
 )
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
 from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts
+from trade_compass_agent.runtime.report_time import check_statement_time
 
 
 @dataclass
@@ -217,7 +218,14 @@ the current value merely because it was retrieved today or is the latest provide
 An explicitly dated historical value remains valid even when it is not current.
 The comparison must name the claimed and observed dates when temporal currency is
 asserted, including within a recommendation or judgment. Unknown dates stay unknown.
+time_scope preserves the body-only temporal commitment; reference_date cannot be
+reinterpreted as latest available. For every assessment return time_evidence, an array
+of exact fact IDs from that statement's contexts[context_id].evidence which support
+its observation time. Use [] for non-observation discourse. Bound fact/date refs are
+runtime-owned and remain required even if omitted from your selection. The runtime
+independently compares these source dates with the preserved current-date commitment.
 Return only JSON: {"assessments":[{"id":"input id","comparison":"brief target-claim evidence comparison, at most two short sentences",
+"time_evidence":["exact source fact id"],
 "checks":{"identity_scope":"entailed|contradicted|unknown|not_applicable",
 "time":"entailed|contradicted|unknown|not_applicable",
 "quantity":"entailed|contradicted|unknown|not_applicable",
@@ -396,7 +404,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     review_input = None
     coverage_review_input = factual_review_input = factual_response = factual_review = None
     body_review_input = body_response = body_meaning = None
-    execution_projections, body_quantity_issues, bound_quantity_checks = {}, {}, {}
+    execution_projections, body_quantity_issues, bound_quantity_checks, temporal_checks = {}, {}, {}, {}
     reader_body = ""
     candidate_body_sha256 = None
     findings, rendered, traces = [], {}, {}
@@ -592,6 +600,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                                              if key not in forced_reviews or forced_reviews[key]["supported"]}}
                     review_input["report"] = present(document, preview, preview_findings, include_sources=False)
                     review_input["inferences"] = [{**row, "text": prose[row["id"]],
+                        "owned_segments": row["segments"],
                         "segments": [{"origin": "author", "text": part["text"]} for part in body_meaning[row["id"]]
                                      if part["kind"] != "current_outcome"]} for row in review_input["inferences"]]
                 # Keep task completeness separate from entailment when a local
@@ -636,11 +645,14 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     assessments = factual_review["assessments"]
                     if (set(factual_review) != {"assessments"} or not isinstance(assessments, list)
                             or len(assessments) != len(statements)
-                            or any(not isinstance(row, dict) or set(row) != {"id", "comparison", "checks", "verdict"}
+                            or any(not isinstance(row, dict) or set(row) != {"id", "comparison", "checks", "time_evidence", "verdict"}
                                    or not isinstance(row["id"], str)
                                    or row["verdict"] not in {"entailed", "contradicted", "unknown"}
                                    or not isinstance(row["comparison"], str) or not row["comparison"].strip()
                                    or len(row["comparison"]) > 5000
+                                   or not isinstance(row['time_evidence'], list) or len(row['time_evidence']) > 100
+                                   or any(not isinstance(ref, str) for ref in row['time_evidence'])
+                                   or len(row['time_evidence']) != len(set(row['time_evidence']))
                                    or not isinstance(row['checks'], dict)
                                    or set(row['checks']) != {'identity_scope', 'time', 'quantity', 'support'}
                                    or any(not isinstance(value, str) or value not in {
@@ -650,8 +662,22 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         raise ValueError("invalid factual review")
                     # A blanket approval cannot hide an unresolved dimension.
                     # These are typed semantic outcomes, not prose truth rules.
+                    statements_by_id = {statement['id']: statement for statement in statements}
                     for assessment in assessments:
+                        statement = statements_by_id[assessment['id']]
+                        context = contexts[statement['context_id']]
+                        available = {fact['id'] for fact in context['evidence']}
+                        if not set([*assessment['time_evidence'], *statement['bound_fact_refs'],
+                                    *statement['time_fact_refs']]) <= available:
+                            raise ValueError('temporal evidence does not belong to assertion context')
                         assessment['reported_verdict'] = assessment['verdict']
+                        assessment['reported_checks'] = dict(assessment['checks'])
+                        timing = check_statement_time(statement, assessment, context, report_context)
+                        temporal_checks[statement['id']] = timing
+                        if timing['status'] == 'unknown' and assessment['checks']['time'] != 'contradicted':
+                            assessment['checks']['time'] = 'unknown'
+                            dates = ', '.join(str(row['observed_date']) for row in timing['evidence']) or '未提供'
+                            assessment['comparison'] += f" 时点核对：任务日期{timing['expected_date'] or '未提供'}，依据日期{dates}，尚不能确认所断言的当前值。"
                         checks = set(assessment['checks'].values())
                         if 'contradicted' in checks:
                             assessment['verdict'] = 'contradicted'
@@ -736,6 +762,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "execution_projections": execution_projections, "body_quantity_issues": body_quantity_issues,
                 "bound_quantity_checks": bound_quantity_checks,
                 "factual_review_input": factual_review_input, "factual_response": factual_response,
+                "temporal_checks": temporal_checks,
                 "factual_review": factual_review,
                 "revision_input": revision, "reader_body": reader_body or text,
                 "candidate_body_sha256": candidate_body_sha256,
@@ -778,7 +805,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
         keys = ("document", "verification", "review", "review_input", "revision_input", "attempts", "published_text",
                 "candidate_body_sha256",
                 "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues", "bound_quantity_checks",
-                "coverage_review_input", "factual_review_input", "factual_response", "factual_review")
+                "coverage_review_input", "factual_review_input", "factual_response", "factual_review", "temporal_checks")
         history = [{key: attempt.artifact[key] for key in keys} for attempt in (publication, revised)]
         selected.artifact["revision_attempts"] = history
         selected.artifact["selected_attempt"] = int(selected is revised)

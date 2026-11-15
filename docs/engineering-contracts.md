@@ -77,7 +77,16 @@ in the linked regression tests, not in expanding prose exception lists.
   alongside its unchanged original timestamp. Current claims must respect that
   date even within a judgment; retrieval time and latest-available status cannot
   make a prior-day quantity current. Explicitly dated historical values remain
-  usable. These checks stay in internal evidence, never reader copy.
+  usable. Before evidence is supplied, body interpretation separately fixes
+  whether an observation is asserted as of the task's present date. Review
+  cannot reinterpret that commitment as latest available. Temporal evidence
+  links must belong to the assertion context; runtime-owned numeric bindings
+  remain mandatory even if the assessor omits them. The runtime compares those
+  source dates with the task date and can withhold a statement despite an
+  optimistic model verdict. A bound price-change interval uses its later
+  operand's observation date without discarding the earlier operand. This market
+  observation check preserves the existing ownership contract for account
+  snapshots. These checks stay in internal evidence, never reader copy.
   Each statement
   must be entailed; contradictory or unknown statements are withheld. Missing,
   malformed or unavailable assessments cannot fall back to writer approval.

@@ -567,16 +567,19 @@ def paragraph_segments(item: Paragraph, document: ReportDocument, catalog: Evide
             _, trace = calculate(entry, catalog)
             unit = trace.get("unit", "")
             value = trace.get("display_value_with_unit", trace["result"])
+            fact_refs = list(entry.refs)
+            date_refs = fact_refs[-1:] if entry.operation == 'change_pct' else fact_refs
         else:
             fact = catalog.resolve(entry.ref if isinstance(entry, Observation) else ref)
             unit = fact.unit if part.field == "value_with_unit" else ""
+            fact_refs = date_refs = [fact.id]
             value = {"value_with_unit": fact.display_value_with_unit, "subject": fact.subject,
                      "account": fact.account, "date": _date(fact) if fact.observed_at else "",
                      "label": fact.label}[part.field]
             if not value:
                 raise ValueError("引用的事实未提供所需身份、账户、日期或单位")
         segments.append({"origin": "evidence", "ref": part.ref, "field": part.field, "text": _plain(value),
-                         "quantity_unit": unit})
+                         "quantity_unit": unit, "fact_refs": fact_refs, "date_refs": date_refs})
     return segments
 
 

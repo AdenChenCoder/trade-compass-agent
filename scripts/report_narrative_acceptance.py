@@ -449,6 +449,16 @@ def main():
                 entry["passed"] = entry["passed"] and fill["quantity"] == 100
                 entry["passed"] = entry["passed"] and report.artifact["execution_records"][0]["status"] == "executed"
                 entry["passed"] = entry["passed"] and "买入100股" in report.text
+            if name == 'pb_stale_current' and factual_client:
+                pb_ids = {fact['id'] for fact in first['facts'] if fact['metric'] == 'pb'}
+                timing = list(first.get('temporal_checks', {}).values())
+                correct_time_rejection = any(
+                    check['scope'] == 'reference_date' and check['expected_date'] == '2026-11-12'
+                    and check['status'] == 'unknown' and check['reason'] == 'observation_not_at_asserted_date'
+                    and any(row['ref'] in pb_ids and row['observed_date'] == '2026-11-11'
+                            for row in check['evidence']) for check in timing)
+                entry['runtime_time_rejection'] = correct_time_rejection
+                entry['passed'] = entry['passed'] and correct_time_rejection
             if name in {"historical_execution", "absence_as_nonexecution", "compound_absence_as_nonexecution", "reporting_rule_with_noop"} and factual_client:
                 projection = report.artifact["execution_projections"].get("answer", {})
                 entry["passed"] = entry["passed"] and projection.get("has_execution_records") is False
