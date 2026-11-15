@@ -236,9 +236,10 @@ def main():
             changed["bars"][0]["close"], changed["bars"][1]["close"] = 23, 22
             case_receipts[0] = ("get_bars", json.dumps(changed))
         normal_publication = expected and name != "hidden_result"
-        # The full task harness uses the same 240-second parent budget. Negative
-        # controls retain their 120-second first-review limit and cannot rewrite.
-        deadline_seconds = 240 if normal_publication else 120
+        # Both outcomes need the same first body/coverage/evidence path as the
+        # 240-second full task harness. Expected truth must not halve its time.
+        # Negative controls still cannot rewrite or resample their first verdict.
+        deadline_seconds = 240
         primary_limit = 4 if normal_publication else 2
         calls, factual_calls, writing_calls = [], [], []
         def factual_call(system, user):
