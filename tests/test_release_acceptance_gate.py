@@ -1,7 +1,10 @@
 """Release evidence must reject missing coverage and falsely 'complete' reports."""
 from copy import deepcopy
+import json
+import os
 from pathlib import Path
 import runpy
+from unittest.mock import patch
 import zipfile
 
 import pytest
@@ -10,6 +13,58 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 CHECKS = runpy.run_path(str(ROOT / "scripts/release_acceptance.py"))
 MODEL = runpy.run_path(str(ROOT / "scripts/release_model_acceptance.py"))
+NARRATIVE = runpy.run_path(str(ROOT / 'scripts/report_narrative_acceptance.py'))
+
+
+@pytest.mark.parametrize('selected,cases,passed', [
+    (['normal'], [{'case': 'normal', 'passed': True}], True),
+    ([], [], False),
+    (['normal'], [], False),
+    (['normal'], [{'case': 'other', 'passed': True}], False),
+    (['normal'], [{'case': 'normal', 'passed': False}], False),
+    (['normal'], [{'case': 'normal', 'passed': True}, {'case': 'normal', 'passed': True}], False),
+])
+def test_narrative_aggregation_requires_exact_completed_case_coverage(selected, cases, passed):
+    original = {'cases': cases, 'passed': False}
+    result = NARRATIVE['finalize_acceptance'](original, selected)
+    assert result['passed'] is passed and original['passed'] is False
+
+
+@pytest.mark.parametrize('selected', [['natural'], ['natural', 'reordered']])
+def test_narrative_cli_finishes_after_real_source_selector_protocol(tmp_path, monkeypatch, selected):
+    from trade_compass_agent.llm import providers
+    output = tmp_path/'result'
+    wheel = tmp_path/'explicit-double.whl'
+    wheel.touch()
+    monkeypatch.setattr('sys.argv', ['acceptance', '--wheel', str(wheel), '--output', str(output),
+        '--model', 'explicit-double', '--fact-model', 'explicit-double', '--cases', *selected])
+    monkeypatch.chdir(tmp_path)
+    real_run_path = runpy.run_path
+    monkeypatch.setattr(runpy, 'run_path', lambda path, *args, **kwargs:
+        {'verify_installed_wheel': lambda _: {'wheel_sha256': 'explicit-double'}}
+        if Path(path).name == 'release_acceptance.py' else real_run_path(path, *args, **kwargs))
+    class Coverage:
+        def stream_complete(self, messages, **kwargs):
+            return providers.ChatCompletion(content='{"reviews":[],"coverage":{"complete":true,"missing":[]}}')
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [{
+                'through': row['source_units'][-1]['id'], 'kind': 'other', 'assertion_kind': 'observation',
+                'time_scope': 'other', 'outcome': 'none', 'extent': 'none'}]} for row in payload['paragraphs']]})
+        return json.dumps({'assessments': [{'id': row['id'], 'comparison': 'Explicit model double.',
+            'time_evidence': [], 'verdict': 'entailed', 'checks': {key: 'entailed'
+                for key in ('identity_scope', 'time', 'quantity', 'support')}} for row in payload['statements']]})
+    monkeypatch.setattr(providers, 'create_chat_client', lambda _: Coverage())
+    monkeypatch.setattr(providers, 'create_local_report_fact_check', lambda _: checker)
+    with patch.dict(os.environ, dict(os.environ), clear=True), pytest.raises(SystemExit) as exit_info:
+        NARRATIVE['main']()
+    assert exit_info.value.code == 0
+    result = json.loads((output/'acceptance.json').read_text())
+    assert result['passed'] and not result['not_run']
+    assert result['selected_cases'] == selected
+    assert [row['case'] for row in result['cases']] == selected
+    assert all(row['body_selector_calls'] == 1 for row in result['cases'])
 
 
 @pytest.mark.parametrize("counts", [

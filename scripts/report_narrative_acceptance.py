@@ -302,6 +302,16 @@ def basic_date_fixture_checks(selected):
     return checked
 
 
+def finalize_acceptance(result, selected_cases):
+    """Summarize named consumer results without confusing them with body rows."""
+    selected_cases = list(selected_cases)
+    completed = [row['case'] for row in result['cases']]
+    return {**result,
+        'not_run': [name for name in selected_cases if name not in completed],
+        'passed': bool(selected_cases) and len(completed) == len(set(completed)) == len(selected_cases)
+                  and set(completed) == set(selected_cases) and all(row['passed'] is True for row in result['cases'])}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", type=Path, required=True)
@@ -504,10 +514,10 @@ def main():
             selector_calls = 0
             for row in factual_calls:
                 if row.get('stage') == 'body_meaning' and row.get('output'):
-                    selected = _json_value(row['output']).get('paragraphs', [])
-                    selector_calls += bool(selected) and all(
+                    body_paragraphs = _json_value(row['output']).get('paragraphs', [])
+                    selector_calls += bool(body_paragraphs) and all(
                         paragraph.get('parts') and all('through' in part for part in paragraph['parts'])
-                        for paragraph in selected)
+                        for paragraph in body_paragraphs)
             entry.update(actual_supported=actual, coverage_complete=coverage_complete, status=report.verification["status"],
                          first_supported=first_supported, final_supported=final_supported,
                          revision_attempted=revised, selected_attempt=report.artifact.get("selected_attempt", 0),
@@ -616,8 +626,7 @@ def main():
         print(json.dumps(entry, ensure_ascii=False), flush=True)
         if not entry["passed"]:
             break
-    result["not_run"] = [name for name in selected if name not in {row["case"] for row in result["cases"]}]
-    result["passed"] = not result["not_run"] and all(row["passed"] for row in result["cases"])
+    result = finalize_acceptance(result, selected)
     (root/"acceptance.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
     raise SystemExit(0 if result["passed"] else 1)
 
