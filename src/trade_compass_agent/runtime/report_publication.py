@@ -71,6 +71,7 @@ _COMPOSE = (
     "paragraph_rendering_example展示parts展开为正文的实际效果，写作时想象展开后的完整句子。"
     "value_with_unit提供完整的带单位数值（如22元/股、4.55%），文字片段不再补单位。"
     "证券用subject、日期用date、指标用label、账户用account。"
+    "date_rendering_example展示日期引用的实际输出；observed_at是原始时点，不可直接截取UTC日期作为正文日期。"
     "计算的value_with_unit引用calculation条目id。不要在text中另抄数字和单位。"
     "计算结果也应融入有主语和含义的句子，不能孤立放一个百分数。"
     "自然句子的带单位数值、身份和日期由引用片段提供，连接语、含义和限制写在text片段。"
@@ -147,6 +148,9 @@ _REVISION = (
     "这是一次依据审查反馈的正文修订。revision是上一版文档及核验结果，不是新证据。"
     "修正不受支持的表达，补齐原始依据已有但正文遗漏的任务答案；保留已支持的内容。"
     "未完成核验不等于事实错误，只根据已完成核验指出的实际内容问题修正；不要为改变审查结果而空泛改写。"
+    "factual_feedback逐条保留原文、各维度结果及程序时点核对；以completed区分已完成核验和未核验。"
+    "时间核对中的expected_date是任务日期，evidence中的comparison_date是来源观察日期；未知仍是未知。"
+    "修正的是主张与来源的关系，不能只删除评价词而保留错误的当前时点。按来源日期表述已有资料，无法确认的当前情况保留限制。"
     "不能为通过核验而删除任务要求、编造事实或改变真实数据缺口。"
     "required_gaps由程序保留，无法靠改写或删除解除。修订后的完整正文仍须重新核验。"
 )
@@ -419,6 +423,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
         payload.pop("fact_order", None)
     else:
         payload.pop("paragraph_rendering_example", None)
+        payload.pop("date_rendering_example", None)
     if revision:
         payload["revision"] = revision
     protected_gaps = {item["id"]: item for item in (revision or {}).get("required_gaps", [])}
@@ -832,12 +837,29 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
             and (review["coverage"].get("repairable", False) or not required_gaps)))
     if revision is None and remaining() >= 2 and needs_revision:
         check_active()
+        # Keep assertion-level findings and runtime dates intact. A flattened
+        # paragraph reason loses both the failed predicate and its typed cause.
+        # This is repair data, not new evidence or a prewritten reader sentence.
+        feedback = []
+        if factual_review_input and factual_review:
+            paragraph_ids = {claim: identifier for identifier, claims in assertion_owners.items() for claim in claims}
+            for statement in factual_review_input['statements']:
+                identifier = statement['id']
+                assessment = by_assertion[identifier]
+                feedback.append({
+                    'paragraph_id': paragraph_ids[identifier], 'assertion_id': identifier,
+                    'text': statement['text'], 'completed': identifier not in factual_assessment_errors,
+                    'checks': assessment['checks'], 'verdict': assessment['verdict'],
+                    'comparison': assessment['comparison'],
+                    'temporal_check': temporal_checks[identifier],
+                })
         revised = _publish_report(task=task, draft=draft, tool_results=tool_results, run_scope=run_scope,
             call=call, run_id=run_id, current_tool_results=current_tool_results,
             check_active=check_active, reader_prose=reader_prose, remaining=remaining, fact_call=fact_call, body_call=body_call,
             report_context=report_context,
             revision={"previous_document": transport.encode_document(document.model_dump()),
                       "reader_body": reader_body, "review": review,
+                      "factual_feedback": feedback,
                       "required_gaps": [item.model_dump() for item in required_gaps]})
         # A failed correction cannot replace readable, verified analysis with
         # nothing, even if its JSON review itself was structurally valid.

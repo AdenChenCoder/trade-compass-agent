@@ -57,6 +57,42 @@ def test_fact_groups_bind_literal_identity_without_reordering_equal_values():
         assert actual == {column: getattr(fact, column) for column in columns}
 
 
+@pytest.mark.parametrize('stamp,expected', [
+    ('2026-11-10T00:00:00', '2026-11-10 00:00:00（北京时间）'),
+    ('2026-11-09T16:00:00+00:00', '2026-11-10 00:00:00（北京时间）'),
+    (None, None),
+])
+def test_writer_date_example_is_the_actual_reader_binding_without_rewriting_source(stamp, expected):
+    raw = json.dumps({'symbol': '300406', 'events': [{'title': '取得注册证书公告', 'timestamp': stamp}]})
+    seen = []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' not in payload:
+            return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': ''}
+                for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
+        example = payload.get('date_rendering_example')
+        seen.append(example)
+        if expected is None:
+            assert example is None
+            return '{"schema_version":1,"items":[{"id":"gap","type":"gap","section":"overview","text":"公告时点未提供。"}]}'
+        fact = next(f for f in report_facts(payload) if f['id'] == example['part']['ref'])
+        assert fact['observed_at'] == example['observed_at']
+        assert example['observed_at'] == '2026-11-09T16:00:00+00:00'
+        assert example['rendered'] == expected
+        return json.dumps({'schema_version': 1, 'items': [{'id': 'date', 'type': 'paragraph', 'section': 'overview',
+            'parts': [{'type': 'text', 'text': '所给公告记录时点为'}, example['part']], 'refs': []}]})
+    result = publish_report(task='说明所给公告记录时点。', draft='', tool_results=[('get_events', raw)],
+        run_scope='writer-calendar', call=writer, reader_prose=True)
+    assert seen
+    assert result.artifact['receipts'][0]['result'] == raw
+    assert (result.verification['status'] == 'complete') is (expected is not None)
+    if expected:
+        assert expected in result.artifact['reader_body']
+        assert result.artifact['composition_input']['fact_aliases'][seen[0]['part']['ref']] in {
+            fact['id'] for fact in result.artifact['facts']}
+    assert 'date_rendering_example' not in result.text
+
+
 def test_short_references_never_escape_to_artifacts_or_calculation_provenance():
     receipts = market_receipts()
     def call(system, user):

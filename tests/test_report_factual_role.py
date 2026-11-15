@@ -279,6 +279,58 @@ def test_owned_provenance_is_independent_of_semantic_scope_and_date(tmp_path, ot
     assert saved['published_text'] == result.text
 
 
+@pytest.mark.parametrize('observed', ['2025-01-01', None])
+@pytest.mark.parametrize('uses_feedback', [True, False])
+def test_revision_receives_exact_assertion_and_runtime_dates_and_must_act_on_them(tmp_path, observed, uses_feedback):
+    raw = json.dumps({'symbol': '002415', 'pb': 0.8, 'as_of': observed})
+    writing, reviews = [], []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' not in payload:
+            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        writing.append(payload)
+        fact = next(f for f in report_facts(payload) if f['metric'] == 'pb')
+        corrected = 'revision' in payload and uses_feedback
+        if 'revision' in payload:
+            feedback = payload['revision']['factual_feedback']
+            assert len(feedback) == 1
+            row = feedback[0]
+            assert row['paragraph_id'] == 'valuation' and row['completed'] is True
+            assert row['text'] == '002415当前市净率为0.8倍。'
+            assert row['checks']['time'] == 'unknown' and row['verdict'] == 'unknown'
+            assert row['temporal_check']['expected_date'] == '2025-01-02'
+            assert row['temporal_check']['evidence'][0]['comparison_date'] == observed
+            assert row['temporal_check']['evidence'][0]['observed_date'] == observed
+        parts = [{'type': 'text', 'text': '002415所给资料的市净率为' if corrected else '002415当前市净率为'},
+                 {'type': 'value', 'ref': fact['id'], 'field': 'value_with_unit'}]
+        if corrected and observed:
+            parts += [{'type': 'text', 'text': '，资料日期为'}, {'type': 'value', 'ref': fact['id'], 'field': 'date'},
+                      {'type': 'text', 'text': '，不能据此确认当前值。'}]
+        else:
+            parts += [{'type': 'text', 'text': '，有效日期未提供，无法确认当前值。' if corrected else '。'}]
+        return json.dumps({'schema_version': 1, 'items': [{'id': 'valuation', 'type': 'paragraph',
+            'section': 'overview', 'parts': parts, 'refs': []}]})
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            reply = body_reply(payload)
+            reply['paragraphs'][0]['parts'][0]['time_scope'] = 'other' if len(writing) == 2 and uses_feedback else 'reference_date'
+            return json.dumps(reply)
+        reviews.append(payload)
+        return json.dumps(assess(payload))  # Even optimistic model dates cannot override owned time checks.
+    result = publish_report(task='说明所给估值并保留时点限制。', draft='', tool_results=[('get_fundamentals', raw)],
+        run_scope='structured-time-repair', call=writer, fact_review_call=checker,
+        reference_date='2025-01-02', reference_timezone='Asia/Shanghai')
+    assert len(writing) == len(reviews) == 2 and result.artifact['model_calls'] == 8
+    assert (result.verification['status'] == 'complete') is uses_feedback
+    assert ('0.8倍' in result.artifact['reader_body']) is uses_feedback
+    assert result.artifact['receipts'][0]['result'] == raw
+    ref = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(ref['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text
+    assert saved['revision_attempts'][1]['revision_input']['factual_feedback'] == writing[1]['revision']['factual_feedback']
+
+
 def test_partial_review_can_repair_a_verified_error_once_without_resampling_annotation_failures(tmp_path):
     counts = {'compose': 0, 'body': 0, 'fact': 0}
     def writer(system, user):
@@ -286,6 +338,11 @@ def test_partial_review_can_repair_a_verified_error_once_without_resampling_anno
         if 'schema' in payload:
             counts['compose'] += 1
             corrected = 'revision' in payload
+            if corrected:
+                feedback = {row['assertion_id']: row for row in payload['revision']['factual_feedback']}
+                assert feedback['c0']['completed'] is False
+                assert feedback['c1']['completed'] is True
+                assert feedback['c1']['checks']['support'] == 'unknown'
             ref = next(f['id'] for f in report_facts(payload) if f['metric'] == 'close')
             parts = [{'type': 'text', 'text': '002415收盘价为'},
                      {'type': 'value', 'ref': ref, 'field': 'value_with_unit'}]

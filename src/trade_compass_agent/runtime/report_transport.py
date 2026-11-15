@@ -97,6 +97,16 @@ class ReportTransport:
                           {"type": "text", "text": "。"}],
                 "rendered": f"{sample.subject}的{sample.label}为{sample.display_value_with_unit}。",
             }
+        dated = [fact for fact in catalog.facts.values() if fact.observed_at]
+        if dated:
+            # Show the same calendar that the actual date binding renders. UTC
+            # storage can fall on a different day; it is never a reader date.
+            from trade_compass_agent.runtime.report_reading import _date
+            sample = next((fact for fact in dated if _date(fact)[:10] != fact.observed_at[:10]), dated[0])
+            self.table["date_rendering_example"] = {
+                "part": {"type": "value", "ref": self.aliases[sample.id], "field": "date"},
+                "observed_at": sample.observed_at, "rendered": _date(sample),
+            }
 
     def encode_document(self, document):
         """Repair prompts use exactly the same aliases as initial composition."""

@@ -98,6 +98,12 @@ in the linked regression tests, not in expanding prose exception lists.
   reports are not rewritten. A present research opinion is not itself a new market measurement;
   its independently asserted empirical premises still need their own support.
   These checks stay in internal evidence, never reader copy.
+  Composition receives an actual date-binding rendering example, including a
+  calendar-crossing observation when available. Raw stored instants are not
+  reader calendar dates. Revision feedback retains each original assertion,
+  its completion state, dimension checks and runtime date comparison rather
+  than flattening the date conflict into a paragraph reason. This feedback is
+  repair context, never new evidence or a prewritten reader sentence.
   Body interpretation selects runtime-addressed original source units rather
   than reproducing long paragraphs. Ranges start at the first unit, continue
   without gaps or overlap and end at the last unit. The runtime restores exact
