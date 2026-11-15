@@ -28,7 +28,9 @@ def test_rule_controls_preserve_identical_body_and_missing_zero_one_many_sources
     from trade_compass_agent.runtime.report_transport import review_receipts
     for name, row in zip(names, cases, strict=True):
         catalog = EvidenceCatalog.build(row[2], run_scope=name)
-        assert not catalog.facts
+        assert len(catalog.facts) == 1
+        quote = next(iter(catalog.facts.values()))
+        assert quote.kind == 'quotation' and quote.value == row[2][0][1]
         assert [(r['tool'], r['result']) for r in review_receipts(catalog, [])] == row[2]
 
 

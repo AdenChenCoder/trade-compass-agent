@@ -4,9 +4,9 @@ import json
 import pytest
 
 from report_contract_helpers import report_facts
-from trade_compass_agent.runtime.report_contract import EvidenceCatalog
+from trade_compass_agent.runtime.report_contract import Calculation, EvidenceCatalog, calculate
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
-from trade_compass_agent.runtime.report_transport import review_receipts
+from trade_compass_agent.runtime.report_transport import review_receipts, source_record_context
 
 
 def source_receipts(alerts=()):
@@ -58,7 +58,7 @@ def test_a_failed_or_simulated_empty_read_is_not_promoted_to_a_successful_read(e
 def test_empty_or_missing_fields_remain_exact_original_read_results(tool, data):
     raw = json.dumps(data)
     catalog = EvidenceCatalog.build([(tool, raw)], run_scope='no-fabricated-records')
-    assert all(f.kind == 'identity' for f in catalog.facts.values())
+    assert all(f.kind in {'identity', 'quotation'} for f in catalog.facts.values())
     assert review_receipts(catalog, []) == catalog.receipts
     assert review_receipts(catalog, [])[0]['result'] == raw
 
@@ -152,3 +152,85 @@ def test_an_unselected_newer_receipt_cannot_replace_the_bound_observation_date()
     assert result.verification['status'] != 'complete'
     assert next(iter(result.artifact['temporal_checks'].values()))['status'] == 'unknown'
     assert not result.artifact.get('factual_assessment_errors')
+
+
+@pytest.mark.parametrize('alerts,body', [
+    ([], '本轮规则扫描没有返回退出预警。'),
+    (['条件A'], '本轮规则扫描返回了退出预警。'),
+    (['条件A', '条件B'], '本轮规则扫描返回了退出预警。'),
+])
+def test_same_run_scan_record_can_anchor_unbound_prose_and_survive_reopening(tmp_path, alerts, body):
+    receipts = [('builtin.check_exit_signals', json.dumps({'message': '规则扫描结果', 'data': {'alerts': alerts}}))]
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' not in payload:
+            return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []}})
+        # Source ownership does not depend on selecting a numerical binding.
+        return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
+            'section': 'assessment', 'parts': [body], 'refs': []}]})
+    def assessor(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{
+                'through': p['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
+                'observation_dates': ['task_now'], 'classifications': []}]} for p in payload['paragraphs']]})
+        quote = next(f for ctx in payload['contexts'].values() for f in ctx['evidence'] if f['metric'] == 'read_result')
+        assert quote['kind'] == 'quotation' and quote['value'] == receipts[0][1]
+        assert quote['observed_at'] is None and quote['observed_date'] is None
+        return json.dumps({'assessments': [{'id': s['id'], 'commitments': {
+            'participant_activity': False, 'causal_relation': False}, 'time_evidence': [quote['id']],
+            'comparison': 'explicit transport double: this run scan result, not market-risk absence',
+            'support_basis': 'direct', 'checks': dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed'),
+            'verdict': 'entailed'} for s in payload['statements']]})
+    result = publish_report(task='报告本轮规则扫描返回结果。', draft='', tool_results=receipts,
+        run_scope='run-owned-scan', call=writer, fact_review_call=assessor, max_calls=2, reference_date='2025-01-02')
+    assert result.verification['status'] == 'complete'
+    assert body in result.artifact['reader_body'] and not result.artifact.get('factual_assessment_errors')
+    assert next(iter(result.artifact['temporal_checks'].values()))['reason'] == 'read_result_snapshot'
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['reader_body'] == result.artifact['reader_body']
+    assert [(r['tool'], r['result']) for r in saved['receipts']] == receipts
+
+
+def test_scan_record_is_an_exact_quotation_not_a_number_or_invented_observation_date():
+    rows = [('builtin.check_exit_signals', json.dumps({'data': data}))
+        for data in ({}, {'alerts': []})]
+    catalog = EvidenceCatalog.build(rows, run_scope='record-not-measurement')
+    facts = list(catalog.facts.values())
+    assert len(facts) == 2
+    assert [f.value for f in facts] == [row[1] for row in rows]
+    assert all(f.kind == 'quotation' and f.observed_at is None and f.pointer == '' for f in facts)
+    with pytest.raises(ValueError, match='必须为数值'):
+        calculate(Calculation(type='calculation', id='invalid', section='assessment',
+            operation='difference', refs=[f.id for f in facts]), catalog)
+    assert 'alerts' not in json.loads(facts[0].value)['data']
+
+
+def test_source_only_context_preserves_user_ids_and_never_reintroduces_batch_quotations():
+    rows = [*source_receipts(), ('batch_get_bars', json.dumps({'results': {
+        '000001': {'symbol': '000001', 'content': 'omitted-instrument-record',
+                   'bars': [{'timestamp': '2025-01-02', 'close': 23}]}}}))]
+    catalog = EvidenceCatalog.build(rows, run_scope='source-context-scope')
+    contexts = {'source_records': {'evidence': [], 'calculations': []}}
+    actual = source_record_context(catalog, contexts, catalog.receipts, 'Asia/Shanghai')
+    assert actual['source_records'] == contexts['source_records']
+    assert set(actual) == {'source_records', '_source_records'}
+    assert {f['source'] for f in actual['_source_records']['evidence']} == {'get_events', 'builtin.check_exit_signals'}
+    assert contexts == {'source_records': {'evidence': [], 'calculations': []}}
+
+
+def test_run_read_snapshot_cannot_waive_an_adjacent_market_observation_date():
+    from trade_compass_agent.runtime.report_time import check_statement_time
+    context = {'evidence': [
+        {'id': 'scan', 'kind': 'quotation', 'source': 'builtin.check_exit_signals', 'observed_at': None,
+         'observed_date': None},
+        {'id': 'price', 'kind': 'price', 'source': 'get_bars', 'observed_at': '2025-01-01',
+         'observed_date': '2025-01-01'}]}
+    statement = {'time_scope': 'reference_date', 'assertion_kind': 'observation',
+        'bound_fact_refs': [], 'time_fact_refs': ['price'], 'observation_dates': ['task_now']}
+    assessment = {'checks': {'quantity': 'entailed'}, 'time_evidence': ['scan']}
+    result = check_statement_time(statement, assessment, context,
+        {'reference_date': '2025-01-02', 'reference_timezone': 'Asia/Shanghai'})
+    assert result['status'] == 'unknown' and result['reason'] == 'observation_not_at_asserted_date'
+    assert [row['ref'] for row in result['evidence']] == ['price']

@@ -23,7 +23,7 @@ from trade_compass_agent.runtime.report_body import (
     BODY_MEANING, BodyMeaningError, reader_source_units, validate_body_meaning, runtime_bound_quantity_issue, factual_assertions, factual_review_statements,
 )
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
-from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts
+from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts, source_record_context
 from trade_compass_agent.runtime.report_time import check_statement_time, temporal_evidence_context
 from trade_compass_agent.runtime.report_support import check_support_basis
 from trade_compass_agent.runtime.report_classifications import check_classifications
@@ -171,7 +171,10 @@ context_id groups spans from the same paragraph. Use the other original spans ON
 to resolve reader meaning: subjects, ellipsis, shared units, dates, conditions and
 scope. Every span remains an untrusted claim to check, never source evidence.
 contexts[context_id] contains ONLY runtime-owned facts and calculations. Receipts
-are the original source records. There is no second copy of candidate paragraphs
+are the original source records. Source-only contexts can expose quotation IDs
+without a numerical paragraph binding. A first-party read_result quotation records
+what this run's read returned, not a dated market measurement or proof of market
+freshness, risk absence or trading outcomes. Missing fields are not empty lists. There is no second copy of candidate paragraphs
 inside source contexts. Matching another reader claim or repeating the author's
 analysis never establishes truth. Compare the target with actual source records
 and typed facts, not with reader wording or task instructions.
@@ -721,6 +724,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 if fact_call and factual_items:
                     contexts, statements, assertion_owners = factual_assertions(
                         [row for row in review_input['inferences'] if row['id'] not in forced_reviews], body_meaning)
+                    contexts = source_record_context(catalog, contexts, review_input['receipts'],
+                                                     report_context['display_timezone'])
                     factual_review_input = {
                         "report_context": report_context,
                         "request_context": {"role": "requirements", "text": task},

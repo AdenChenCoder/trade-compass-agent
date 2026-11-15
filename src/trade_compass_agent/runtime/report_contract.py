@@ -232,7 +232,8 @@ EVIDENCE_TOOLS = frozenset({
     "search_stock_news", "batch_search_news", "search_announcements", "search_concept_boards", "get_events",
 })
 PORTFOLIO_OPERATIONS = {"builtin.check_positions", "builtin.refresh_market_prices", "builtin.scan_portfolio_exits"}
-RECORD_EVIDENCE_TOOLS = EVIDENCE_TOOLS | PORTFOLIO_OPERATIONS | {"builtin.check_exit_signals"}
+READ_RESULT_OPERATIONS = {"builtin.check_exit_signals"}
+RECORD_EVIDENCE_TOOLS = EVIDENCE_TOOLS | PORTFOLIO_OPERATIONS | READ_RESULT_OPERATIONS
 _NON_OBSERVATIONS = {"query", "arguments", "params", "prompt", "analysis", "summary",
                      "reasoning", "warnings", "error", "retry_hint", "hint", "note",
                      "interpretation", "task", "available", "_meta", "metadata"}
@@ -246,6 +247,17 @@ def excluded_observation(value):
                for k in ('source', 'provider', 'data_status'))
         or meta.get('source') in {'sample', 'synthetic'}
         or value.get('has_real_fundamentals') is False)
+
+
+def owned_read_result(tool, result):
+    """A real read remains evidence of its returned record, not inferred contents."""
+    if tool not in RECORD_EVIDENCE_TOOLS or not isinstance(result, dict):
+        return False
+    rows = [result]
+    if isinstance(result.get('data'), dict):
+        rows.append(result['data'])
+    return all(not excluded_observation(row) and row.get('ok') is not False
+        and row.get('available') is not False and row.get('unavailable') is not True for row in rows)
 
 
 def _number(value) -> Decimal:
@@ -320,6 +332,13 @@ class EvidenceCatalog:
                 catalog._visit(data["data"], {}, "/data", rid, tool)
             if tool in EVIDENCE_TOOLS:
                 catalog._visit(data, {}, "", rid, tool)
+            if tool in READ_RESULT_OPERATIONS and owned_read_result(tool, data):
+                # Quote the exact returned record. Do not turn missing fields
+                # into empty collections, derive a count or invent a date.
+                fid = hashlib.sha256(rid.encode()).hexdigest()[:24]
+                catalog.facts[fid] = Fact(fid, rid, '', '本轮退出预警扫描', '', 'read_result',
+                    '原始扫描回执', raw, '', None, 'quotation', tool,
+                    scope=json.dumps({'record_scope': 'run_read_result'}))
         unique = {}
         for fact in catalog.facts.values():
             identity = tuple(value for key, value in asdict(fact).items() if key not in {"id", "receipt_id", "pointer"})

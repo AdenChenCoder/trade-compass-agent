@@ -50,6 +50,12 @@ in the linked regression tests, not in expanding prose exception lists.
   Model drafts and excluded sample/error sources do not become evidence.
   Large batch views still retain only explicitly selected instrument subtrees;
   source visibility cannot replace a bound value's original observation date.
+  A first-party exit scan is also an exact quotation of its returned record,
+  including empty or missing fields. Its run ownership anchors a statement
+  about that scan's return, without inventing a market observation date or
+  proving market freshness, risk absence or trading outcomes. Source-only
+  quotation IDs remain available without a numerical paragraph binding;
+  they cannot waive dates of adjacent market observations or widen batch views.
   Adjacent bound fields retain a runtime formatting separator, so a date and
   amount cannot concatenate into a different token. This whitespace is part of
   the exact reviewed and saved body; it supplies no factual or connective meaning.

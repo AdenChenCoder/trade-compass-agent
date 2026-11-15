@@ -1,7 +1,7 @@
 """Compare interpreted observation scope with owned dates; never parse prose."""
 from __future__ import annotations
 
-from trade_compass_agent.runtime.report_contract import PORTFOLIO_OPERATIONS, observation_date
+from trade_compass_agent.runtime.report_contract import PORTFOLIO_OPERATIONS, READ_RESULT_OPERATIONS, observation_date
 
 
 def temporal_evidence_context(context, contexts):
@@ -41,10 +41,11 @@ def check_statement_time(statement, assessment, context, report_context):
     refs = list(dict.fromkeys([*statement['time_fact_refs'],
         *(ref for ref in assessment['time_evidence'] if ref not in bound)]))
     observations = [facts[ref] for ref in refs if facts[ref]['kind'] != 'identity']
-    snapshots = PORTFOLIO_OPERATIONS | {'analyze_portfolio'}
+    snapshots = PORTFOLIO_OPERATIONS | {'analyze_portfolio'} | READ_RESULT_OPERATIONS
     if observations and all(fact['source'] in snapshots for fact in observations):
         # Account snapshots retain their existing run-ownership contract.
-        result['reason'] = 'account_snapshot'
+        result['reason'] = ('read_result_snapshot' if any(fact['source'] in READ_RESULT_OPERATIONS
+                                                        for fact in observations) else 'account_snapshot')
         return result
     observations = [fact for fact in observations if fact['source'] not in snapshots]
     result['evidence'] = [{'ref': fact['id'], 'observed_date': fact['observed_date'],

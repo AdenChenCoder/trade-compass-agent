@@ -6,23 +6,17 @@ and artifacts continue to use the original, run-scoped fact IDs.
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import asdict
 import json
 
 from trade_compass_agent.runtime.report_contract import (
-    EvidenceCatalog, ReportDocument, RECORD_EVIDENCE_TOOLS, excluded_observation,
+    EvidenceCatalog, ReportDocument, owned_read_result,
 )
 
 
 def _owned_read_result(receipt):
     """A real first-party read can return no numeric rows, including empty lists."""
-    if receipt['tool'] not in RECORD_EVIDENCE_TOOLS:
-        return False
-    result = json.loads(receipt['result'])
-    rows = [result]
-    if isinstance(result.get('data'), dict):
-        rows.append(result['data'])
-    return all(not excluded_observation(row) and row.get('ok') is not False
-        and row.get('available') is not False and row.get('unavailable') is not True for row in rows)
+    return owned_read_result(receipt['tool'], json.loads(receipt['result']))
 
 
 def review_receipts(catalog, facts):
@@ -71,6 +65,22 @@ def review_receipts(catalog, facts):
     return result
 
 
+def source_record_context(catalog, contexts, receipts, display_timezone):
+    """Expose owned quotation IDs independently of numerical paragraph selection."""
+    known = {fact['id'] for context in contexts.values() for fact in context['evidence']}
+    sources = {receipt['id'] for receipt in receipts if receipt['tool'] != 'batch_get_bars'}
+    records = [{**asdict(fact), 'display_value_with_unit': fact.display_value_with_unit,
+                'observed_date': fact.observation_date(display_timezone)}
+               for fact in catalog.facts.values() if fact.kind == 'quotation'
+               and fact.receipt_id in sources and fact.id not in known]
+    if not records:
+        return contexts
+    name = 'source_records'
+    while name in contexts:
+        name = '_'+name
+    return {**contexts, name: {'evidence': records, 'calculations': []}}
+
+
 class ReportTransport:
     def __init__(self, catalog: EvidenceCatalog):
         self.references = {f"e{i}": key for i, key in enumerate(catalog.facts)}
@@ -101,8 +111,9 @@ class ReportTransport:
         self.table = {"fact_columns": columns, "facts": groups, "fact_order": list(self.references)}
         # Show the actual consumer rendering contract once, not a second copy
         # of the catalogue. Observation dates/units are already in fact output.
-        sample = next((fact for fact in catalog.facts.values() if fact.observed_at),
-                      next(iter(catalog.facts.values()), None))
+        displayable = [fact for fact in catalog.facts.values() if fact.metric != 'read_result']
+        sample = next((fact for fact in displayable if fact.observed_at),
+                      next(iter(displayable), None))
         if sample is not None:
             self.table["fact_rendering_example"] = {
                 "ref": self.aliases[sample.id], "rendered": sample.display(),
