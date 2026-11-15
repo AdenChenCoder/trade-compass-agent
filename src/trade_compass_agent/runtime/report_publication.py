@@ -20,7 +20,7 @@ from trade_compass_agent.runtime.report_contract import (
 )
 from trade_compass_agent.runtime.report_execution import execution_evidence
 from trade_compass_agent.runtime.report_body import (
-    BODY_MEANING, validate_body_meaning, runtime_bound_quantity_issue, factual_assertions,
+    BODY_MEANING, BodyMeaningError, reader_source_units, validate_body_meaning, runtime_bound_quantity_issue, factual_assertions,
 )
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
 from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts
@@ -574,7 +574,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 if body_call and inferences:
                     # First interpret the author's words without task, draft,
                     # source data or receipts that could bias that interpretation.
-                    body_review_input = {"paragraphs": [{"id": key, "text": value} for key, value in prose.items()]}
+                    body_review_input = {"paragraphs": [{'id': key, 'text': value,
+                        'source_units': reader_source_units(value)} for key, value in prose.items()]}
                     body_response = body_call(BODY_MEANING, json.dumps(body_review_input, ensure_ascii=False,
                                                                       separators=(",", ":")))
                     check_active()
@@ -780,6 +781,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 diagnostic = {"review_error_type": type(exc).__name__}
                 if isinstance(exc, ReportEvidenceScopeError):
                     diagnostic.update(stage='factual_review', review_error_code=exc.code, assertion_id=exc.assertion_id)
+                if isinstance(exc, BodyMeaningError):
+                    diagnostic.update(stage='body_meaning', review_error_code=str(exc))
                 attempts.append(diagnostic)
         published_document = document.model_copy(update={
             "items": [item for item in document.items if item.id not in dismissed_gaps]})

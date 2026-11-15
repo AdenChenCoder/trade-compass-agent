@@ -288,7 +288,7 @@ def main():
                       TRADE_COMPASS_MEMORY_DIR=str(root/"memory"), TRADE_COMPASS_NO_SCHEDULER="true")
     from trade_compass_agent.config import AppConfig, LLMConfig
     from trade_compass_agent.llm.providers import ChatMessage, create_chat_client, create_local_report_fact_check, llm_request_deadline
-    from trade_compass_agent.runtime.report_publication import publish_report
+    from trade_compass_agent.runtime.report_publication import publish_report, _json_value
 
     verify = runpy.run_path(str(Path(__file__).with_name("release_acceptance.py")))["verify_installed_wheel"]
     result = {"passed": False, "artifact": verify(wheel), "mode": "frozen first prose / real review and bounded normal revision",
@@ -461,6 +461,13 @@ def main():
             changed_prose = first_prose != final_prose if factual_client else first["document"] != report.artifact["document"]
             coverage_complete = (report.artifact.get("review") or {}).get("coverage", {}).get("complete")
             local_calls = report.artifact["factual_model_calls"] + report.artifact["body_review_model_calls"]
+            selector_calls = 0
+            for row in factual_calls:
+                if row.get('stage') == 'body_meaning' and row.get('output'):
+                    selected = _json_value(row['output']).get('paragraphs', [])
+                    selector_calls += bool(selected) and all(
+                        paragraph.get('parts') and all('through' in part for part in paragraph['parts'])
+                        for paragraph in selected)
             entry.update(actual_supported=actual, coverage_complete=coverage_complete, status=report.verification["status"],
                          first_supported=first_supported, final_supported=final_supported,
                          revision_attempted=revised, selected_attempt=report.artifact.get("selected_attempt", 0),
@@ -468,6 +475,7 @@ def main():
                          body_model_calls=report.artifact["body_review_model_calls"],
                          factual_model_calls=report.artifact["factual_model_calls"],
                          unavailable_assertions=len(report.artifact.get('factual_assessment_errors', {})),
+                         body_selector_calls=selector_calls,
                          passed=report.artifact["review_valid"]
                          and not report.artifact.get('factual_assessment_errors')
                          and (final_supported if normal_publication else actual is expected)

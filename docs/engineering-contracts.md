@@ -98,6 +98,17 @@ in the linked regression tests, not in expanding prose exception lists.
   reports are not rewritten. A present research opinion is not itself a new market measurement;
   its independently asserted empirical premises still need their own support.
   These checks stay in internal evidence, never reader copy.
+  Body interpretation selects runtime-addressed original source units rather
+  than reproducing long paragraphs. Ranges start at the first unit, continue
+  without gaps or overlap and end at the last unit. The runtime restores exact
+  original characters, including framing, negation, conditions and whitespace;
+  addressing boundaries assign no semantic categories or truth verdicts.
+  Strictly reconstructed quoted responses remain readable for compatibility.
+  This adapts the source-selection idea in the
+  [W3C annotation model](https://www.w3.org/TR/annotation-model/#text-position-selector)
+  and delimiter retention in [LangChain's splitter source](https://github.com/langchain-ai/langchain/blob/master/libs/text-splitters/langchain_text_splitters/character.py).
+  Unlike retrieval chunks, these units have no overlap, trimming or content
+  normalization, and belong to one immutable body snapshot.
   An invalid temporal reference makes that assertion unavailable, not false.
   Persist this distinction and withhold its paragraph while preserving other
   independently verified analysis. A completed rejection elsewhere can justify

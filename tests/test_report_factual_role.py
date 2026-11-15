@@ -570,6 +570,108 @@ def body_reply(payload):
         "outcome": "none", "extent": "none"}]} for row in payload["paragraphs"]]}
 
 
+@pytest.mark.parametrize('prefix', ['针对收盘价记录的核对，', '并非没有观察资料，', '若只看已提供的记录；', '说明👩‍💻（e\u0301），'])
+def test_source_unit_selection_preserves_all_reader_text_without_model_copying(tmp_path, prefix):
+    expected = prefix + '002415在2025-01-01的收盘价为22元/股。'
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            ref = next(f['id'] for f in report_facts(payload) if f['metric'] == 'close')
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'section': 'overview',
+                'type': 'paragraph', 'parts': [{'type': 'text', 'text': prefix + '002415在'},
+                    {'type': 'value', 'ref': ref, 'field': 'date'}, {'type': 'text', 'text': '的收盘价为'},
+                    {'type': 'value', 'ref': ref, 'field': 'value_with_unit'}, {'type': 'text', 'text': '。'}], 'refs': []}]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            row = payload['paragraphs'][0]
+            assert row['text'] == expected
+            part = body_reply(payload)['paragraphs'][0]['parts'][0]
+            part.pop('text')
+            part['through'] = row['source_units'][-1]['id']
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [part]}]})
+        assert payload['statements'][0]['text'] == expected
+        return json.dumps(assess(payload))
+    result = publish_report(task='报告所给第一日收盘记录。', draft='', tool_results=RECEIPTS,
+        run_scope='addressed-reader-text', call=writer, fact_review_call=checker, max_calls=2)
+    assert result.artifact['review_valid'] and result.verification['status'] == 'complete'
+    assert result.artifact['reader_body'].startswith(expected)
+    assert result.artifact['body_meaning']['answer'][0]['text'] == expected
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text
+
+
+@pytest.mark.parametrize('fault', ['unknown', 'repeat', 'reverse', 'early_end', 'mixed'])
+def test_invalid_source_unit_selection_cannot_reach_fact_approval(fault):
+    factual = []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            ref = next(f['id'] for f in report_facts(payload) if f['metric'] == 'close')
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'section': 'overview',
+                'type': 'paragraph', 'parts': [{'type': 'text', 'text': '针对收盘记录，002415收盘价为'},
+                    {'type': 'value', 'ref': ref, 'field': 'value_with_unit'}, {'type': 'text', 'text': '。'}], 'refs': []}]})
+        raise AssertionError('invalid body selection must not reach coverage')
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' not in payload:
+            factual.append(payload)
+            raise AssertionError('invalid selection must not reach fact review')
+        row = payload['paragraphs'][0]
+        part = body_reply(payload)['paragraphs'][0]['parts'][0]
+        part.pop('text')
+        part['through'] = row['source_units'][-1]['id']
+        parts = [part]
+        if fault == 'unknown':
+            part['through'] = 'not-a-source-unit'
+        elif fault == 'early_end':
+            part['through'] = row['source_units'][0]['id']
+        elif fault in {'repeat', 'reverse'}:
+            parts.append({**part, 'through': part['through'] if fault == 'repeat' else row['source_units'][0]['id']})
+        else:
+            parts.append({**{key: value for key, value in part.items() if key != 'through'}, 'text': row['text']})
+        return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': parts}]})
+    result = publish_report(task='报告观察。', draft='', tool_results=RECEIPTS,
+        run_scope='bad-source-selection', call=writer, fact_review_call=checker, max_calls=2)
+    assert not result.artifact['review_valid'] and result.verification['status'] == 'incomplete'
+    assert not factual and result.artifact['factual_model_calls'] == 0
+    assert '22元/股' not in result.artifact['reader_body']
+    assert any(row.get('stage') == 'body_meaning' for row in result.artifact['attempts'])
+
+
+@pytest.mark.parametrize('day,analysis_supported', [('2025-01-02', True), ('2025-01-01', False)])
+def test_selected_source_units_preserve_bound_dates_after_execution_projection(day, analysis_supported):
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            ref = next(f['id'] for f in report_facts(payload) if f['metric'] == 'close')
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'section': 'overview',
+                'type': 'paragraph', 'parts': [{'type': 'text', 'text': '已买入100股。002415当前收盘价为'},
+                    {'type': 'value', 'ref': ref, 'field': 'value_with_unit'}, {'type': 'text', 'text': '。'}], 'refs': []}]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            row = payload['paragraphs'][0]
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [
+                {'through': row['source_units'][0]['id'], 'kind': 'current_outcome', 'assertion_kind': 'actor_activity',
+                 'time_scope': 'other', 'referents': {}, 'outcome': 'performed', 'extent': 'operation'},
+                {'through': row['source_units'][-1]['id'], 'kind': 'other', 'assertion_kind': 'observation',
+                 'time_scope': 'reference_date', 'referents': {}, 'outcome': 'none', 'extent': 'none'}]}]})
+        assert '已买入' not in payload['statements'][0]['text']
+        return json.dumps(assess(payload))
+    result = publish_report(task='说明价格与执行状态。', draft='',
+        tool_results=[('get_bars', json.dumps({'symbol': '002415', 'timeframe': '1d',
+                      'bars': [{'timestamp': day, 'close': 22}]}))], current_tool_results=[],
+        run_scope='selected-projection', call=writer, fact_review_call=checker, max_calls=2, reference_date='2025-01-02')
+    assert result.artifact['review_valid'] and result.verification['status'] == 'incomplete'
+    assert ('22元/股' in result.artifact['reader_body']) is analysis_supported
+    assert result.artifact['execution_projections']['answer']['analysis_supported'] is analysis_supported
+    assert '已买入100股' not in result.artifact['reader_body']
+
+
 def publish(fact_reply, *, max_calls=2, coverage_missing=False, check_active=lambda: None, reference_date=None):
     primary, factual = [], []
     def writer(system, user):
@@ -691,7 +793,7 @@ def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path,
     def checker(system, user):
         payload = json.loads(user)
         if "paragraphs" in payload:
-            assert payload == {"paragraphs": [{"id": "answer", "text": prefix+claim}]}
+            assert [{key: row[key] for key in ("id", "text")} for row in payload["paragraphs"]] == [{"id": "answer", "text": prefix+claim}]
             return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "answer", "parts": [
                 {"text": prefix, "kind": "other", "assertion_kind": "observation", "time_scope": "other", "referents": {}, "outcome": "none", "extent": "none"},
                 {"text": claim, "kind": "current_outcome", "assertion_kind": "actor_activity", "time_scope": "other", "referents": {}, "outcome": "not_performed" if receipt_status is None else "performed",
