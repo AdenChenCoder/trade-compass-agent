@@ -72,9 +72,8 @@ def test_empirical_commitment_cannot_publish_on_analysis_basis(tmp_path, asserti
                     part.update(assertion_kind='judgment', kind='plan')
                 original = next(p for p in payload['paragraphs'] if p['id'] == row['id'])
                 row['parts'] = [{'through': original['source_units'][-1]['id'],
-                    'operation_meaning': 'proposal_or_decision' if row['id'] == 'plan' else 'no_operation_claim',
-                    'claim_kind': part['assertion_kind'], 'time_commitment': 'calendar_or_other',
-                    'operation_outcome': 'none', 'operation_extent': 'none'}]
+                    'operation_code': 1 if row['id'] == 'plan' else 0,
+                    'claim_kind': part['assertion_kind'], 'as_of_task_now': False}]
             return json.dumps(result)
         result = assess(payload)
         for row, statement in zip(result['assessments'], payload['statements'], strict=True):
@@ -871,17 +870,17 @@ def body_reply(payload):
 
 
 @pytest.mark.parametrize('change', [
-    {'claim_kind': 'availability'}, {'operation_meaning': 'other'},
-    {'time_commitment': 'reference_date'}, {'kind': 'other'},
+    {'claim_kind': 'availability'}, {'operation_code': 'other'},
+    {'as_of_task_now': 'reference_date'}, {'kind': 'other'},
+    {'operation_code': True}, {'operation_code': 11},
 ])
 def test_mixed_body_wire_axes_cannot_publish_a_valid_price(change):
     def checker(system, user):
         payload = json.loads(user)
         assert 'paragraphs' in payload  # Invalid BODY must never reach FACT.
         row = payload['paragraphs'][0]
-        part = {'through': row['source_units'][-1]['id'], 'operation_meaning': 'no_operation_claim',
-                'claim_kind': 'observation', 'time_commitment': 'calendar_or_other',
-                'operation_outcome': 'none', 'operation_extent': 'none', **change}
+        part = {'through': row['source_units'][-1]['id'], 'operation_code': 0,
+                'claim_kind': 'observation', 'as_of_task_now': False, **change}
         return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [part]}]})
     def writer(system, user):
         payload = json.loads(user)
@@ -896,7 +895,7 @@ def test_mixed_body_wire_axes_cannot_publish_a_valid_price(change):
 
 
 @pytest.mark.parametrize('prefix', ['针对收盘价记录的核对，', '针对持仓逻辑是否仍成立的问题，', '并非没有观察资料，', '若只看已提供的记录；', '说明👩‍💻（e\u0301），'])
-@pytest.mark.parametrize('wire_format', ['legacy', 'explicit_axes'])
+@pytest.mark.parametrize('wire_format', ['legacy', 'compact_axes'])
 def test_source_unit_selection_preserves_all_reader_text_without_model_copying(tmp_path, prefix, wire_format):
     expected = prefix + '002415在2025-01-01的收盘价为22元/股。'
     def writer(system, user):
@@ -917,10 +916,9 @@ def test_source_unit_selection_preserves_all_reader_text_without_model_copying(t
             part.pop('text')
             part.pop('referents')
             part['through'] = row['source_units'][-1]['id']
-            if wire_format == 'explicit_axes':
-                part = {'through': part['through'], 'operation_meaning': 'no_operation_claim',
-                    'claim_kind': 'observation', 'time_commitment': 'calendar_or_other',
-                    'operation_outcome': 'none', 'operation_extent': 'none'}
+            if wire_format == 'compact_axes':
+                part = {'through': part['through'], 'operation_code': 0,
+                    'claim_kind': 'observation', 'as_of_task_now': False}
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [part]}]})
         assert payload['statements'][0]['text'] == expected
         return json.dumps(assess(payload))
@@ -987,12 +985,10 @@ def test_selected_source_units_preserve_bound_dates_after_execution_projection(d
         if 'paragraphs' in payload:
             row = payload['paragraphs'][0]
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [
-                {'through': row['source_units'][0]['id'], 'operation_meaning': 'current_business_operation',
-                 'claim_kind': 'actor_activity', 'time_commitment': 'calendar_or_other',
-                 'operation_outcome': 'performed', 'operation_extent': 'operation'},
-                {'through': row['source_units'][-1]['id'], 'operation_meaning': 'no_operation_claim',
-                 'claim_kind': 'observation', 'time_commitment': 'task_now',
-                 'operation_outcome': 'none', 'operation_extent': 'none'}]}]})
+                {'through': row['source_units'][0]['id'], 'operation_code': 3,
+                 'claim_kind': 'actor_activity', 'as_of_task_now': False},
+                {'through': row['source_units'][-1]['id'], 'operation_code': 0,
+                 'claim_kind': 'observation', 'as_of_task_now': True}]}]})
         assert '已买入' not in payload['statements'][0]['text']
         return json.dumps(assess(payload))
     result = publish_report(task='说明价格与执行状态。', draft='',

@@ -132,9 +132,11 @@ in the linked regression tests, not in expanding prose exception lists.
   without gaps or overlap and end at the last unit. The runtime restores exact
   original characters, including framing, negation, conditions and whitespace;
   addressing boundaries assign no semantic categories or truth verdicts.
-  Body wire fields separately name operation meaning, claim kind and time
-  commitment. Their explicit operation and task-present labels map into the
-  existing canonical types before review and persistence; legacy selectors and
+  Body wire fields separately represent one complete operation state, claim kind
+  and a task-present boolean. The operation code chooses a valid combination of
+  meaning, outcome and scope instead of asking the model to cross-fill three
+  related fields. Exact typed decoding maps into the existing canonical types
+  before review and persistence; legacy selectors and
   exact quoted responses remain readable. Reject mixed field namespaces and
   illegal values rather than guessing a category or repairing reader meaning.
   Strictly reconstructed quoted responses remain readable for compatibility.
