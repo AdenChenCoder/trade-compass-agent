@@ -82,11 +82,16 @@ in the linked regression tests, not in expanding prose exception lists.
   cannot reinterpret that commitment as latest available. Temporal evidence
   links must belong to the assertion context; runtime-owned numeric bindings
   remain mandatory even if the assessor omits them. The runtime compares those
-  source dates with the task date and can withhold a statement despite an
+  source dates in the task's reference timezone with the task date and can withhold a statement despite an
   optimistic model verdict. A bound price-change interval uses its later
   operand's observation date without discarding the earlier operand. This market
   observation check preserves the existing ownership contract for account
-  snapshots. These checks stay in internal evidence, never reader copy.
+  snapshots. Display dates keep the display timezone; a different displayed day
+  cannot by itself establish that a task-time observation is stale or current.
+  Date-only observations keep their supplied calendar date without an invented
+  instant. A present research opinion is not itself a new market measurement;
+  its independently asserted empirical premises still need their own support.
+  These checks stay in internal evidence, never reader copy.
   Each statement
   must be entailed; contradictory or unknown statements are withheld. Missing,
   malformed or unavailable assessments cannot fall back to writer approval.
@@ -104,9 +109,13 @@ in the linked regression tests, not in expanding prose exception lists.
   Reuse these exact spans as independently assessed assertions, including a
   conclusion joined to otherwise correct measurements. Give each assertion a
   runtime-owned ID and require exactly one assessment per ID. A paragraph passes
-  only when all its assertions pass. Supply its original paragraph and evidence
-  once as context for references, ellipsis, units and scope; paragraph wording is
-  not evidence. Matching activity measurements cannot establish unobserved actors'
+  only when all its assertions pass. Body-only interpretation copies minimal
+  entity, metric, unit, time and scope labels needed to resolve ellipsis; validate
+  their ownership in the supplied reader text. They clarify the target's meaning
+  and are never factual evidence. The factual assessor receives the exact target
+  and these referents, while source contexts contain only owned facts and
+  calculations. Do not duplicate the candidate paragraph as apparent source
+  text. Matching activity measurements cannot establish unobserved actors'
   actions or causes. Missing, duplicate or unknown assertion assessments fail
   the review rather than silently dropping a claim.
   Record each span's commitment type before evidence is supplied: observation,

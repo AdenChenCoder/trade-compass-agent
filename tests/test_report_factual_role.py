@@ -33,6 +33,79 @@ def assess(payload, verdict="entailed"):
                             for row in payload["statements"]]}
 
 
+@pytest.mark.parametrize('zone,day,stamp,supported,comparison_day', [
+    ('UTC', '2025-01-01', '2025-01-01T16:00:00+00:00', True, '2025-01-01'),
+    ('UTC', '2025-01-02', '2025-01-01T16:00:00+00:00', False, '2025-01-01'),
+    ('America/Los_Angeles', '2025-01-01', '2025-01-02T03:00:00+00:00', True, '2025-01-01'),
+    ('America/Los_Angeles', '2025-01-02', '2025-01-02T03:00:00+00:00', False, '2025-01-01'),
+    ('Asia/Shanghai', '2025-01-02', '2025-01-01T16:00:00+00:00', True, '2025-01-02'),
+    ('UTC', '2025-01-02', '2025-01-02', True, '2025-01-02'),
+    ('America/Los_Angeles', '2025-01-02', '2025-01-02', True, '2025-01-02'),
+])
+def test_current_observation_compares_in_task_calendar_without_changing_display(tmp_path, zone, day, stamp, supported, comparison_day):
+    raw = json.dumps({'symbol': '002415', 'price': 22, 'timestamp': stamp})
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            ref = next(f['id'] for f in report_facts(payload) if f['metric'] == 'price')
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
+                'section': 'overview', 'parts': [{'type': 'text', 'text': '002415当前报价为'},
+                    {'type': 'value', 'ref': ref, 'field': 'value_with_unit'},
+                    {'type': 'text', 'text': '。'}], 'refs': []}]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            result = body_reply(payload)
+            result['paragraphs'][0]['parts'][0]['time_scope'] = 'reference_date'
+            return json.dumps(result)
+        return json.dumps(assess(payload))
+    result = publish_report(task='按任务时区说明当日报价。', draft='', tool_results=[('sina_realtime_quote', raw)],
+        run_scope='calendar-boundary', call=writer, fact_review_call=checker, max_calls=2,
+        reference_date=day, reference_timezone=zone)
+    assert result.artifact['review_valid']
+    assert (result.verification['status'] == 'complete') is supported
+    assert ('22元/股' in result.artifact['reader_body']) is supported
+    timing = result.artifact['temporal_checks']['c0']
+    assert timing['comparison_timezone'] == zone
+    assert timing['evidence'][0]['observed_date'] == '2025-01-02'
+    assert timing['evidence'][0]['comparison_date'] == comparison_day
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text and saved['receipts'][0]['result'] == raw
+
+
+def test_reader_referents_resolve_ellipsis_without_becoming_source_evidence():
+    frame = {'entity': ['002415'], 'metric': ['收盘价'], 'unit': ['元/股']}
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            refs = [f['id'] for f in report_facts(payload) if f['metric'] == 'close']
+            return json.dumps({'schema_version': 1, 'items': [
+                {'id': 'frame', 'section': 'overview', 'type': 'paragraph', 'parts': [
+                    {'type': 'text', 'text': '以下002415收盘价均以元/股计。'}], 'refs': []},
+                {'id': 'answer', 'section': 'overview', 'type': 'paragraph', 'parts': [
+                    {'type': 'text', 'text': '先22，后23。'}], 'refs': refs}]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            result = body_reply(payload)
+            result['paragraphs'][0]['parts'][0]['assertion_kind'] = 'discourse'
+            result['paragraphs'][1]['parts'][0]['referents'] = frame
+            return json.dumps(result)
+        assert all(set(context) == {'evidence', 'calculations'} for context in payload['contexts'].values())
+        target = next(row for row in payload['statements'] if row['text'] == '先22，后23。')
+        assert target['referents'] == frame
+        assert payload['contexts'][target['context_id']]['evidence']
+        return json.dumps(assess(payload))
+    result = publish_report(task='报告两个观察日的收盘价。', draft='', tool_results=RECEIPTS,
+        run_scope='reader-referents', call=writer, fact_review_call=checker, max_calls=2)
+    assert result.verification['status'] == 'complete'
+    assert '先22，后23。' in result.artifact['reader_body']
+
+
+@pytest.mark.parametrize('kind', ['observation', 'judgment'])
 @pytest.mark.parametrize('bound', [False, True])
 @pytest.mark.parametrize('scope,reference,as_of,supported', [
     ('reference_date', '2025-01-02', '20250101', False),
@@ -41,7 +114,7 @@ def assess(payload, verdict="entailed"):
     ('reference_date', '2025-01-02', None, False),
     ('other', '2025-01-02', '20250101', True),
 ])
-def test_owned_date_controls_final_publication_even_when_model_approves(tmp_path, bound, scope, reference, as_of, supported):
+def test_owned_date_controls_final_publication_even_when_model_approves(tmp_path, kind, bound, scope, reference, as_of, supported):
     raw = json.dumps({'symbol': '600928', 'pb': 0.8, 'as_of': as_of,
                       '_meta': {'timestamp': '2025-01-02T15:00:00+08:00'}})
     def writer(system, user):
@@ -59,12 +132,15 @@ def test_owned_date_controls_final_publication_even_when_model_approves(tmp_path
         if 'paragraphs' in payload:
             result = body_reply(payload)
             result['paragraphs'][0]['parts'][0]['time_scope'] = scope
+            result['paragraphs'][0]['parts'][0]['assertion_kind'] = kind
             return json.dumps(result)
         result = assess(payload)
         pb = next(f for f in payload['contexts']['p0']['evidence'] if f['metric'] == 'pb')
         # For a bound value, omit the reviewer link deliberately: the owned
         # rendering binding must still be checked. Literal prose uses its link.
         result['assessments'][0]['time_evidence'] = [] if bound else [pb['id']]
+        if kind == 'judgment':
+            result['assessments'][0]['checks']['quantity'] = 'not_applicable'
         return json.dumps(result)
     result = publish_report(task='说明所给市净率。', draft='', tool_results=[('get_fundamentals', raw)],
         run_scope='owned-date', call=writer, fact_review_call=checker, max_calls=2, reference_date=reference)
@@ -80,6 +156,34 @@ def test_owned_date_controls_final_publication_even_when_model_approves(tmp_path
     saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
     assert saved['published_text'] == result.text and saved['receipts'][0]['result'] == raw
     assert saved['verification']['status'] == ('complete' if supported else 'incomplete')
+
+
+@pytest.mark.parametrize('support', ['entailed', 'unknown'])
+def test_present_research_opinion_is_not_a_new_measurement_but_still_needs_support(support):
+    text = '从所给观察资料看，倾向保持谨慎判断。'
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'section': 'overview',
+                'type': 'paragraph', 'parts': [{'type': 'text', 'text': text}],
+                'refs': [f['id'] for f in report_facts(payload) if f['metric'] == 'close']}]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            result = body_reply(payload)
+            part = result['paragraphs'][0]['parts'][0]
+            part.update(assertion_kind='judgment', time_scope='reference_date')
+            return json.dumps(result)
+        result = assess(payload)
+        result['assessments'][0]['checks'].update(quantity='not_applicable', time='not_applicable', support=support)
+        return json.dumps(result)
+    result = publish_report(task='给出基于所给资料的研究看法。', draft='', tool_results=RECEIPTS,
+        run_scope='present-opinion', call=writer, fact_review_call=checker, max_calls=2, reference_date='2025-01-03')
+    assert result.artifact['review_valid']
+    assert (result.verification['status'] == 'complete') is (support == 'entailed')
+    assert (text in result.artifact['reader_body']) is (support == 'entailed')
+    assert result.artifact['temporal_checks']['c0']['reason'] == 'non_observational_judgment'
 
 
 @pytest.mark.parametrize('fault', ['missing', 'wrong_type', 'duplicate', 'unknown_ref'])
@@ -155,9 +259,9 @@ def test_execution_projection_preserves_the_following_bound_observation_date(as_
             text = payload['paragraphs'][0]['text']
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'answer', 'parts': [
                 {'text': prefix, 'kind': 'current_outcome', 'assertion_kind': 'actor_activity',
-                 'time_scope': 'other', 'outcome': 'performed', 'extent': 'operation'},
+                 'time_scope': 'other', 'referents': {}, 'outcome': 'performed', 'extent': 'operation'},
                 {'text': text[len(prefix):], 'kind': 'other', 'assertion_kind': 'observation',
-                 'time_scope': 'reference_date', 'outcome': 'none', 'extent': 'none'}]}]})
+                 'time_scope': 'reference_date', 'referents': {}, 'outcome': 'none', 'extent': 'none'}]}]})
         return json.dumps(assess(payload))
     result = publish_report(task='说明本轮结果和市净率。', draft='', tool_results=receipts,
         current_tool_results=receipts, run_scope='projection-date', call=writer,
@@ -244,7 +348,7 @@ def test_each_assertion_must_be_reviewed_before_the_complete_paragraph_is_publis
         payload = json.loads(user)
         if 'paragraphs' in payload:
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'c0', 'parts': [
-                {'text': text, 'kind': 'other', 'assertion_kind': category, 'time_scope': 'other', 'outcome': 'none', 'extent': 'none'}
+                {'text': text, 'kind': 'other', 'assertion_kind': category, 'time_scope': 'other', 'referents': {}, 'outcome': 'none', 'extent': 'none'}
                 for text, category in [(prefix, 'observation'), (conclusion, 'judgment' if legitimate else 'actor_activity')]]}]})
         seen.append(payload)
         assert [row['text'] for row in payload['statements']] == [prefix, conclusion]
@@ -252,7 +356,8 @@ def test_each_assertion_must_be_reviewed_before_the_complete_paragraph_is_publis
             'observation', 'judgment' if legitimate else 'actor_activity']
         assert [row['meaning_kind'] for row in payload['statements']] == ['other', 'other']
         assert {row['context_id'] for row in payload['statements']} == {'p0'}
-        assert payload['contexts']['p0']['text'] == prefix + conclusion
+        assert 'text' not in payload['contexts']['p0']
+        assert set(payload['contexts']['p0']) == {'evidence', 'calculations'}
         assert len(payload['contexts']['p0']['evidence']) == 3  # identity, ratio, turnover
         reply = assess(payload)
         reply['assessments'][1]['verdict'] = 'entailed' if legitimate else 'unknown'
@@ -313,7 +418,7 @@ def test_percent_reader_precision_preserves_source_values_and_real_nonzero_chang
 
 def body_reply(payload):
     assert set(payload) == {"paragraphs"}
-    return {"quantity_issues": [], "paragraphs": [{"id": row["id"], "parts": [{"text": row["text"], "kind": "other", "assertion_kind": "observation", "time_scope": "other",
+    return {"quantity_issues": [], "paragraphs": [{"id": row["id"], "parts": [{"text": row["text"], "kind": "other", "assertion_kind": "observation", "time_scope": "other", "referents": {},
         "outcome": "none", "extent": "none"}]} for row in payload["paragraphs"]]}
 
 
@@ -387,7 +492,7 @@ def test_rule_context_remains_separate_from_evidence_and_cannot_authorize_execut
         if "paragraphs" in payload:
             assert set(payload) == {"paragraphs"}
             return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "decision", "parts": [
-                {"text": text, "kind": meaning, "time_scope": "other", "assertion_kind": "judgment" if meaning == "plan" else "actor_activity", "outcome": "none" if meaning == "plan" else "not_performed",
+                {"text": text, "kind": meaning, "time_scope": "other", "referents": {}, "assertion_kind": "judgment" if meaning == "plan" else "actor_activity", "outcome": "none" if meaning == "plan" else "not_performed",
                  "extent": "none" if meaning == "plan" else "operation"}]}]})
         observed.append(payload)
         assert payload["request_context"] == {"role": "requirements", "text": task}
@@ -440,8 +545,8 @@ def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path,
         if "paragraphs" in payload:
             assert payload == {"paragraphs": [{"id": "answer", "text": prefix+claim}]}
             return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "answer", "parts": [
-                {"text": prefix, "kind": "other", "assertion_kind": "observation", "time_scope": "other", "outcome": "none", "extent": "none"},
-                {"text": claim, "kind": "current_outcome", "assertion_kind": "actor_activity", "time_scope": "other", "outcome": "not_performed" if receipt_status is None else "performed",
+                {"text": prefix, "kind": "other", "assertion_kind": "observation", "time_scope": "other", "referents": {}, "outcome": "none", "extent": "none"},
+                {"text": claim, "kind": "current_outcome", "assertion_kind": "actor_activity", "time_scope": "other", "referents": {}, "outcome": "not_performed" if receipt_status is None else "performed",
                  "extent": "whole_run" if receipt_status is None else "operation"}]}]})
         factual_inputs.append(payload)
         assert payload["statements"][0]["text"] == prefix
@@ -478,7 +583,7 @@ def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path,
     assert saved["execution_projections"]["answer"]["removed"][0]["text"] == claim
 
 
-@pytest.mark.parametrize("fault", ["omit", "rewrite", "duplicate", "wrong_id", "wrong_kind", "missing_assertion_kind", "unknown_assertion_kind", "missing_time_scope", "unknown_time_scope", "timeout"])
+@pytest.mark.parametrize("fault", ["omit", "rewrite", "duplicate", "wrong_id", "wrong_kind", "missing_assertion_kind", "unknown_assertion_kind", "missing_time_scope", "unknown_time_scope", "missing_referents", "unowned_referent", "unknown_referent_role", "timeout"])
 def test_missing_or_unfaithful_body_interpretation_cannot_reach_coverage_or_fact_approval(fault):
     calls = []
     def writer(system, user):
@@ -509,6 +614,12 @@ def test_missing_or_unfaithful_body_interpretation_cannot_reach_coverage_or_fact
             row['parts'][0].pop('time_scope')
         elif fault == "unknown_time_scope":
             row['parts'][0]['time_scope'] = 'latest_available'
+        elif fault == 'missing_referents':
+            row['parts'][0].pop('referents')
+        elif fault == 'unowned_referent':
+            row['parts'][0]['referents'] = {'entity': ['reader never supplied this name']}
+        elif fault == 'unknown_referent_role':
+            row['parts'][0]['referents'] = {'evidence': ['002415']}
         else:
             row["parts"][0]["kind"] = "approved"
         return json.dumps(result)
@@ -532,7 +643,7 @@ def test_execution_only_report_uses_receipt_without_empty_prose_or_source_marker
         return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
     def checker(system, user):
         assert set(json.loads(user)) == {"paragraphs"}
-        return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "outcome", "parts": [{"text": claim, "kind": "current_outcome", "assertion_kind": "actor_activity", "time_scope": "other",
+        return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "outcome", "parts": [{"text": claim, "kind": "current_outcome", "assertion_kind": "actor_activity", "time_scope": "other", "referents": {},
             "outcome": "performed", "extent": "operation"}]}]})
     result = publish_report(task="报告成交结果", draft="", tool_results=[("place_paper_trade", json.dumps(receipt))],
                             run_scope="execution-only", call=writer, fact_review_call=checker, max_calls=2)

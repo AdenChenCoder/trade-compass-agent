@@ -179,6 +179,8 @@ _valuation_base = {'_meta': {'source': 'tushare', 'timestamp': '2026-11-12T15:10
                    'symbol': '600928', 'name': '西安银行', 'pb': 0.4572}
 _fresh_valuation = [('get_fundamentals', json.dumps({**_valuation_base, 'as_of': '20261112'}))]
 _stale_valuation = [('get_fundamentals', json.dumps({**_valuation_base, 'as_of': '20261111'}))]
+_cross_calendar_quote = [('sina_realtime_quote', json.dumps({
+    'symbol': '002415', 'price': 22, 'timestamp': '2025-01-01T16:00:00+00:00'}))]
 TIME_CASES = {
     "relative_current": ("今天002415收盘价为22元/股。", True, _dated_price, "2025-01-02"),
     "relative_stale": ("今天002415收盘价为22元/股。", False, _dated_price, "2025-01-03"),
@@ -189,10 +191,16 @@ TIME_CASES = {
     'pb_stale_current': (_current_valuation_prose, False, _stale_valuation, '2026-11-12'),
     'pb_stale_explicit': (_current_valuation_prose.replace('公司当前市净率',
         '按2026年11月11日的数据，公司市净率'), True, _stale_valuation, '2026-11-12'),
+    'utc_current_observation': ('002415当前报价为22元/股。', True, _cross_calendar_quote, '2025-01-01'),
+    'utc_stale_observation': ('002415当前报价为22元/股。', False, _cross_calendar_quote, '2025-01-02'),
 }
 CASES.update({name: (prose, expected) for name, (prose, expected, _, _) in TIME_CASES.items()})
+VALUATION_TIME_CASES = ('pb_fresh_current', 'pb_stale_current', 'pb_stale_explicit')
 TIME_CASE_TASKS = {name: '根据所给资料说明600928的市净率及所述估值判断。'
-                   for name in ('pb_fresh_current', 'pb_stale_current', 'pb_stale_explicit')}
+                   for name in VALUATION_TIME_CASES}
+TIME_CASE_TASKS.update({name: '按任务时区UTC，根据所给资料说明002415当前报价。'
+                       for name in ('utc_current_observation', 'utc_stale_observation')})
+TIME_CASE_TIMEZONES = {name: 'UTC' for name in ('utc_current_observation', 'utc_stale_observation')}
 
 
 def valuation_fixture_checks(selected):
@@ -200,7 +208,7 @@ def valuation_fixture_checks(selected):
     from trade_compass_agent.runtime.report_contract import EvidenceCatalog
     checked = {}
     for name in selected:
-        if name not in TIME_CASE_TASKS:
+        if name not in VALUATION_TIME_CASES:
             continue
         catalog = EvidenceCatalog.build(TIME_CASES[name][2], run_scope='fixture-preflight')
         facts = [f for f in catalog.facts.values() if f.entity == '600928' and f.metric == 'pb']
@@ -210,6 +218,23 @@ def valuation_fixture_checks(selected):
             raise RuntimeError(f'{name}: frozen valuation fixture lost its value, unit or observation date')
         checked[name] = {'value': facts[0].value, 'unit': facts[0].unit,
                          'observed_at': facts[0].observed_at, 'observed_date': expected_date}
+    return checked
+
+
+def quote_fixture_checks(selected):
+    from trade_compass_agent.runtime.report_contract import EvidenceCatalog
+    checked = {}
+    for name in selected:
+        if name not in TIME_CASE_TIMEZONES:
+            continue
+        catalog = EvidenceCatalog.build(TIME_CASES[name][2], run_scope='fixture-preflight')
+        facts = [f for f in catalog.facts.values() if f.entity == '002415' and f.metric == 'price']
+        if (len(facts) != 1 or facts[0].value != '22' or facts[0].unit != '元/股'
+                or facts[0].observation_date('UTC') != '2025-01-01'
+                or facts[0].observation_date('Asia/Shanghai') != '2025-01-02'):
+            raise RuntimeError(f'{name}: frozen quote lost its value or cross-calendar instant')
+        checked[name] = {'observed_at': facts[0].observed_at, 'task_calendar_date': '2025-01-01',
+                         'display_calendar_date': '2025-01-02'}
     return checked
 
 
@@ -247,7 +272,7 @@ def main():
               "selected_cases": list(selected), "unselected_cases": [name for name in CASES if name not in selected],
               "full_corpus": len(selected) == len(CASES),
               "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-              "fixture_checks": valuation_fixture_checks(selected)}
+              "fixture_checks": {**valuation_fixture_checks(selected), **quote_fixture_checks(selected)}}
     (root/"plan.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
     config = AppConfig(data_dir=root/"data", memory_dir=root/"memory",
                        llm=LLMConfig(provider="lmstudio", model=args.model, api_key_env="", max_retries=0, timeout=120,
@@ -305,6 +330,11 @@ def main():
                         parts = [{"type": "text", "text": "002415在"},
                                  {"type": "value", "ref": close_id, "field": "date"},
                                  {"type": "text", "text": "的收盘价为22元/股。"}]
+                    if name in TIME_CASE_TIMEZONES:
+                        price_id = next(group['rows'][0][0] for group in payload['facts'] if group['metric'] == 'price')
+                        parts = [{'type': 'text', 'text': '002415当前报价为'},
+                                 {'type': 'value', 'ref': price_id, 'field': 'value_with_unit'},
+                                 {'type': 'text', 'text': '。'}]
                     items = [{"id": "answer", "section": "overview", "type": "paragraph", "parts": parts, "refs": refs}]
                     if name == 'bound_percentage_display':
                         pct = next(group['rows'][0][0] for group in payload['facts'] if group['metric'] == 'change_pct')
@@ -380,7 +410,8 @@ def main():
                     draft="", tool_results=case_receipts, current_tool_results=case_receipts,
                     run_scope="semantic-"+name, call=call, max_calls=primary_limit,
                     fact_review_call=factual_call if factual_client else None,
-                    reference_date=TIME_CASES[name][3] if name in TIME_CASES else None)
+                    reference_date=TIME_CASES[name][3] if name in TIME_CASES else None,
+                    reference_timezone=TIME_CASE_TIMEZONES.get(name, 'Asia/Shanghai'))
             (root/(name+"-artifact.json")).write_text(json.dumps(report.artifact, ensure_ascii=False, indent=2))
             reviews = (report.artifact.get("review") or {}).get("reviews", [])
             actual = next((r["supported"] for r in reviews if r["id"] == "answer"), None)
@@ -457,6 +488,14 @@ def main():
                     and check['status'] == 'unknown' and check['reason'] == 'observation_not_at_asserted_date'
                     and any(row['ref'] in pb_ids and row['observed_date'] == '2026-11-11'
                             for row in check['evidence']) for check in timing)
+                entry['runtime_time_rejection'] = correct_time_rejection
+                entry['passed'] = entry['passed'] and correct_time_rejection
+            if name == 'utc_stale_observation' and factual_client:
+                correct_time_rejection = any(
+                    check['comparison_timezone'] == 'UTC' and check['expected_date'] == '2025-01-02'
+                    and check['status'] == 'unknown' and check['reason'] == 'observation_not_at_asserted_date'
+                    and any(row['comparison_date'] == '2025-01-01' and row['observed_date'] == '2025-01-02'
+                            for row in check['evidence']) for check in first.get('temporal_checks', {}).values())
                 entry['runtime_time_rejection'] = correct_time_rejection
                 entry['passed'] = entry['passed'] and correct_time_rejection
             if name in {"historical_execution", "absence_as_nonexecution", "compound_absence_as_nonexecution", "reporting_rule_with_noop"} and factual_client:

@@ -130,12 +130,7 @@ class Fact:
 
     def observation_date(self, timezone_name: str) -> str | None:
         """Calendar date of the original observation, never its retrieval."""
-        if not self.observed_at:
-            return None
-        stamp = datetime.fromisoformat(self.observed_at)
-        if stamp.tzinfo:
-            stamp = stamp.astimezone(ZoneInfo(timezone_name))
-        return stamp.date().isoformat()
+        return observation_date(self.observed_at, timezone_name)
 
     @property
     def display_value_with_unit(self) -> str:
@@ -244,6 +239,16 @@ def _number(value) -> Decimal:
 
 def _pointer(token) -> str:
     return str(token).replace("~", "~0").replace("/", "~1")
+
+
+def observation_date(value, timezone_name):
+    """Use one calendar for instant comparison; leave date-only values intact."""
+    if not value:
+        return None
+    stamp = datetime.fromisoformat(value)
+    if stamp.tzinfo:
+        stamp = stamp.astimezone(ZoneInfo(timezone_name))
+    return stamp.date().isoformat()
 
 
 def observation_time(value, zone="Asia/Shanghai"):

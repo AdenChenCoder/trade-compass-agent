@@ -8,7 +8,9 @@ Partition EACH input text into contiguous parts at assertion boundaries. Copy te
 Each part should contain one independently assessable predicate, including conjoined factual, causal, actor-behavior and qualitative assertions. Keep negation, conditions and embedding attached to the proposition they qualify. Do not group a new conclusion with neighboring measurements merely because they share a sentence; the original paragraph remains available to resolve fragments.
 Independently identify what EACH part commits to before any evidence is seen. assertion_kind is observation (a stated observed fact or available-record claim), comparison (a relationship between observations), actor_activity (an actor's identity, action or absence of action), causal_relation (one thing causing or explaining another), judgment (a recommendation or interpretation without an additional empirical commitment), or discourse (framing or a convention without a factual claim). This is meaning classification, NOT a truth verdict. Split when the commitment type changes: a measurement, an interpretation and an actor-activity conclusion cannot share one part. An actor's asserted behavior remains actor_activity even when presented as technical analysis, an explanation or an opinion. Preserve qualifications and hypothetical scope; do not invent an assertion of actual activity from a proposed action or an inability to identify actors.
 Classify observation time BEFORE seeing any evidence. time_scope is reference_date when the author asserts an observation as of this task's present business date, including a current value embedded in a judgment. This fixes the author's commitment; it cannot later mean merely the latest available source. Use other for explicitly dated historical observations, comparisons spanning different dates, hypothetical thresholds, plans and discourse. This is the time of the asserted observation, not when the report is written or an operation proposed. Do not infer a time from sources, since none are supplied.
-Return JSON: {"quantity_issues":[{"id":"paragraph id","text":"exact problematic quantity assertion span","reason":"missing unit or ratio scale in the reader body"}],"paragraphs":[{"id":"input id","parts":[{"text":"exact original span","kind":"current_outcome|historical_outcome|plan|availability|other","assertion_kind":"observation|comparison|actor_activity|causal_relation|judgment|discourse","time_scope":"reference_date|other","outcome":"performed|not_performed|unknown|none","extent":"operation|whole_run|none"}]}]}.
+An opinion held now is not itself a current market observation. Use other for a judgment or causal explanation without an additional asserted current observation; classify its empirical premises separately. A current numeric value remains an observation even beside an opinion.
+For each part, referents supplies ONLY the minimal reader wording needed to resolve an omitted entity, metric, unit, time or observation scope. It is a JSON object with optional entity/metric/unit/time/scope keys, each an array of exact short spans copied from the supplied reader paragraphs. Use {} when the part is self-contained. Copy labels and identifiers, not complete factual assertions, recommendations, explanations or judgments. Never add or normalize words or take a referent from evidence. These reader references clarify meaning; they do not establish truth.
+Return JSON: {"quantity_issues":[{"id":"paragraph id","text":"exact problematic quantity assertion span","reason":"missing unit or ratio scale in the reader body"}],"paragraphs":[{"id":"input id","parts":[{"text":"exact original span","kind":"current_outcome|historical_outcome|plan|availability|other","assertion_kind":"observation|comparison|actor_activity|causal_relation|judgment|discourse","time_scope":"reference_date|other","referents":{},"outcome":"performed|not_performed|unknown|none","extent":"operation|whole_run|none"}]}]}.
 current_outcome means the text ASSERTS that an actor's state-changing operation was performed, rejected, or not performed in this run, including categorical non-execution. Price movement, return, valuation, holdings and balance observations are other, even when they describe the current run or changes over time; they do not themselves assert that the actor submitted an order or wrote memory. historical_outcome concerns a past state-changing operation, not a past price observation. For it, outcome must be performed or not_performed, and extent must distinguish a specific operation from an assertion covering the whole run. A specific rejected attempt is not an assertion that no actions occurred anywhere in the run.
 Resolve the proposition the author actually commits to, preserving negation, conditions and embedding. A decision about representing an operation in a report is not a decision about performing that operation. Mentioning an operation as the object of a reporting rule does not assert its occurrence or non-occurrence. Conversely, affirming a business outcome still commits to that outcome even when introduced as a confirmation or explanation. Classify the asserted business state, not the occurrence of an operation word inside another proposition.
 An authored choice, recommendation or decision about what to do is plan, including a decision made now to refrain from buying or continue holding. It does not by itself assert that an order was submitted or that execution/non-execution has been established. Preserve the scope of that intention across its dependent clauses. If a sentence additionally asserts a completed operation or a categorical execution outcome, split and classify that assertion independently; a decision does not exempt an accompanying outcome claim.
@@ -35,14 +37,21 @@ def validate_body_meaning(value, paragraphs):
                 or not isinstance(row["parts"], list) or not 1 <= len(row["parts"]) <= 100):
             raise ValueError("invalid body partition")
         for part in row["parts"]:
-            if (not isinstance(part, dict) or set(part) != {"text", "kind", "assertion_kind", "time_scope", "outcome", "extent"}
-                    or any(not isinstance(part[key], str) for key in part) or not part["text"]
+            if (not isinstance(part, dict) or set(part) != {"text", "kind", "assertion_kind", "time_scope", "referents", "outcome", "extent"}
+                    or any(not isinstance(part[key], str) for key in part if key != 'referents') or not part["text"]
                     or part["kind"] not in {"current_outcome", "historical_outcome", "plan", "availability", "other"}
                     or part["assertion_kind"] not in {"observation", "comparison", "actor_activity", "causal_relation", "judgment", "discourse"}
                     or part['time_scope'] not in {'reference_date', 'other'}
                     or part["outcome"] not in {"performed", "not_performed", "unknown", "none"}
                     or part["extent"] not in {"operation", "whole_run", "none"}):
                 raise ValueError("invalid body part")
+            refs = part['referents']
+            if (not isinstance(refs, dict) or not set(refs) <= {'entity', 'metric', 'unit', 'time', 'scope'}
+                    or any(not isinstance(spans, list) or len(spans) > 8
+                           or any(not isinstance(span, str) or not span.strip() or len(span) > 120
+                                  or not any(span in paragraph for paragraph in paragraphs.values())
+                                  for span in spans) for spans in refs.values())):
+                raise ValueError('reader referent is not a copied contextual label')
             if part["kind"] == "current_outcome":
                 if part["outcome"] not in {"performed", "not_performed"} or part["extent"] not in {"operation", "whole_run"}:
                     raise ValueError("invalid current outcome meaning")
@@ -96,8 +105,10 @@ def factual_assertions(inferences, body_meaning):
     for row in inferences:
         identifier = row['id']
         context_id = f'p{len(contexts)}'
-        contexts[context_id] = {key: value for key, value in row.items() if key not in {'id', 'segments', 'owned_segments'}}
-        parts = (body_meaning or {}).get(identifier, [{'text': row['text'], 'kind': 'other', 'assertion_kind': 'observation', 'time_scope': 'other'}])
+        # The candidate paragraph cannot masquerade as source evidence. Only
+        # typed owned evidence lives here; reader meaning stays with its target.
+        contexts[context_id] = {key: row[key] for key in ('evidence', 'calculations')}
+        parts = (body_meaning or {}).get(identifier, [{'text': row['text'], 'kind': 'other', 'assertion_kind': 'observation', 'time_scope': 'other', 'referents': {}}])
         kept = [part for part in parts if part['kind'] != 'current_outcome']
         if ''.join(part['text'] for part in kept) != row['text']:
             raise ValueError('factual assertion partition differs from reviewed body')
@@ -121,6 +132,7 @@ def factual_assertions(inferences, body_meaning):
             statements.append({'id': claim_id, 'context_id': context_id, 'text': part['text'],
                                'assertion_kind': part['assertion_kind'], 'meaning_kind': part['kind'],
                                'time_scope': part['time_scope'],
+                               'referents': part['referents'],
                                'bound_fact_refs': list(dict.fromkeys(ref for s in owned for ref in s['fact_refs'])),
                                'time_fact_refs': list(dict.fromkeys(ref for s in owned for ref in s['date_refs']))})
             owners[identifier].append(claim_id)

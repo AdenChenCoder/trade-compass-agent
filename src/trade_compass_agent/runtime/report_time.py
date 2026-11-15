@@ -1,14 +1,22 @@
 """Compare interpreted observation scope with owned dates; never parse prose."""
 from __future__ import annotations
 
-from trade_compass_agent.runtime.report_contract import PORTFOLIO_OPERATIONS
+from trade_compass_agent.runtime.report_contract import PORTFOLIO_OPERATIONS, observation_date
 
 
 def check_statement_time(statement, assessment, context, report_context):
     expected = report_context['reference_date']
     result = {'scope': statement['time_scope'], 'expected_date': expected,
+              'comparison_timezone': report_context['reference_timezone'],
               'evidence': [], 'status': 'not_applicable', 'reason': 'not_current_observation'}
     if statement['time_scope'] != 'reference_date':
+        return result
+    if (statement['assertion_kind'] in {'judgment', 'discourse'}
+            and assessment['checks']['quantity'] == 'not_applicable'
+            and not statement['bound_fact_refs'] and not assessment['time_evidence']):
+        # A present opinion is not a new dated measurement. Bound or asserted
+        # quantities still require their own observation-time proof.
+        result['reason'] = 'non_observational_judgment'
         return result
     facts = {fact['id']: fact for fact in context['evidence']}
     # A derived price change describes the interval ending at its later operand.
@@ -22,13 +30,14 @@ def check_statement_time(statement, assessment, context, report_context):
         result['reason'] = 'account_snapshot'
         return result
     observations = [fact for fact in observations if fact['source'] not in snapshots]
-    result['evidence'] = [{'ref': fact['id'], 'observed_date': fact['observed_date']}
+    result['evidence'] = [{'ref': fact['id'], 'observed_date': fact['observed_date'],
+                          'comparison_date': observation_date(fact['observed_at'], report_context['reference_timezone'])}
                           for fact in observations]
     if not expected:
         result.update(status='unknown', reason='reference_date_unavailable')
     elif not observations:
         result.update(status='unknown', reason='observation_unavailable')
-    elif any(fact['observed_date'] != expected for fact in observations):
+    elif any(row['comparison_date'] != expected for row in result['evidence']):
         result.update(status='unknown', reason='observation_not_at_asserted_date')
     else:
         result.update(status='entailed', reason='matched_observation_date')
