@@ -89,12 +89,7 @@ class ReportTransport:
             # renderer has to infer whether a numeric value includes its unit.
             ref = self.aliases[sample.id]
             self.table["paragraph_rendering_example"] = {
-                "parts": [{"type": "value", "ref": ref, "field": "subject"},
-                          {"type": "text", "text": "的"},
-                          {"type": "value", "ref": ref, "field": "label"},
-                          {"type": "text", "text": "为"},
-                          {"type": "value", "ref": ref, "field": "value_with_unit"},
-                          {"type": "text", "text": "。"}],
+                "parts": [[ref, "subject"], "的", [ref, "label"], "为", [ref, "value_with_unit"], "。"],
                 "rendered": f"{sample.subject}的{sample.label}为{sample.display_value_with_unit}。",
             }
         dated = [fact for fact in catalog.facts.values() if fact.observed_at]
@@ -104,13 +99,14 @@ class ReportTransport:
             from trade_compass_agent.runtime.report_reading import _date
             sample = next((fact for fact in dated if _date(fact)[:10] != fact.observed_at[:10]), dated[0])
             self.table["date_rendering_example"] = {
-                "part": {"type": "value", "ref": self.aliases[sample.id], "field": "date"},
+                "part": [self.aliases[sample.id], "date"],
                 "observed_at": sample.observed_at, "rendered": _date(sample),
             }
 
     def encode_document(self, document):
         """Repair prompts use exactly the same aliases as initial composition."""
-        return self._map(document, self.aliases)
+        value = self._map(document, self.aliases)
+        return self._reader_parts(value, compact=True)
 
     def repair_evidence(self, document, findings):
         """Give unresolved items readable source context without guessing refs.
@@ -145,7 +141,35 @@ class ReportTransport:
             if any(isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"] in self.references
                    for item in document["items"]):
                 raise ValueError("报告条目id不能与事实目录id相同")
-        return self._map(document, self.references)
+        return self._map(self._reader_parts(document, compact=False), self.references)
+
+    @staticmethod
+    def _reader_parts(document, *, compact):
+        """Wire-only representation; never edit a string or infer a binding.
+
+        Canonical object parts remain readable for old artifacts and explicit
+        callers. Unknown shapes stay unchanged for strict item validation.
+        """
+        value = deepcopy(document)
+        if not isinstance(value, dict) or not isinstance(value.get('items'), list):
+            return value
+        for item in value['items']:
+            if not isinstance(item, dict) or item.get('type') != 'paragraph' or not isinstance(item.get('parts'), list):
+                continue
+            parts = []
+            for part in item['parts']:
+                if compact:
+                    if isinstance(part, dict) and set(part) == {'type', 'text'} and part['type'] == 'text':
+                        part = part['text']
+                    elif isinstance(part, dict) and set(part) == {'type', 'ref', 'field'} and part['type'] == 'value':
+                        part = [part['ref'], part['field']]
+                elif isinstance(part, str):
+                    part = {'type': 'text', 'text': part}
+                elif isinstance(part, list) and len(part) == 2 and all(isinstance(value, str) for value in part):
+                    part = {'type': 'value', 'ref': part[0], 'field': part[1]}
+                parts.append(part)
+            item['parts'] = parts
+        return value
 
     @staticmethod
     def _map(document, mapping):

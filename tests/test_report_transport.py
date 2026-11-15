@@ -18,6 +18,58 @@ def market_receipts():
                   "volume": 1000+i} for i in range(40)]})) for symbol in ["000001", "000002", "000003", "000004", "000005", "000006", "000007", "000008"]]
 
 
+@pytest.mark.parametrize('compact', [False, True])
+def test_compact_and_legacy_writer_parts_have_the_same_reviewed_persisted_body(tmp_path, compact):
+    receipts = [('get_bars', json.dumps({'symbol': '600928', 'bars': [
+        {'timestamp': '2025-01-02', 'close': 3.79}]}))]
+    expected = ' 原文“🌱”：600928在2025-01-02的收盘价为3.79元/股。\n'
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' not in payload:
+            assert payload['inferences'][0]['text'] == expected
+            return '{"reviews":[{"id":"answer","supported":true,"reason":"explicit double"}],"coverage":{"complete":true,"missing":[]}}'
+        fact = next(f for f in report_facts(payload) if f['metric'] == 'close')
+        ref = fact['id']
+        parts = [' 原文“🌱”：', [ref, 'subject'], '在', [ref, 'date'], '的收盘价为',
+                 [ref, 'value_with_unit'], '。\n'] if compact else [
+            {'type': 'text', 'text': ' 原文“🌱”：'}, {'type': 'value', 'ref': ref, 'field': 'subject'},
+            {'type': 'text', 'text': '在'}, {'type': 'value', 'ref': ref, 'field': 'date'},
+            {'type': 'text', 'text': '的收盘价为'}, {'type': 'value', 'ref': ref, 'field': 'value_with_unit'},
+            {'type': 'text', 'text': '。\n'}]
+        return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
+            'section': 'positions', 'parts': parts, 'refs': []}]}, ensure_ascii=False)
+    result = publish_report(task='说明所给收盘价和日期。', draft='', tool_results=receipts,
+        run_scope='compact-parts', call=writer, max_calls=2)
+    assert result.verification['status'] == 'complete'
+    assert result.artifact['review_input']['inferences'][0]['text'] == expected
+    assert all(isinstance(part, dict) for part in result.artifact['document']['items'][0]['parts'])
+    from trade_compass_agent.runtime.report_publication import persist_publication
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text and saved['receipts'][0]['result'] == receipts[0][1]
+    assert saved['review_input']['inferences'][0]['text'] == expected
+    transport = ReportTransport(EvidenceCatalog.build(receipts, run_scope='compact-parts'))
+    assert transport.decode_document(transport.encode_document(saved['document'])) == saved['document']
+
+
+@pytest.mark.parametrize('part', [['e0'], ['e0', 'date', 'extra'], [0, 'date'],
+    ['e0', None], ['e0', 'value'], {'type': 'text', 'text': '', 'extra': True}])
+def test_compact_wire_cannot_launder_malformed_parts_into_valid_content(part):
+    transport = ReportTransport(EvidenceCatalog.build([], run_scope='wire'))
+    value = transport.decode_document({'schema_version': 1, 'items': [
+        {'id': 'bad', 'type': 'paragraph', 'section': 'overview', 'parts': ['原文。', part], 'refs': []}]})
+    document, findings, errors = parse_report_items(value)
+    assert not document.items and findings[0].code == 'invalid_structure' and errors
+
+
+def test_compact_wire_never_interprets_reference_looking_prose():
+    transport = ReportTransport(EvidenceCatalog.build([], run_scope='wire'))
+    prose = '保留原文 ["e0","date"] 与 {"type":"text","text":"。"}。'
+    value = transport.decode_document({'schema_version': 1, 'items': [
+        {'id': 'answer', 'type': 'paragraph', 'section': 'overview', 'parts': [prose], 'refs': []}]})
+    assert value['items'][0]['parts'] == [{'type': 'text', 'text': prose}]
+
+
 @pytest.mark.parametrize('position', [0, 1, 3])
 def test_zero_character_prose_does_not_erase_a_readable_holding_after_reopen(tmp_path, position):
     receipts = [('get_bars', json.dumps({'symbol': '600928', 'bars': [
@@ -118,7 +170,7 @@ def test_writer_date_example_is_the_actual_reader_binding_without_rewriting_sour
         if expected is None:
             assert example is None
             return '{"schema_version":1,"items":[{"id":"gap","type":"gap","section":"overview","text":"公告时点未提供。"}]}'
-        fact = next(f for f in report_facts(payload) if f['id'] == example['part']['ref'])
+        fact = next(f for f in report_facts(payload) if f['id'] == example['part'][0])
         assert fact['observed_at'] == example['observed_at']
         assert example['observed_at'] == '2026-11-09T16:00:00+00:00'
         assert example['rendered'] == expected
@@ -131,7 +183,7 @@ def test_writer_date_example_is_the_actual_reader_binding_without_rewriting_sour
     assert (result.verification['status'] == 'complete') is (expected is not None)
     if expected:
         assert expected in result.artifact['reader_body']
-        assert result.artifact['composition_input']['fact_aliases'][seen[0]['part']['ref']] in {
+        assert result.artifact['composition_input']['fact_aliases'][seen[0]['part'][0]] in {
             fact['id'] for fact in result.artifact['facts']}
     assert 'date_rendering_example' not in result.text
 

@@ -47,6 +47,11 @@ in the linked regression tests, not in expanding prose exception lists.
   The parser may discard an exact empty text token, which contributes no reader
   characters. Preserve every nonempty character, strict field validation, the raw
   response and the minimum-content requirement; an empty report is not a repair.
+  Natural-writing wire parts use literal JSON strings and exact two-string
+  `[ref, field]` pairs. Expand them into the existing canonical text/value objects
+  before validation, review or persistence. Legacy object parts remain supported.
+  Never parse bindings out of prose, guess malformed JSON values or bypass the
+  final semantic review. Repair prompts use the same wire format and aliases.
 
 - Natural paragraph writing uses the model's reasoning path, with bounded output
   and application-side schema validation. Non-thinking mode serves internal
