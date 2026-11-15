@@ -98,6 +98,10 @@ in the linked regression tests, not in expanding prose exception lists.
   make a prior-day quantity current. Explicitly dated historical values remain
   usable. Before evidence is supplied, body interpretation separately fixes
   whether an observation is asserted as of the task's present date. Review
+  distinguishes an explicitly established calendar anchor from present currency.
+  Referring back to that date retains it; a sample's date or the report's topic
+  does not itself assert that an observation is current. Preserve any additional
+  present-time assertion even when an explicit date accompanies it. Review
   cannot reinterpret that commitment as latest available. Temporal evidence
   links must be runtime-owned observations already supplied in this report.
   Paragraph selection is not source ownership: comparisons may span securities,
