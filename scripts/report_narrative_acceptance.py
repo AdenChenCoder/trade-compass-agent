@@ -181,6 +181,10 @@ _fresh_valuation = [('get_fundamentals', json.dumps({**_valuation_base, 'as_of':
 _stale_valuation = [('get_fundamentals', json.dumps({**_valuation_base, 'as_of': '20261111'}))]
 _cross_calendar_quote = [('sina_realtime_quote', json.dumps({
     'symbol': '002415', 'price': 22, 'timestamp': '2025-01-01T16:00:00+00:00'}))]
+_basic_date_price = [('get_bars', json.dumps({'symbol': '002415', 'timeframe': '1d',
+    'bars': [{'timestamp': '20250102', 'close': 22}]}))]
+BASIC_DATE_CASES = ('utc_basic_date_current', 'utc_basic_date_stale')
+QUOTE_CALENDAR_CASES = ('utc_current_observation', 'utc_stale_observation')
 TIME_CASES = {
     "relative_current": ("今天002415收盘价为22元/股。", True, _dated_price, "2025-01-02"),
     "relative_stale": ("今天002415收盘价为22元/股。", False, _dated_price, "2025-01-03"),
@@ -193,6 +197,8 @@ TIME_CASES = {
         '按2026年11月11日的数据，公司市净率'), True, _stale_valuation, '2026-11-12'),
     'utc_current_observation': ('002415当前报价为22元/股。', True, _cross_calendar_quote, '2025-01-01'),
     'utc_stale_observation': ('002415当前报价为22元/股。', False, _cross_calendar_quote, '2025-01-02'),
+    'utc_basic_date_current': ('002415今天的收盘价为22元/股。', True, _basic_date_price, '2025-01-02'),
+    'utc_basic_date_stale': ('002415今天的收盘价为22元/股。', False, _basic_date_price, '2025-01-03'),
 }
 CASES.update({name: (prose, expected) for name, (prose, expected, _, _) in TIME_CASES.items()})
 VALUATION_TIME_CASES = ('pb_fresh_current', 'pb_stale_current', 'pb_stale_explicit')
@@ -200,7 +206,9 @@ TIME_CASE_TASKS = {name: '根据所给资料说明600928的市净率及所述估
                    for name in VALUATION_TIME_CASES}
 TIME_CASE_TASKS.update({name: '按任务时区UTC，根据所给资料说明002415当前报价。'
                        for name in ('utc_current_observation', 'utc_stale_observation')})
-TIME_CASE_TIMEZONES = {name: 'UTC' for name in ('utc_current_observation', 'utc_stale_observation')}
+TIME_CASE_TASKS.update({name: '按任务时区UTC，根据所给资料说明002415今天的收盘价。'
+                       for name in BASIC_DATE_CASES})
+TIME_CASE_TIMEZONES = {name: 'UTC' for name in (*QUOTE_CALENDAR_CASES, *BASIC_DATE_CASES)}
 
 
 def valuation_fixture_checks(selected):
@@ -225,7 +233,7 @@ def quote_fixture_checks(selected):
     from trade_compass_agent.runtime.report_contract import EvidenceCatalog
     checked = {}
     for name in selected:
-        if name not in TIME_CASE_TIMEZONES:
+        if name not in QUOTE_CALENDAR_CASES:
             continue
         catalog = EvidenceCatalog.build(TIME_CASES[name][2], run_scope='fixture-preflight')
         facts = [f for f in catalog.facts.values() if f.entity == '002415' and f.metric == 'price']
@@ -235,6 +243,22 @@ def quote_fixture_checks(selected):
             raise RuntimeError(f'{name}: frozen quote lost its value or cross-calendar instant')
         checked[name] = {'observed_at': facts[0].observed_at, 'task_calendar_date': '2025-01-01',
                          'display_calendar_date': '2025-01-02'}
+    return checked
+
+
+def basic_date_fixture_checks(selected):
+    from trade_compass_agent.runtime.report_contract import EvidenceCatalog
+    checked = {}
+    for name in selected:
+        if name not in BASIC_DATE_CASES:
+            continue
+        catalog = EvidenceCatalog.build(TIME_CASES[name][2], run_scope='fixture-preflight')
+        facts = [f for f in catalog.facts.values() if f.entity == '002415' and f.metric == 'close']
+        if (len(facts) != 1 or facts[0].value != '22' or facts[0].unit != '元/股'
+                or facts[0].observed_at != '2025-01-02'
+                or facts[0].observation_date('UTC') != '2025-01-02'):
+            raise RuntimeError(f'{name}: basic date lost its date-only precision or source value')
+        checked[name] = {'observed_at': facts[0].observed_at, 'invented_instant': False}
     return checked
 
 
@@ -272,7 +296,8 @@ def main():
               "selected_cases": list(selected), "unselected_cases": [name for name in CASES if name not in selected],
               "full_corpus": len(selected) == len(CASES),
               "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-              "fixture_checks": {**valuation_fixture_checks(selected), **quote_fixture_checks(selected)}}
+              "fixture_checks": {**valuation_fixture_checks(selected), **quote_fixture_checks(selected),
+                                 **basic_date_fixture_checks(selected)}}
     (root/"plan.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
     config = AppConfig(data_dir=root/"data", memory_dir=root/"memory",
                        llm=LLMConfig(provider="lmstudio", model=args.model, api_key_env="", max_retries=0, timeout=120,
@@ -330,10 +355,15 @@ def main():
                         parts = [{"type": "text", "text": "002415在"},
                                  {"type": "value", "ref": close_id, "field": "date"},
                                  {"type": "text", "text": "的收盘价为22元/股。"}]
-                    if name in TIME_CASE_TIMEZONES:
+                    if name in QUOTE_CALENDAR_CASES:
                         price_id = next(group['rows'][0][0] for group in payload['facts'] if group['metric'] == 'price')
                         parts = [{'type': 'text', 'text': '002415当前报价为'},
                                  {'type': 'value', 'ref': price_id, 'field': 'value_with_unit'},
+                                 {'type': 'text', 'text': '。'}]
+                    if name in BASIC_DATE_CASES:
+                        close_id = next(group['rows'][0][0] for group in payload['facts'] if group['metric'] == 'close')
+                        parts = [{'type': 'text', 'text': '002415今天的收盘价为'},
+                                 {'type': 'value', 'ref': close_id, 'field': 'value_with_unit'},
                                  {'type': 'text', 'text': '。'}]
                     items = [{"id": "answer", "section": "overview", "type": "paragraph", "parts": parts, "refs": refs}]
                     if name == 'bound_percentage_display':
@@ -495,6 +525,14 @@ def main():
                     check['comparison_timezone'] == 'UTC' and check['expected_date'] == '2025-01-02'
                     and check['status'] == 'unknown' and check['reason'] == 'observation_not_at_asserted_date'
                     and any(row['comparison_date'] == '2025-01-01' and row['observed_date'] == '2025-01-02'
+                            for row in check['evidence']) for check in first.get('temporal_checks', {}).values())
+                entry['runtime_time_rejection'] = correct_time_rejection
+                entry['passed'] = entry['passed'] and correct_time_rejection
+            if name == 'utc_basic_date_stale' and factual_client:
+                correct_time_rejection = any(
+                    check['comparison_timezone'] == 'UTC' and check['expected_date'] == '2025-01-03'
+                    and check['status'] == 'unknown' and check['reason'] == 'observation_not_at_asserted_date'
+                    and any(row['comparison_date'] == row['observed_date'] == '2025-01-02'
                             for row in check['evidence']) for check in first.get('temporal_checks', {}).values())
                 entry['runtime_time_rejection'] = correct_time_rejection
                 entry['passed'] = entry['passed'] and correct_time_rejection

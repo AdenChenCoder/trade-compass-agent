@@ -256,7 +256,9 @@ def observation_time(value, zone="Asia/Shanghai"):
     if not isinstance(value, str):
         return None
     try:
-        if len(value) == 10:
+        if len(value) in {8, 10}:
+            # ISO basic dates (YYYYMMDD), used by trading-date providers,
+            # have the same date precision as YYYY-MM-DD, not midnight time.
             return date.fromisoformat(value).isoformat()
         stamp = datetime.fromisoformat(value)
         if stamp.tzinfo is None:

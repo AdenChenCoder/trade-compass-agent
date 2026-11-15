@@ -88,8 +88,10 @@ in the linked regression tests, not in expanding prose exception lists.
   observation check preserves the existing ownership contract for account
   snapshots. Display dates keep the display timezone; a different displayed day
   cannot by itself establish that a task-time observation is stale or current.
-  Date-only observations keep their supplied calendar date without an invented
-  instant. A present research opinion is not itself a new market measurement;
+  Date-only observations, including provider `YYYYMMDD` and ISO `YYYY-MM-DD`,
+  keep their supplied calendar date without an invented instant. Newly derived
+  evidence preserves this precision; original receipts and already saved
+  reports are not rewritten. A present research opinion is not itself a new market measurement;
   its independently asserted empirical premises still need their own support.
   These checks stay in internal evidence, never reader copy.
   Each statement

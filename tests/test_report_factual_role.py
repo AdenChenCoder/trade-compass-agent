@@ -41,6 +41,8 @@ def assess(payload, verdict="entailed"):
     ('Asia/Shanghai', '2025-01-02', '2025-01-01T16:00:00+00:00', True, '2025-01-02'),
     ('UTC', '2025-01-02', '2025-01-02', True, '2025-01-02'),
     ('America/Los_Angeles', '2025-01-02', '2025-01-02', True, '2025-01-02'),
+    ('UTC', '2025-01-02', '20250102', True, '2025-01-02'),
+    ('UTC', '2025-01-03', '20250102', False, '2025-01-02'),
 ])
 def test_current_observation_compares_in_task_calendar_without_changing_display(tmp_path, zone, day, stamp, supported, comparison_day):
     raw = json.dumps({'symbol': '002415', 'price': 22, 'timestamp': stamp})
@@ -105,6 +107,7 @@ def test_reader_referents_resolve_ellipsis_without_becoming_source_evidence():
     assert '先22，后23。' in result.artifact['reader_body']
 
 
+@pytest.mark.parametrize('zone', ['Asia/Shanghai', 'UTC'])
 @pytest.mark.parametrize('kind', ['observation', 'judgment'])
 @pytest.mark.parametrize('bound', [False, True])
 @pytest.mark.parametrize('scope,reference,as_of,supported', [
@@ -114,7 +117,7 @@ def test_reader_referents_resolve_ellipsis_without_becoming_source_evidence():
     ('reference_date', '2025-01-02', None, False),
     ('other', '2025-01-02', '20250101', True),
 ])
-def test_owned_date_controls_final_publication_even_when_model_approves(tmp_path, kind, bound, scope, reference, as_of, supported):
+def test_owned_date_controls_final_publication_even_when_model_approves(tmp_path, zone, kind, bound, scope, reference, as_of, supported):
     raw = json.dumps({'symbol': '600928', 'pb': 0.8, 'as_of': as_of,
                       '_meta': {'timestamp': '2025-01-02T15:00:00+08:00'}})
     def writer(system, user):
@@ -143,7 +146,8 @@ def test_owned_date_controls_final_publication_even_when_model_approves(tmp_path
             result['assessments'][0]['checks']['quantity'] = 'not_applicable'
         return json.dumps(result)
     result = publish_report(task='说明所给市净率。', draft='', tool_results=[('get_fundamentals', raw)],
-        run_scope='owned-date', call=writer, fact_review_call=checker, max_calls=2, reference_date=reference)
+        run_scope='owned-date', call=writer, fact_review_call=checker, max_calls=2,
+        reference_date=reference, reference_timezone=zone)
     assert result.artifact['review_valid']
     assert (result.verification['status'] == 'complete') is supported
     assert ('0.8倍' in result.artifact['reader_body']) is supported
@@ -319,7 +323,9 @@ def test_incomplete_dimension_review_is_unavailable_not_a_successful_fact_check(
 
 
 @pytest.mark.parametrize('as_of,expected,utc_date', [
-    ('20261111', '2026-11-11', '2026-11-10'), ('20261112', '2026-11-12', '2026-11-11'), (None, None, None)])
+    ('20261111', '2026-11-11', '2026-11-11'), ('20261112', '2026-11-12', '2026-11-12'),
+    ('2026-11-12', '2026-11-12', '2026-11-12'),
+    ('2026-11-12T00:00:00+08:00', '2026-11-12', '2026-11-11'), (None, None, None)])
 def test_review_observation_date_comes_from_source_not_retrieval(as_of, expected, utc_date):
     from trade_compass_agent.runtime.report_contract import EvidenceCatalog
     raw = json.dumps({'_meta': {'timestamp': '2026-11-12T15:10:51'},
