@@ -239,7 +239,7 @@ Before the checks, classify support_basis by what the SOURCES establish for this
 exact predicate, not by the presence of related numbers. direct means the source
 records the asserted property or relationship itself. calculated means a supplied,
 runtime-validated calculation establishes it. reasoned means a bounded analytical
-evaluation, proposal or evidence limitation, not an observed event. none means
+evaluation, proposal or evidence limitation, not an observed event. unknown means
 the sources do not establish it; not_applicable is only non-empirical discourse.
 A measured pattern can support a bounded interpretation while leaving its actors
 and causes unobserved. Such an actor or causal assertion cannot use reasoned or
@@ -290,7 +290,7 @@ merely because the observed change is described qualitatively. If the actual
 observation time is unknown or incompatible, preserve that uncertainty instead.
 Return only JSON: {"assessments":[{"id":"input id","time_evidence":["exact source fact id"],
 "comparison":"brief target-claim evidence comparison, at most two short sentences",
-"support_basis":"direct|calculated|reasoned|none|not_applicable",
+"support_basis":"direct|calculated|reasoned|unknown|not_applicable",
 "checks":{"identity_scope":"entailed|contradicted|unknown|not_applicable",
 "time":"entailed|contradicted|unknown|not_applicable",
 "quantity":"entailed|contradicted|unknown|not_applicable",

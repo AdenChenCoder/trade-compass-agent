@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 
-SUPPORT_BASES = {"direct", "calculated", "reasoned", "none", "not_applicable"}
+SUPPORT_BASES = {"direct", "calculated", "reasoned", "unknown", "not_applicable"}
 
 
 def check_support_basis(statement, assessment):
@@ -17,7 +17,7 @@ def check_support_basis(statement, assessment):
         return {"status": "unavailable", "basis": None,
                 "reason": "support_basis_missing" if basis is None else "support_basis_invalid"}
     kind = statement["assertion_kind"]
-    if basis == "none":
+    if basis == "unknown":
         return {"status": "unknown", "basis": basis, "reason": "support_not_established"}
     if basis == "not_applicable" and kind != "discourse":
         return {"status": "unknown", "basis": basis, "reason": "substantive_commitment_needs_support"}

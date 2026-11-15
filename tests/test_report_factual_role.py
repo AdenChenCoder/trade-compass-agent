@@ -37,7 +37,7 @@ def assess(payload, verdict="entailed"):
 @pytest.mark.parametrize('assertion_kind', ['actor_activity', 'causal_relation'])
 @pytest.mark.parametrize('basis,supported,unavailable', [
     ('direct', True, False), ('reasoned', False, False), ('calculated', False, False),
-    ('none', False, False), ('not_applicable', False, False),
+    ('unknown', False, False), ('not_applicable', False, False),
     (None, False, True), ('not-a-basis', False, True), ([], False, True),
 ])
 def test_empirical_commitment_cannot_publish_on_analysis_basis(tmp_path, assertion_kind, basis, supported, unavailable):
