@@ -44,6 +44,12 @@ in the linked regression tests, not in expanding prose exception lists.
   cost interval is a dated estimate, separate from an account's holding cost or
   an observed transaction price. Preserve its method and scope through bindings,
   review and saved reports; a change in that estimate is not a stock return.
+  Choosing numeric bindings does not withdraw other owned sources from review.
+  Original announcements, source qualifications and successful first-party read
+  results remain available, including an empty result with no numeric rows.
+  Model drafts and excluded sample/error sources do not become evidence.
+  Large batch views still retain only explicitly selected instrument subtrees;
+  source visibility cannot replace a bound value's original observation date.
   Adjacent bound fields retain a runtime formatting separator, so a date and
   amount cannot concatenate into a different token. This whitespace is part of
   the exact reviewed and saved body; it supplies no factual or connective meaning.

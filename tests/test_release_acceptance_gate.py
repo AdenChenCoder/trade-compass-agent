@@ -16,6 +16,22 @@ MODEL = runpy.run_path(str(ROOT / "scripts/release_model_acceptance.py"))
 NARRATIVE = runpy.run_path(str(ROOT / 'scripts/report_narrative_acceptance.py'))
 
 
+def test_rule_controls_preserve_identical_body_and_missing_zero_one_many_sources():
+    names = ['empty_rule_result', 'missing_rule_result_as_empty',
+        'one_rule_alert_as_empty', 'multiple_rule_alerts_as_empty']
+    cases = [NARRATIVE['SCOPE_CASES'][name] for name in names]
+    assert len({row[0] for row in cases}) == len({row[3] for row in cases}) == 1
+    assert [row[1] for row in cases] == [True, False, False, False]
+    data = [json.loads(row[2][0][1])['data'] for row in cases]
+    assert data == [{'alerts': []}, {}, {'alerts': ['条件A触发']}, {'alerts': ['条件A触发', '条件B触发']}]
+    from trade_compass_agent.runtime.report_contract import EvidenceCatalog
+    from trade_compass_agent.runtime.report_transport import review_receipts
+    for name, row in zip(names, cases, strict=True):
+        catalog = EvidenceCatalog.build(row[2], run_scope=name)
+        assert not catalog.facts
+        assert [(r['tool'], r['result']) for r in review_receipts(catalog, [])] == row[2]
+
+
 def test_profile_controls_change_evidence_without_changing_the_reader_claim():
     cases = NARRATIVE['SCOPE_CASES']
     missing = cases['profile_property_in_plan_missing']
@@ -82,6 +98,7 @@ def test_qualitative_time_control_checks_completed_temporal_outcome(
     ('compound_actor_from_activity', '结合上述开盘价、收盘价及0.594倍量比，可以确定该日非主力出货。'),
     ('ma_order_mixed_as_bullish', '002415在2025-01-02的均线呈多头排列。'),
     ('ma_order_bullish_denied', '002415在2025-01-02的均线尚未构成多头排列。'),
+    ('missing_rule_result_as_empty', '所给规则扫描没有退出预警。'),
     ('profile_property_in_plan_missing', '上方23元/股为前期成交密集区，突破仍需观察成交量。'),
     ('estimate_as_measured_profile', '002415在2025-01-02的逐价成交量实测证实，23元附近是该日成交最密集的价位。'),
 ])
@@ -97,6 +114,16 @@ def test_thesis_negative_requires_its_own_completed_inferential_rejection(
             {'id': 'c1', 'checks': {'time': 'entailed', 'support': 'entailed', dimension: target_status}}]}}
     result = NARRATIVE['target_rejection_check'](first, case)
     assert result['passed'] is passed and result['target_assertion_ids'] == ['c1']
+
+
+@pytest.mark.parametrize('case', ['one_rule_alert_as_empty', 'multiple_rule_alerts_as_empty'])
+@pytest.mark.parametrize('status,passed', [('entailed', False), ('unknown', False), ('contradicted', True)])
+def test_nonempty_alert_result_requires_completed_contradiction(case, status, passed):
+    first = {'review_valid': True, 'factual_assessment_errors': {},
+        'factual_review_input': {'statements': [
+            {'id': 'c0', 'context_id': 'p0', 'text': '所给规则扫描没有退出预警。'}]},
+        'factual_review': {'assessments': [{'id': 'c0', 'checks': {'support': status}}]}}
+    assert NARRATIVE['target_rejection_check'](first, case)['passed'] is passed
 
 
 def test_thesis_numeric_negative_requires_a_contradiction_at_the_known_quantity():

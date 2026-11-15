@@ -8,12 +8,29 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 
-from trade_compass_agent.runtime.report_contract import EvidenceCatalog, ReportDocument
+from trade_compass_agent.runtime.report_contract import (
+    EvidenceCatalog, ReportDocument, RECORD_EVIDENCE_TOOLS, excluded_observation,
+)
+
+
+def _owned_read_result(receipt):
+    """A real first-party read can return no numeric rows, including empty lists."""
+    if receipt['tool'] not in RECORD_EVIDENCE_TOOLS:
+        return False
+    result = json.loads(receipt['result'])
+    rows = [result]
+    if isinstance(result.get('data'), dict):
+        rows.append(result['data'])
+    return all(not excluded_observation(row) and row.get('ok') is not False
+        and row.get('available') is not False and row.get('unavailable') is not True for row in rows)
 
 
 def review_receipts(catalog, facts):
     """Scope batch-bar evidence by owned JSON pointers, never by prose.
 
+    All owned non-batch sources remain available, even when the writer selected
+    no numeric binding from them. A successful first-party read may have no
+    numeric rows. Model drafts and excluded sources do not become evidence.
     Preserve each selected instrument's entire original subtree and all batch
     metadata. A root-level reference requires the full receipt. Original bytes
     and their hash remain in the publication artifact; a view is explicitly
@@ -22,13 +39,15 @@ def review_receipts(catalog, facts):
     by_receipt = {}
     for fact in facts:
         by_receipt.setdefault(fact.receipt_id, []).append(fact)
+    owned_sources = {fact.receipt_id for fact in catalog.facts.values()}
     result = []
     for receipt in catalog.receipts:
         selected = by_receipt.get(receipt["id"])
-        if not selected:
-            continue
         if receipt["tool"] != "batch_get_bars":
-            result.append(receipt)
+            if receipt['id'] in owned_sources or _owned_read_result(receipt):
+                result.append(receipt)
+            continue
+        if not selected:
             continue
         data = json.loads(receipt["result"])
         branches = data.get("results")

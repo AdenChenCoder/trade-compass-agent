@@ -232,9 +232,20 @@ EVIDENCE_TOOLS = frozenset({
     "search_stock_news", "batch_search_news", "search_announcements", "search_concept_boards", "get_events",
 })
 PORTFOLIO_OPERATIONS = {"builtin.check_positions", "builtin.refresh_market_prices", "builtin.scan_portfolio_exits"}
+RECORD_EVIDENCE_TOOLS = EVIDENCE_TOOLS | PORTFOLIO_OPERATIONS | {"builtin.check_exit_signals"}
 _NON_OBSERVATIONS = {"query", "arguments", "params", "prompt", "analysis", "summary",
                      "reasoning", "warnings", "error", "retry_hint", "hint", "note",
                      "interpretation", "task", "available", "_meta", "metadata"}
+
+
+def excluded_observation(value):
+    """Producer-declared exclusions, shared by fact and receipt selection."""
+    meta = value.get('_meta') if isinstance(value.get('_meta'), dict) else {}
+    return (any(value.get(k) or meta.get(k) for k in ('is_sample', 'is_synthetic', 'synthetic', 'error'))
+        or any(isinstance(value.get(k), str) and value[k] in {'sample', 'synthetic', 'disabled'}
+               for k in ('source', 'provider', 'data_status'))
+        or meta.get('source') in {'sample', 'synthetic'}
+        or value.get('has_real_fundamentals') is False)
 
 
 def _number(value) -> Decimal:
@@ -351,10 +362,7 @@ class EvidenceCatalog:
         if not isinstance(value, dict):
             return
         meta = value.get("_meta") if isinstance(value.get("_meta"), dict) else {}
-        if (any(value.get(k) or meta.get(k) for k in ("is_sample", "is_synthetic", "synthetic", "error"))
-                or any(isinstance(value.get(k), str) and value[k] in {"sample", "synthetic", "disabled"} for k in ("source", "provider", "data_status"))
-                or meta.get("source") in {"sample", "synthetic"}
-                or value.get("has_real_fundamentals") is False):
+        if excluded_observation(value):
             return
         context = {**inherited}
         parts = path.split("/")

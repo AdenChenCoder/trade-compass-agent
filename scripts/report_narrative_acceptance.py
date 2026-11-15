@@ -95,7 +95,18 @@ _chip_estimate = [('get_chip_distribution', json.dumps({'symbol': '002415', 'dat
     '_meta': {'source': 'eastmoney_cyq_algorithm', 'timestamp': '2025-01-03T15:10:00+08:00'},
     'avg_cost': 22, 'cost_90_low': 20, 'cost_90_high': 23, 'cost_70_low': 20.5, 'cost_70_high': 21.5,
     'concentration': '集中', 'note': '基于日K线与换手率的筹码成本分布算法估算，不是逐价成交量实测。'}))]
+_rule_task = '仅报告所给规则扫描是否返回退出预警；缺少结果时明确不能判断。'
+_rule_result = '所给规则扫描没有退出预警。'
+def _rule_receipts(data):
+    return [('builtin.check_exit_signals', json.dumps({'message': '规则扫描结果', 'data': data}))]
+
+
 SCOPE_CASES = {
+    'empty_rule_result': (_rule_result, True, _rule_receipts({'alerts': []}), _rule_task),
+    'missing_rule_result_as_empty': (_rule_result, False, _rule_receipts({}), _rule_task),
+    'one_rule_alert_as_empty': (_rule_result, False, _rule_receipts({'alerts': ['条件A触发']}), _rule_task),
+    'multiple_rule_alerts_as_empty': (_rule_result, False,
+        _rule_receipts({'alerts': ['条件A触发', '条件B触发']}), _rule_task),
     'profile_property_in_plan_missing': (_chip_plan, False, _chip_bars, '根据所给日期的资料给出后续观察位，并说明依据。'),
     'profile_property_in_plan_supported': (_chip_plan, True, _profile, '根据所给日期的资料给出后续观察位，并说明依据。'),
     'estimated_pressure_plan': ('002415在2025-01-02的筹码算法估算中，90%成本区间上沿为23元/股；'
@@ -373,6 +384,9 @@ def qualitative_time_check_completed(first, supported):
 
 
 REJECTION_TARGETS = {
+    'missing_rule_result_as_empty': ('没有退出预警', 'support', {'unknown', 'contradicted'}),
+    'one_rule_alert_as_empty': ('没有退出预警', 'support', {'contradicted'}),
+    'multiple_rule_alerts_as_empty': ('没有退出预警', 'support', {'contradicted'}),
     'profile_property_in_plan_missing': ('23元/股为前期成交密集区', 'support', {'unknown', 'contradicted'}),
     'estimate_as_measured_profile': ('逐价成交量实测证实', 'support', {'unknown', 'contradicted'}),
     'ma_order_mixed_as_bullish': ('均线呈多头排列', 'support', {'unknown', 'contradicted'}),
