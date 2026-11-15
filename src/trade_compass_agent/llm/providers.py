@@ -29,6 +29,7 @@ _request_cancelled: ContextVar[Callable[[], bool] | None] = ContextVar("llm_requ
 _maintenance_mode: ContextVar[bool] = ContextVar("llm_maintenance_mode", default=False)
 _response_output_limit: ContextVar[int | None] = ContextVar("llm_response_output_limit", default=None)
 _response_schema: ContextVar[dict[str, Any] | None] = ContextVar("llm_response_schema", default=None)
+_precise_response: ContextVar[bool] = ContextVar("llm_precise_response", default=False)
 
 
 class LLMExecutionCancelled(BaseException):
@@ -83,16 +84,23 @@ def llm_request_deadline(deadline: float, *, is_cancelled: Callable[[], bool] | 
 
 
 @contextmanager
-def llm_response_contract(*, max_tokens: int, response_schema: dict[str, Any] | None = None):
-    """Bound a read-only response without changing its reasoning mode."""
+def llm_response_contract(*, max_tokens: int, response_schema: dict[str, Any] | None = None,
+                          precise: bool = False):
+    """Bound a response and optionally select precise sampling, retaining reasoning.
+
+    The Qwen 3.5/3.6 precise-task profile is request-scoped. Nested bounds inherit
+    it; neither a completed call nor an exception may change ordinary chat.
+    """
     parent_limit = _response_output_limit.get()
     limit_token = _response_output_limit.set(min(parent_limit, max_tokens) if parent_limit is not None else max_tokens)
     schema_token = _response_schema.set(response_schema)
+    precise_token = _precise_response.set(_precise_response.get() or precise)
     try:
         yield
     finally:
         _response_output_limit.reset(limit_token)
         _response_schema.reset(schema_token)
+        _precise_response.reset(precise_token)
 
 
 @contextmanager
@@ -717,8 +725,13 @@ class OpenAIChatClient:
         if is_lmstudio_qwen(self.name, self.model) and not raw:
             # Qwen's general thinking profile; generic low-temperature decoding
             # can exhaust the output budget without reaching a final answer.
-            kwargs.update(temperature=1.0, top_p=0.95,
-                          presence_penalty=0.0 if "qwen3.8" in self.model.lower() else 1.5)
+            # Exact JSON and evidence checks are precision tasks, not general
+            # creative generation. Keep the official precision profile scoped
+            # to its known model families; no global model setting changes.
+            precise = _precise_response.get() and any(
+                family in self.model.lower() for family in ('qwen3.5', 'qwen3.6'))
+            kwargs.update(temperature=0.6 if precise else 1.0, top_p=0.95,
+                          presence_penalty=0.0 if precise or "qwen3.8" in self.model.lower() else 1.5)
             kwargs["extra_body"] = {**kwargs.get("extra_body", {}), "top_k": 20, "repeat_penalty": 1.0}
         audit = LLMCallAudit(
             db_path=getattr(self, "_usage_db_path", None),
@@ -956,7 +969,7 @@ def create_local_report_fact_check(config: AppConfig, *, is_cancelled=None):
             client = create_chat_client(review_config)
         mode_token = _maintenance_mode.set(False)
         try:
-            with llm_response_contract(max_tokens=16384):
+            with llm_response_contract(max_tokens=16384, precise=True):
                 result = client.stream_complete([ChatMessage(role="system", content=system),
                     ChatMessage(role="user", content=user)], tools=None, on_delta=lambda _: None,
                     is_cancelled=is_cancelled)

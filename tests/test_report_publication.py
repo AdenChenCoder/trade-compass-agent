@@ -20,6 +20,8 @@ def test_generation_schema_allows_empty_items_only_with_owned_execution(executed
         "timestamp": "2026-11-10T10:00:00+08:00"}))] if executed else RECEIPTS
     def call(system, user):
         payload = json.loads(user)
+        from trade_compass_agent.llm.providers import _precise_response
+        assert _precise_response.get() is (reader_prose or 'schema' not in payload)
         if "schema" in payload:
             from trade_compass_agent.llm.providers import _response_schema, _response_output_limit, _maintenance_mode
             assert _response_schema.get() == (None if reader_prose else payload["schema"])

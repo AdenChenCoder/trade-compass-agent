@@ -492,7 +492,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
             # schema and bounded repair, without forcing a closed-thinking raw
             # template or applying a JSON grammar to the reasoning stream.
             # Internal evidence serialization retains its maintenance contract.
-            mode = (llm_response_contract(max_tokens=16384) if reader_prose else
+            mode = (llm_response_contract(max_tokens=16384, precise=True) if reader_prose else
                     llm_maintenance_mode(max_tokens=16384, response_schema=payload["schema"]))
             with mode:
                 raw = call(compose_prompt + (_REPAIR if attempts else ""), json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
@@ -681,7 +681,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 # decisions cannot become factual evidence for that specialist.
                 coverage_review_input = ({**review_input, "inferences": [], "receipts": []}
                                          if fact_call else review_input)
-                review = _json_value(call(_REVIEW, json.dumps(coverage_review_input, ensure_ascii=False, separators=(",", ":"))))
+                with llm_response_contract(max_tokens=16384, precise=True):
+                    review = _json_value(call(_REVIEW, json.dumps(coverage_review_input, ensure_ascii=False, separators=(",", ":"))))
                 check_active()
                 rows = review["reviews"]
                 coverage = review["coverage"]

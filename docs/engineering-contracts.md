@@ -63,6 +63,13 @@ in the linked regression tests, not in expanding prose exception lists.
   and the final structured response. A smaller caller cap still wins. This does
   not extend the parent deadline, permit more calls or allow an incomplete
   response to become an approval; normal scenes must still finish in time.
+  Reader writing, body/factual review and task-coverage review explicitly request
+  the Qwen 3.5/3.6 precision sampling profile (temperature 0.6, presence penalty 0)
+  while retaining reasoning, token caps and cancellation. General chat and raw
+  non-thinking maintenance keep their existing profiles. Scope the request through
+  nested calls and restore it on failure; never mutate the loaded model's settings.
+  This adapts the model's [official task-specific sampling guidance](https://huggingface.co/Qwen/Qwen3.6-35B-A3B),
+  not a claim that a sampling profile guarantees factual correctness.
 - Report composition and task-coverage review share a maximum of four model calls. Unused
   structural-repair capacity may fund one feedback revision and a fresh review.
   This applies to both reader paragraphs and internal evidence/learning documents;

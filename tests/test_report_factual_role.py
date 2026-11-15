@@ -1123,6 +1123,7 @@ def test_local_reviewer_routes_locally_without_tools_retries_or_deadline_reset(t
         def stream(messages, **kwargs):
             invocations.append(kwargs)
             assert not providers._maintenance_mode.get()
+            assert providers._precise_response.get()
             assert providers._response_output_limit.get() == 16384
             assert providers._remaining_request_time() <= 10
             assert kwargs["tools"] is None and kwargs["is_cancelled"] is cancelled
@@ -1137,6 +1138,7 @@ def test_local_reviewer_routes_locally_without_tools_retries_or_deadline_reset(t
         assert callback("review", "data") == '{"assessments":[]}'
         callback("review again", "data")
     assert len(configs) == 1 and len(invocations) == 2
+    assert not providers._precise_response.get()
     actual = configs[0]
     assert actual.llm.provider == "lmstudio" and actual.llm.model == "local-fact-model"
     assert actual.llm.api_key_env == "" and actual.llm.max_retries == 0

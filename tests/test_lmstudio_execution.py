@@ -89,8 +89,9 @@ def test_schema_maintenance_preserves_closed_thinking_template_and_enforces_gram
 
 @pytest.mark.parametrize("model", ["qwen3.6-35b-a3b", "qwen3.8-27b"])
 @pytest.mark.parametrize("parent_limit", [8192, 32768])
-def test_bounded_natural_writing_keeps_reasoning_private_without_raw_template(monkeypatch, tmp_path, model, parent_limit):
-    from trade_compass_agent.llm.providers import llm_response_contract, _response_output_limit
+@pytest.mark.parametrize('precise', [False, True])
+def test_bounded_natural_writing_keeps_reasoning_private_without_raw_template(monkeypatch, tmp_path, model, parent_limit, precise):
+    from trade_compass_agent.llm.providers import llm_response_contract, _response_output_limit, _precise_response
     requests = []
     value = '{"schema_version":1,"items":[]}'
     def handler(request):
@@ -104,16 +105,20 @@ def test_bounded_natural_writing_keeps_reasoning_private_without_raw_template(mo
     client = OpenAIChatClient(model=model, api_key="lmstudio", name="lmstudio",
                              base_url="http://localhost:1234/v1", usage_db_path=tmp_path / "usage.db")
     deltas = []
-    with llm_response_contract(max_tokens=parent_limit):
+    with llm_response_contract(max_tokens=parent_limit, precise=precise):
         with llm_response_contract(max_tokens=16384):
+            assert _precise_response.get() is precise
             result = client.stream_complete([ChatMessage(role="user", content="组织报告正文")], on_delta=deltas.append)
         assert _response_output_limit.get() == parent_limit
     assert requests[0].url.path == "/v1/chat/completions"
     body = json.loads(requests[0].content)
     assert "prompt" not in body and "response_format" not in body and "tools" not in body
     assert body["max_tokens"] == min(parent_limit, 16384)
+    assert body['temperature'] == (0.6 if precise and '3.6' in model else 1.0)
+    assert body['presence_penalty'] == (0.0 if precise or '3.8' in model else 1.5)
     assert result.content == "".join(deltas) == value
     assert _response_output_limit.get() is None
+    assert not _precise_response.get()
 
 
 @pytest.mark.parametrize("model", ["qwen3.6-35b-a3b", "qwen3.8-27b"])
@@ -150,13 +155,85 @@ def test_local_semantic_review_uses_private_reasoning_inside_formatting_context(
             assert providers._maintenance_mode.get()
             assert providers._response_output_limit.get() == parent_limit
             assert providers._response_schema.get() is outer_schema
+            assert not providers._precise_response.get()
     assert not providers._maintenance_mode.get() and providers._response_output_limit.get() is None
     assert len(requests) == 1  # No retry or second verdict after reasoning exhaustion.
     assert requests[0].url.host == "localhost" and requests[0].url.path == "/v1/chat/completions"
     body = json.loads(requests[0].content)
     assert body["model"] == model and body["max_tokens"] == min(parent_limit, 16384)
+    assert body['temperature'] == (0.6 if '3.6' in model else 1.0) and body['presence_penalty'] == 0.0
     assert "prompt" not in body and "response_format" not in body and "tools" not in body
     assert "private evidence comparison" not in json.dumps(body)
+
+
+@pytest.mark.parametrize('model,summary_temperature,summary_penalty', [
+    ('qwen3.6-35b-a3b', 0.7, 1.5), ('qwen3.5-35b-a3b', 0.3, None),
+])
+def test_precise_sampling_does_not_leak_to_chat_or_raw_maintenance_after_failure(
+    monkeypatch, tmp_path, model, summary_temperature, summary_penalty,
+):
+    from trade_compass_agent.llm.providers import llm_response_contract, _precise_response
+    requests = []
+    def handler(request):
+        requests.append(json.loads(request.content))
+        choice = ({'index': 0, 'text': 'summary', 'finish_reason': 'stop'}
+                  if request.url.path == '/v1/completions' else
+                  {'index': 0, 'delta': {'content': '{}'}, 'finish_reason': 'stop'})
+        return httpx.Response(200, text=_sse(choice), headers={'content-type': 'text/event-stream'})
+    monkeypatch.setattr('trade_compass_agent.llm.providers._usage_http_client',
+                        lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    client = OpenAIChatClient(model=model, api_key='local', name='lmstudio',
+        base_url='http://localhost:1234/v1', usage_db_path=tmp_path/'usage.db')
+    messages = [ChatMessage(role='user', content='{}')]
+    client.stream_complete(messages)
+    with pytest.raises(RuntimeError, match='scoped failure'):
+        with llm_response_contract(max_tokens=256, precise=True):
+            with llm_response_contract(max_tokens=4096):
+                client.stream_complete(messages)
+            with llm_maintenance_mode(max_tokens=128):
+                assert client.stream_complete(messages).content == 'summary'
+            assert _precise_response.get()
+            raise RuntimeError('scoped failure')
+    assert not _precise_response.get()
+    client.stream_complete(messages)
+    assert len(requests) == 4
+    assert [(r['temperature'], r.get('presence_penalty')) for r in requests] == [
+        (1.0, 1.5), (0.6, 0.0), (summary_temperature, summary_penalty), (1.0, 1.5)]
+    assert requests[1]['max_tokens'] == 256 and requests[2]['max_tokens'] == 128
+    assert all('tools' not in row for row in requests)
+
+
+def test_concurrent_chat_does_not_inherit_another_reports_precision_scope(monkeypatch, tmp_path):
+    from trade_compass_agent.llm.providers import llm_response_contract
+    requests, errors = [], []
+    entered, release = threading.Event(), threading.Event()
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, text=_sse(
+            {'index': 0, 'delta': {'content': '{}'}, 'finish_reason': 'stop'}),
+            headers={'content-type': 'text/event-stream'})
+    monkeypatch.setattr('trade_compass_agent.llm.providers._usage_http_client',
+                        lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    client = OpenAIChatClient(model='qwen3.6-35b-a3b', api_key='local', name='lmstudio',
+        base_url='http://localhost:1234/v1', usage_db_path=tmp_path/'usage.db')
+    def report():
+        try:
+            with llm_response_contract(max_tokens=256, precise=True):
+                entered.set()
+                assert release.wait(2)
+                client.stream_complete([ChatMessage(role='user', content='report')])
+        except BaseException as exc:
+            errors.append(exc)
+    worker = threading.Thread(target=report)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        client.stream_complete([ChatMessage(role='user', content='ordinary chat')])
+    finally:
+        release.set()
+        worker.join(2)
+    assert not worker.is_alive() and not errors and len(requests) == 2
+    assert [(r['temperature'], r['presence_penalty']) for r in requests] == [(1.0, 1.5), (0.6, 0.0)]
 
 
 @pytest.mark.parametrize("value,finish", [("unstructured output", "stop"), ('{"items":[]}', "stop"),
