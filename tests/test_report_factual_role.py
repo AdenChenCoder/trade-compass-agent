@@ -434,6 +434,74 @@ def test_partial_review_can_repair_a_verified_error_once_without_resampling_anno
     assert saved['published_text'] == result.text and saved['receipts'] == result.artifact['receipts']
 
 
+@pytest.mark.parametrize('annotation_error', ['missing_witness', 'invalid_reference'])
+@pytest.mark.parametrize('retains_plan', [True, False])
+def test_incomplete_revision_keeps_verified_analysis_without_publishing_unreviewed_claims(
+    tmp_path, annotation_error, retains_plan,
+):
+    counts = {'writer': 0, 'body': 0, 'fact': 0}
+    plan_text = '后续继续观察，不能仅据这些价格认定趋势会延续。'
+    pending_text = '002415当前两次收盘观察的价格走高。'
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' not in payload:
+            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        counts['writer'] += 1
+        corrected = 'revision' in payload
+        ref = next(f['id'] for f in report_facts(payload) if f['metric'] == 'close')
+        price_parts = ([{'type': 'text', 'text': '所给观察日'}, {'type': 'value', 'ref': ref, 'field': 'date'},
+            {'type': 'text', 'text': '002415收盘价为'}, {'type': 'value', 'ref': ref, 'field': 'value_with_unit'}]
+            if corrected else [{'type': 'text', 'text': '002415收盘价为999元/股。'}])
+        items = [{'id': 'price', 'section': 'positions', 'type': 'paragraph', 'parts': price_parts, 'refs': [ref]}]
+        if corrected:
+            items.append({'id': 'pending', 'section': 'overview', 'type': 'paragraph',
+                'parts': [{'type': 'text', 'text': pending_text}], 'refs': [f['id'] for f in report_facts(payload) if f['metric'] == 'close']})
+        if not corrected or retains_plan:
+            items.append({'id': 'plan', 'section': 'plan', 'type': 'paragraph',
+                'parts': [{'type': 'text', 'text': plan_text}], 'refs': [ref]})
+        return json.dumps({'schema_version': 1, 'items': items})
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            counts['body'] += 1
+            reply = body_reply(payload)
+            for row in reply['paragraphs']:
+                if row['id'] == 'pending':
+                    row['parts'][0].update(assertion_kind='comparison', time_scope='reference_date')
+                elif row['id'] == 'plan':
+                    row['parts'][0].update(assertion_kind='judgment', kind='plan')
+            return json.dumps(reply)
+        counts['fact'] += 1
+        reply = assess(payload)
+        if counts['fact'] == 1:
+            reply['assessments'][0]['checks']['quantity'] = 'contradicted'
+        else:
+            pending = next(row['id'] for row in payload['statements'] if row['text'] == pending_text)
+            assessment = next(row for row in reply['assessments'] if row['id'] == pending)
+            assessment['time_evidence'] = [] if annotation_error == 'missing_witness' else ['not-owned']
+        return json.dumps(reply)
+    result = publish_report(task='报告观察价格与后续观察态度。', draft='', tool_results=RECEIPTS,
+        run_scope='incomplete-correction', call=writer, fact_review_call=checker, max_calls=4,
+        reference_date='2025-01-02')
+    assert counts == {'writer': 2, 'body': 2, 'fact': 2}
+    assert result.artifact['model_calls'] == result.artifact['call_limit'] == 8
+    assert result.artifact['selected_attempt'] == int(retains_plan)
+    assert result.verification['status'] == 'incomplete' and result.verification['report'] == 'partial'
+    assert plan_text in result.text and '999元/股' not in result.text and pending_text not in result.text
+    assert ('22元/股' in result.artifact['reader_body']) is retains_plan
+    revised = result.artifact['revision_attempts'][1]
+    assert not revised['review_valid'] and len(revised['factual_assessment_errors']) == 1
+    assert next(row for row in revised['review']['reviews'] if row['id'] == 'price')['supported']
+    assert next(row for row in revised['review']['reviews'] if row['id'] == 'pending')['supported'] is False
+    if retains_plan:
+        assert not result.artifact['review_valid'] and result.artifact['factual_assessment_errors']
+        assert any(row['code'] == 'review_unavailable' for row in result.verification['findings'])
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text and saved['verification']['status'] == 'incomplete'
+    assert saved['receipts'] == result.artifact['receipts'] and len(saved['revision_attempts']) == 2
+
+
 def test_newer_fact_in_another_paragraph_cannot_refresh_an_old_bound_pb():
     receipts = [('get_fundamentals', json.dumps({'symbol': '600928', 'pb': 0.4572, 'as_of': '20261111'})),
                 ('get_fundamentals', json.dumps({'symbol': '600928', 'pe_ttm': 12, 'as_of': '20261112'}))]

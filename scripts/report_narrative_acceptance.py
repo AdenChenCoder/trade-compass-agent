@@ -346,20 +346,24 @@ def qualitative_time_check_completed(first, supported):
     return bool(timing) and (linked or semantic)
 
 
-THESIS_REJECTION_TARGETS = {
+REJECTION_TARGETS = {
     'thesis_judgment_false_premise': ('600928市净率为0.8倍', 'quantity', {'contradicted'}),
     'thesis_judgment_overclaim': ('这个估值足以保证持有不会亏损', 'support', {'unknown', 'contradicted'}),
+    'actor_absence_from_activity': ('这些统计证明非主力出货', 'support', {'unknown', 'contradicted'}),
+    'actor_absence_with_limitation': ('可以确定该观察日非主力出货', 'support', {'unknown', 'contradicted'}),
+    'actor_zero_missing': ('机构卖出额为0元', 'support', {'unknown', 'contradicted'}),
+    'compound_actor_from_activity': ('可以确定该日非主力出货', 'support', {'unknown', 'contradicted'}),
 }
 
 
-def thesis_rejection_check(first, name):
+def target_rejection_check(first, name):
     """Locate a frozen test predicate; an unrelated rejection cannot pass it.
 
     Exact text locates the known fixture only. The real assessor's completed
     dimensional verdict decides whether that predicate was correctly blocked.
     This helper does not interpret or classify production prose.
     """
-    quote, dimension, required = THESIS_REJECTION_TARGETS[name]
+    quote, dimension, required = REJECTION_TARGETS[name]
     statements = (first.get('factual_review_input') or {}).get('statements', [])
     contexts = dict.fromkeys(row['context_id'] for row in statements)
     targets = []
@@ -664,9 +668,9 @@ def main():
                     for row in (first.get('factual_review') or {}).get('assessments', []))
                 entry['classification_support_rejection'] = correct_support_rejection
                 entry['passed'] = entry['passed'] and correct_support_rejection
-            if name in THESIS_REJECTION_TARGETS and factual_client:
-                target_check = thesis_rejection_check(first, name)
-                entry['thesis_target_check'] = target_check
+            if name in REJECTION_TARGETS and factual_client:
+                target_check = target_rejection_check(first, name)
+                entry['target_rejection_check'] = target_check
                 entry['passed'] = entry['passed'] and target_check['passed']
             if name == 'utc_stale_observation' and factual_client:
                 correct_time_rejection = any(

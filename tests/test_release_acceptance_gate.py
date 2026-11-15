@@ -59,17 +59,21 @@ def test_qualitative_time_control_checks_completed_temporal_outcome(
     ('contradicted', 'entailed', 'time', True, False),
     ('contradicted', 'entailed', 'support', False, False),
 ])
+@pytest.mark.parametrize('case,target_text', [
+    ('thesis_judgment_overclaim', '我认为这个估值足以保证持有不会亏损。'),
+    ('compound_actor_from_activity', '结合上述开盘价、收盘价及0.594倍量比，可以确定该日非主力出货。'),
+])
 def test_thesis_negative_requires_its_own_completed_inferential_rejection(
-    target_status, unrelated_status, dimension, available, passed,
+    target_status, unrelated_status, dimension, available, passed, case, target_text,
 ):
     first = {'review_valid': True, 'factual_assessment_errors': {} if available else {'c1': {}},
         'factual_review_input': {'statements': [
             {'id': 'c0', 'context_id': 'p0', 'text': '按2025年1月2日的数据，600928市净率为0.8倍。'},
-            {'id': 'c1', 'context_id': 'p0', 'text': '我认为这个估值足以保证持有不会亏损。'}]},
+            {'id': 'c1', 'context_id': 'p0', 'text': target_text}]},
         'factual_review': {'assessments': [
             {'id': 'c0', 'checks': {'time': unrelated_status, 'support': 'entailed'}},
             {'id': 'c1', 'checks': {'time': 'entailed', 'support': 'entailed', dimension: target_status}}]}}
-    result = NARRATIVE['thesis_rejection_check'](first, 'thesis_judgment_overclaim')
+    result = NARRATIVE['target_rejection_check'](first, case)
     assert result['passed'] is passed and result['target_assertion_ids'] == ['c1']
 
 
@@ -81,12 +85,12 @@ def test_thesis_numeric_negative_requires_a_contradiction_at_the_known_quantity(
         'factual_review': {'assessments': [
             {'id': 'c0', 'checks': {'quantity': 'entailed'}},
             {'id': 'c1', 'checks': {'quantity': 'contradicted'}}]}}
-    result = NARRATIVE['thesis_rejection_check'](first, 'thesis_judgment_false_premise')
+    result = NARRATIVE['target_rejection_check'](first, 'thesis_judgment_false_premise')
     assert result['passed'] and result['target_assertion_ids'] == ['c0', 'c1']
     first['factual_review']['assessments'][1]['checks']['quantity'] = 'unknown'
-    assert not NARRATIVE['thesis_rejection_check'](first, 'thesis_judgment_false_premise')['passed']
+    assert not NARRATIVE['target_rejection_check'](first, 'thesis_judgment_false_premise')['passed']
     first['factual_review']['assessments'].pop()
-    assert not NARRATIVE['thesis_rejection_check'](first, 'thesis_judgment_false_premise')['passed']
+    assert not NARRATIVE['target_rejection_check'](first, 'thesis_judgment_false_premise')['passed']
 
 
 @pytest.mark.parametrize('selected', [['natural'], ['natural', 'reordered']])

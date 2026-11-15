@@ -143,7 +143,12 @@ in the linked regression tests, not in expanding prose exception lists.
   Persist this distinction and withhold its paragraph while preserving other
   independently verified analysis. A completed rejection elsewhere can justify
   the one existing genuine body revision; an annotation error alone cannot
-  trigger a review retry. The final selected report must complete all checks.
+  trigger a review retry. Normal completion and learning still require all
+  checks. An incomplete reader revision may retain independently approved
+  paragraphs despite another paragraph's annotation error; withhold that
+  paragraph and preserve the unavailable status, causes and prior supported
+  business sections. Do not replace useful revised analysis with an older
+  rejected body merely because its review envelope was complete.
   Each statement
   must be entailed; contradictory or unknown statements are withheld. Missing,
   malformed or unavailable assessments cannot fall back to writer approval.

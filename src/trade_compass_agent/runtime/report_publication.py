@@ -908,25 +908,31 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                       "required_gaps": [item.model_dump() for item in required_gaps]})
         # A failed correction cannot replace readable, verified analysis with
         # nothing, even if its JSON review itself was structurally valid.
-        def has_verified_content(attempt):
+        def verified_sections(attempt):
             accepted = {row["id"] for row in (attempt.artifact.get("review") or {}).get("reviews", []) if row["supported"]}
             accepted.update(key for key, value in attempt.artifact["execution_projections"].items()
                             if value.get("analysis_supported"))
-            if any(row["id"] in accepted and row["text"].strip()
-                   for row in (attempt.artifact.get("review_input") or {}).get("inferences", [])):
-                return True
+            useful = {row['id'] for row in (attempt.artifact.get('review_input') or {}).get('inferences', [])
+                      if row['id'] in accepted and row['text'].strip()}
             # Internal evidence documents also contain useful runtime-verified
             # observations/calculations. A failed revision must retain those.
             facts = {row["id"] for row in attempt.artifact["facts"]}
             blocked = {row["item_id"] for row in attempt.verification["findings"]}
-            return any(item["id"] not in blocked and (
+            items = (attempt.artifact.get('document') or {}).get('items', [])
+            useful.update(item['id'] for item in items if item["id"] not in blocked and (
                 item["type"] == "fact" and item["ref"] in facts
-                or item["type"] == "calculation" and item["id"] in attempt.artifact["calculations"])
-                for item in (attempt.artifact.get("document") or {}).get("items", []))
-        lost_analysis = (revised.verification["status"] != "complete"
-                         and has_verified_content(publication) and not has_verified_content(revised))
+                or item["type"] == "calculation" and item["id"] in attempt.artifact["calculations"]))
+            return {item['section'] for item in items if item['id'] in useful}
+        original_sections, revised_sections = verified_sections(publication), verified_sections(revised)
+        lost_analysis = bool(revised.verification["status"] != "complete"
+                             and original_sections and not revised_sections)
         changed_body = revised.artifact["candidate_body_sha256"] != candidate_body_sha256
-        selected = revised if revised.artifact["review_valid"] and changed_body and not lost_analysis else publication
+        # A local annotation error withholds its paragraph, not every other
+        # independently verified paragraph. Keep the incomplete status/error
+        # evidence, and retain every previously supported business section.
+        partial_reading = bool(reader_prose and revised.artifact['factual_assessment_errors']
+                               and revised_sections and original_sections <= revised_sections)
+        selected = revised if (revised.artifact["review_valid"] or partial_reading) and changed_body and not lost_analysis else publication
         keys = ("document", "verification", "review", "review_valid", "review_feedback_valid", "factual_assessment_errors", "review_input", "revision_input", "attempts", "published_text",
                 "candidate_body_sha256",
                 "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues", "bound_quantity_checks",
