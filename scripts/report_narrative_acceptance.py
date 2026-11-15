@@ -312,6 +312,26 @@ def finalize_acceptance(result, selected_cases):
                   and set(completed) == set(selected_cases) and all(row['passed'] is True for row in result['cases'])}
 
 
+def qualitative_time_check_completed(first, supported):
+    """Require a positive witness or a completed temporal rejection, never unavailability."""
+    if not first['review_valid'] or first.get('factual_assessment_errors'):
+        return False
+    expected_date = '2025-01-02' if supported else '2025-01-03'
+    timing = [check for check in first.get('temporal_checks', {}).values()
+              if check['scope'] == 'reference_date' and check['expected_date'] == expected_date]
+    linked = any(check['status'] == ('entailed' if supported else 'unknown')
+                 and any(row['comparison_date'] == '2025-01-02' for row in check['evidence'])
+                 for check in timing)
+    if supported:
+        return linked
+    # A complete assessor may identify the date mismatch itself. Evidence
+    # supporting the asserted current date does not exist in this negative;
+    # an empty supporting-witness list does not erase its completed rejection.
+    semantic = any(row.get('reported_checks', row['checks'])['time'] in {'unknown', 'contradicted'}
+                   for row in (first.get('factual_review') or {}).get('assessments', []))
+    return bool(timing) and (linked or semantic)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", type=Path, required=True)
@@ -581,14 +601,9 @@ def main():
                 entry['runtime_time_rejection'] = correct_time_rejection
                 entry['passed'] = entry['passed'] and correct_time_rejection
             if name in QUALITATIVE_TIME_CASES and factual_client:
-                timing = list(first.get('temporal_checks', {}).values())
-                required_status = 'entailed' if expected else 'unknown'
-                completed_witness = first['review_valid'] and not first.get('factual_assessment_errors') and any(
-                    check['scope'] == 'reference_date' and check['status'] == required_status
-                    and any(row['comparison_date'] == '2025-01-02' for row in check['evidence'])
-                    for check in timing)
-                entry['first_temporal_witness_completed'] = completed_witness
-                entry['passed'] = entry['passed'] and completed_witness
+                completed_check = qualitative_time_check_completed(first, expected)
+                entry['first_temporal_check_completed'] = completed_check
+                entry['passed'] = entry['passed'] and completed_check
             if name == 'ma_mixed_as_bullish' and factual_client:
                 correct_support_rejection = any(row['checks']['support'] in {'unknown', 'contradicted'}
                     for row in (first.get('factual_review') or {}).get('assessments', []))

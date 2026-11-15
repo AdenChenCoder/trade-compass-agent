@@ -30,6 +30,28 @@ def test_narrative_aggregation_requires_exact_completed_case_coverage(selected, 
     assert result['passed'] is passed and original['passed'] is False
 
 
+@pytest.mark.parametrize('supported,linked,time,available,current_scope,passed', [
+    (True, True, 'entailed', True, True, True),
+    (True, False, 'entailed', True, True, False),
+    (False, False, 'unknown', True, True, True),
+    (False, False, 'contradicted', True, True, True),
+    (False, False, 'entailed', True, True, False),
+    (False, True, 'entailed', True, True, True),
+    (False, False, 'contradicted', False, True, False),
+    (False, False, 'contradicted', True, False, False),
+])
+def test_qualitative_time_control_checks_completed_temporal_outcome(
+    supported, linked, time, available, current_scope, passed,
+):
+    first = {'review_valid': available, 'factual_assessment_errors': {} if available else {'c0': {}},
+        'temporal_checks': {'c0': {'scope': 'reference_date' if current_scope else 'other',
+            'expected_date': '2025-01-02' if supported else '2025-01-03',
+            'status': 'entailed' if supported else 'unknown',
+            'evidence': [{'comparison_date': '2025-01-02'}] if linked else []}},
+        'factual_review': {'assessments': [{'checks': {'time': time}}]}}
+    assert NARRATIVE['qualitative_time_check_completed'](first, supported) is passed
+
+
 @pytest.mark.parametrize('selected', [['natural'], ['natural', 'reordered']])
 def test_narrative_cli_finishes_after_real_source_selector_protocol(tmp_path, monkeypatch, selected):
     from trade_compass_agent.llm import providers
