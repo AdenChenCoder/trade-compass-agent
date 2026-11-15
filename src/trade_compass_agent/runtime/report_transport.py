@@ -73,6 +73,9 @@ class ReportTransport:
                 by_context[context] = group
                 groups.append(group)
             by_context[context]["rows"].append([self.aliases[original["id"]], original["value"], original["observed_at"]])
+            if original['kind'] == 'classification':
+                by_context[context].setdefault('display_values', {})[self.aliases[original['id']]] = (
+                    catalog.resolve(original['id']).display_value_with_unit)
         # Sharing literal context removes numeric dictionary joins altogether.
         # Keep exact null dates, values, units and provenance; an explicit order
         # table restores the input sequence independently of grouped presentation.
@@ -91,6 +94,13 @@ class ReportTransport:
             self.table["paragraph_rendering_example"] = {
                 "parts": [[ref, "subject"], "的", [ref, "label"], "为", [ref, "value_with_unit"], "。"],
                 "rendered": f"{sample.subject}的{sample.label}为{sample.display_value_with_unit}。",
+            }
+        categorical = next((fact for fact in catalog.facts.values() if fact.kind == 'classification'), None)
+        if categorical is not None:
+            ref = self.aliases[categorical.id]
+            self.table['categorical_rendering_example'] = {
+                'parts': [[ref, 'subject'], '的', [ref, 'label'], '为', [ref, 'value_with_unit'], '。'],
+                'rendered': f'{categorical.subject}的{categorical.label}为{categorical.display_value_with_unit}。',
             }
         dated = [fact for fact in catalog.facts.values() if fact.observed_at]
         if dated:

@@ -11,6 +11,55 @@ from trade_compass_agent.runtime.report_publication import publish_report
 from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items
 
 
+def test_category_display_is_available_before_writing_and_final_body_keeps_raw_evidence(tmp_path):
+    receipts = [('compute_ma', json.dumps({'symbol': '600928', 'timeframe': '1d',
+        '_meta': {'as_of': '2025-01-02'}, 'ma': {'MA5': 3.812, 'MA10': 3.815, 'MA20': 3.652},
+        'trend': 'mixed'}))]
+    expected = '600928在2025-01-02的均线为混合排列。'
+    seen = []
+    def writer(system, user):
+        payload = json.loads(user)
+        seen.append(payload)
+        if 'schema' not in payload:
+            assert payload['inferences'][0]['text'] == expected
+            return '{"reviews":[{"id":"answer","supported":true,"reason":"explicit double"}],"coverage":{"complete":true,"missing":[]}}'
+        group = next(g for g in payload['facts'] if g['kind'] == 'classification')
+        ref, raw, stamp = group['rows'][0]
+        assert raw == 'mixed' and stamp == '2025-01-02'
+        assert group['display_values'] == {ref: '混合排列'}
+        assert payload['categorical_rendering_example']['rendered'] == '600928的均线排列为混合排列。'
+        return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
+            'section': 'market', 'parts': [[ref, 'subject'], '在', [ref, 'date'],
+                '的均线为', [ref, 'value_with_unit'], '。'], 'refs': []}]})
+    result = publish_report(task='说明所给日期的均线排列。', draft='', tool_results=receipts,
+        run_scope='category-display', call=writer, max_calls=2)
+    assert len(seen) == 2 and result.verification['status'] == 'complete'
+    assert expected in result.artifact['reader_body']
+    assert next(f['value'] for f in result.artifact['facts'] if f['kind'] == 'classification') == 'mixed'
+    from trade_compass_agent.runtime.report_publication import persist_publication
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['reader_body'] == result.artifact['reader_body']
+    assert saved['receipts'][0]['result'] == receipts[0][1]
+
+
+def test_internal_evidence_format_does_not_receive_reader_only_category_examples():
+    receipts = [('compute_ma', json.dumps({'symbol': '600928', 'timeframe': '1d',
+        '_meta': {'as_of': '2025-01-02'}, 'ma': {'MA5': 3.812, 'MA10': 3.815}, 'trend': 'mixed'}))]
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' not in payload:
+            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        assert 'categorical_rendering_example' not in payload
+        assert all('display_values' not in group for group in payload['facts'])
+        ref = next(f['id'] for f in report_facts(payload) if f['kind'] == 'classification')
+        return json.dumps({'schema_version': 1, 'items': [
+            {'id': 'state', 'type': 'fact', 'section': 'market', 'ref': ref}]})
+    result = publish_report(task='保留资料中的均线状态。', draft='', tool_results=receipts,
+        run_scope='internal-category', call=writer, reader_prose=False, max_calls=2)
+    assert result.verification['status'] == 'complete'
+
+
 def market_receipts():
     return [("get_bars", json.dumps({"symbol": symbol, "timeframe": "1d", "adjustment": "unadjusted",
         "bars": [{"timestamp": (date(2026, 10, 1) + timedelta(days=i)).isoformat(),

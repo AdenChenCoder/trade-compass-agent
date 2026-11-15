@@ -32,6 +32,12 @@ in the linked regression tests, not in expanding prose exception lists.
   uses the business category; the raw source value and historical records remain
   unchanged. Calculation and publication share the same alignment operation,
   including its existing equality and insufficient-data behavior.
+  Writer input retains the raw category alongside its runtime-owned display
+  value and binding example. Business prose expresses that display value,
+  rather than narrating tool calls or exposing internal enums. A correction
+  preserves useful analysis and necessary answers without unrelated expansion;
+  a stale observation used in a present-dated report retains its explicit source
+  date. No post-review replacement or shortened incomplete answer repairs it.
   These records provide context, not another fact-reference namespace; original
   receipts remain unchanged and numeric bindings still use the fact catalogue.
   Adjacent bound fields retain a runtime formatting separator, so a date and
