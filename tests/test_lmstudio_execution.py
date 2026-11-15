@@ -154,7 +154,7 @@ def test_local_semantic_review_uses_private_reasoning_inside_formatting_context(
     assert len(requests) == 1  # No retry or second verdict after reasoning exhaustion.
     assert requests[0].url.host == "localhost" and requests[0].url.path == "/v1/chat/completions"
     body = json.loads(requests[0].content)
-    assert body["model"] == model and body["max_tokens"] == min(parent_limit, 8192)
+    assert body["model"] == model and body["max_tokens"] == min(parent_limit, 16384)
     assert "prompt" not in body and "response_format" not in body and "tools" not in body
     assert "private evidence comparison" not in json.dumps(body)
 

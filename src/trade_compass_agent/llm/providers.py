@@ -956,7 +956,7 @@ def create_local_report_fact_check(config: AppConfig, *, is_cancelled=None):
             client = create_chat_client(review_config)
         mode_token = _maintenance_mode.set(False)
         try:
-            with llm_response_contract(max_tokens=8192):
+            with llm_response_contract(max_tokens=16384):
                 result = client.stream_complete([ChatMessage(role="system", content=system),
                     ChatMessage(role="user", content=user)], tools=None, on_delta=lambda _: None,
                     is_cancelled=is_cancelled)

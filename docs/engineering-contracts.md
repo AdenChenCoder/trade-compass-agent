@@ -47,6 +47,10 @@ in the linked regression tests, not in expanding prose exception lists.
   model's bounded reasoning path, clearing inherited formatting mode while
   preserving the parent's token cap, deadline and cancellation. Reasoning is
   private and cannot become reader text or evidence.
+  The semantic response envelope is at most 16,384 tokens, including reasoning
+  and the final structured response. A smaller caller cap still wins. This does
+  not extend the parent deadline, permit more calls or allow an incomplete
+  response to become an approval; normal scenes must still finish in time.
 - Report composition and task-coverage review share a maximum of four model calls. Unused
   structural-repair capacity may fund one feedback revision and a fresh review.
   This applies to both reader paragraphs and internal evidence/learning documents;
