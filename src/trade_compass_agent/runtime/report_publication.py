@@ -83,6 +83,8 @@ _COMPOSE = (
     "先定位任务要求的证券、账户和指标组，该组rows中每行的列按fact_columns顺序排列，"
     "行中的id、value和observed_at日期也都是原文，不是索引。不能因数值相同而跨证券或指标引用。"
     "每个事实行保留其原始日期；未知日期仍是null，不能拿别的日期补齐。"
+    "source_records保留原始工具结果中的非数值信息和来源限制，不是新的事实id目录。"
+    "数值对照不能替代其中已有的分类、状态或口径；只有facts中的id可以用于事实引用。"
     "fact_rendering_example展示来源明细，不是正文格式；正文的日期、数值和单位由各自的parts指定。"
     "报告条目的id不能使用事实目录的id。"
     "条件和计算的ref/refs必须逐字复制事实目录id。段落也可以引用本报告的calculation条目id。"
@@ -251,8 +253,16 @@ role in the assertion. time_evidence contains fact IDs, never receipt IDs or
 document IDs. Use [] for non-observation discourse. Bound fact/date refs are
 runtime-owned and remain required even if omitted from your selection. The runtime
 independently compares these source dates with the preserved current-date commitment.
-Return only JSON: {"assessments":[{"id":"input id","comparison":"brief target-claim evidence comparison, at most two short sentences",
-"time_evidence":["exact source fact id"],
+Temporal evidence is required for qualitative empirical observations as well as
+explicit quantities. A claim about today's price action still has a source date
+even when it gives no number. First identify the owned observations supporting
+that time; return their fact IDs before writing the comparison and verdict.
+An entailed time judgment without a source witness is incomplete review metadata,
+unless the statement already has runtime-owned bound/date refs. Do not use []
+merely because the observed change is described qualitatively. If the actual
+observation time is unknown or incompatible, preserve that uncertainty instead.
+Return only JSON: {"assessments":[{"id":"input id","time_evidence":["exact source fact id"],
+"comparison":"brief target-claim evidence comparison, at most two short sentences",
 "checks":{"identity_scope":"entailed|contradicted|unknown|not_applicable",
 "time":"entailed|contradicted|unknown|not_applicable",
 "quantity":"entailed|contradicted|unknown|not_applicable",
@@ -416,6 +426,12 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                "execution_records": execution.records,
                "schema": response_schema()}
     if reader_prose:
+        # A numeric catalogue is not the complete tool result. In particular,
+        # deterministic classifications and source limitations must not vanish
+        # before writing. The immutable original receipt stays in the artifact;
+        # this parsed view supplies context, never a second binding namespace.
+        payload['source_records'] = [{'receipt_id': row['id'], 'tool': row['tool'],
+                                      'data': json.loads(row['result'])} for row in catalog.receipts]
         # Paragraph order belongs to the writer. Repeating every alias in an
         # interleaving index adds no evidence: each literal row already carries
         # its identity, value and observation date in its contextual group.
@@ -709,12 +725,15 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         timing_assessment = assessment if not unknown_refs else {
                             **assessment, 'time_evidence': [ref for ref in assessment['time_evidence'] if ref in available]}
                         timing = check_statement_time(statement, timing_assessment, context, report_context)
-                        if unknown_refs:
+                        missing_witness = (timing['reason'] == 'observation_unavailable'
+                                           and assessment['checks']['time'] == 'entailed')
+                        if unknown_refs or missing_witness:
                             # Keep other independently assessed assertions usable.
                             # Never promote an invalid reference to a fact or count
                             # this row as a completed semantic rejection.
                             factual_assessment_errors[statement['id']] = {
-                                'stage': 'factual_review', 'code': 'temporal_reference_not_in_run_facts',
+                                'stage': 'factual_review', 'code': ('temporal_reference_not_in_run_facts'
+                                    if unknown_refs else 'temporal_witness_missing'),
                                 'invalid_reference_count': len(unknown_refs)}
                             assessment['validation_status'] = 'unavailable'
                             timing.update(status='unknown', reason='temporal_evidence_unavailable')

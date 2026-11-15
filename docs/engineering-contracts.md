@@ -25,6 +25,10 @@ in the linked regression tests, not in expanding prose exception lists.
   or rescale an unqualified ratio as a percentage. Reference
   existence alone does not establish meaning, and prose keyword/regex rules are
   not a substitute for this review.
+  Composition also receives the original structured tool records: a numeric
+  catalogue must not discard deterministic classifications or source limitations.
+  These records provide context, not another fact-reference namespace; original
+  receipts remain unchanged and numeric bindings still use the fact catalogue.
   Adjacent bound fields retain a runtime formatting separator, so a date and
   amount cannot concatenate into a different token. This whitespace is part of
   the exact reviewed and saved body; it supplies no factual or connective meaning.
@@ -116,6 +120,11 @@ in the linked regression tests, not in expanding prose exception lists.
   Unlike retrieval chunks, these units have no overlap, trimming or content
   normalization, and belong to one immutable body snapshot.
   An invalid temporal reference makes that assertion unavailable, not false.
+  The same applies when review claims an entailed current observation time but
+  supplies neither a source witness nor an existing runtime date binding.
+  Qualitative observations still need their source date; absence of an explicit
+  number does not make a present empirical claim atemporal. Unknown source time
+  remains a substantive uncertainty when the review actually reports it.
   Persist this distinction and withhold its paragraph while preserving other
   independently verified analysis. A completed rejection elsewhere can justify
   the one existing genuine body revision; an annotation error alone cannot

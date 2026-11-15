@@ -112,6 +112,53 @@ def test_short_references_never_escape_to_artifacts_or_calculation_provenance():
     assert "000008" in result.text and "0.70%" in result.text
 
 
+def test_composer_retains_non_numeric_tool_context_without_a_second_fact_namespace():
+    raw = {'symbol': '002415', 'timeframe': '1d', '_meta': {'as_of': '2025-01-02'},
+           'ma': {'MA5': 22, 'MA10': 23, 'MA20': 21}, 'trend': 'mixed',
+           'interpretation': '来源自己的限制，不是新增数值事实。'}
+    receipts = [('compute_ma', json.dumps(raw, ensure_ascii=False))]
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' not in payload:
+            return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': ''}
+                for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
+        source = payload['source_records'][0]
+        assert source['tool'] == 'compute_ma' and source['data'] == raw
+        assert source['data']['trend'] == 'mixed'
+        assert source['receipt_id'] not in {f['id'] for f in report_facts(payload)}
+        assert not any(f['metric'] == 'interpretation' for f in report_facts(payload))
+        return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
+            'section': 'overview', 'parts': [{'type': 'text', 'text': '所给均线结构为交错排列。'}],
+            'refs': [f['id'] for f in report_facts(payload) if f['metric'].startswith('MA')]}]})
+    result = publish_report(task='说明所给均线状态。', draft='', tool_results=receipts,
+        run_scope='source-context', call=writer)
+    assert result.verification['status'] == 'complete'
+    assert '所给均线结构为交错排列。' in result.artifact['reader_body']
+    assert result.artifact['receipts'][0]['result'] == receipts[0][1]
+    assert not any(key in result.text for key in ('source_records', 'source-context', 'receipt_id'))
+
+
+def test_full_large_composition_includes_original_tool_context_with_response_room():
+    receipts = market_receipts()
+    seen = []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' not in payload:
+            return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': ''}
+                for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
+        assert estimate_tokens(user) < 131072 - 16384
+        assert [row['data'] for row in payload['source_records']] == [json.loads(raw) for _, raw in receipts]
+        seen.append(payload)
+        fact = next(f for f in report_facts(payload) if f['subject'] == '000008' and f['metric'] == 'close')
+        return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
+            'section': 'overview', 'parts': [{'type': 'text', 'text': '000008所给首日收盘价为'},
+                {'type': 'value', 'ref': fact['id'], 'field': 'value_with_unit'}, {'type': 'text', 'text': '。'}], 'refs': []}]})
+    result = publish_report(task='说明000008所给首日收盘价。', draft='', tool_results=receipts,
+        run_scope='large-source-context', call=writer)
+    assert seen and result.verification['status'] == 'complete'
+    assert '000008所给首日收盘价为10.5元/股。' in result.artifact['reader_body']
+
+
 @pytest.mark.parametrize("invalid", [
     {"id": "bad", "type": "fact", "section": "invented", "ref": "unknown"},
     {"type": "fact", "section": "market", "ref": "unknown"},

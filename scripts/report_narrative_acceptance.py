@@ -185,6 +185,16 @@ _basic_date_price = [('get_bars', json.dumps({'symbol': '002415', 'timeframe': '
     'bars': [{'timestamp': '20250102', 'close': 22}]}))]
 BASIC_DATE_CASES = ('utc_basic_date_current', 'utc_basic_date_stale')
 QUOTE_CALENDAR_CASES = ('utc_current_observation', 'utc_stale_observation')
+_qualitative_bars = [('get_bars', json.dumps({'symbol': '002415', 'timeframe': '1d',
+    'bars': [{'timestamp': '2025-01-02', 'high': 23, 'low': 22, 'close': 22.5}]}))]
+_ma_mixed = [('compute_ma', json.dumps({'symbol': '002415', 'timeframe': '1d',
+    '_meta': {'as_of': '2025-01-02'}, 'ma': {'MA5': 22, 'MA10': 23, 'MA20': 21, 'MA60': 20},
+    'trend': 'mixed'}))]
+_ma_bullish = [('compute_ma', json.dumps({'symbol': '002415', 'timeframe': '1d',
+    '_meta': {'as_of': '2025-01-02'}, 'ma': {'MA5': 23, 'MA10': 22, 'MA20': 21, 'MA60': 20},
+    'trend': 'bullish_alignment'}))]
+QUALITATIVE_TIME_CASES = ('qualitative_current', 'qualitative_stale')
+MA_CLASSIFICATION_CASES = ('ma_mixed_as_bullish', 'ma_bullish')
 TIME_CASES = {
     "relative_current": ("今天002415收盘价为22元/股。", True, _dated_price, "2025-01-02"),
     "relative_stale": ("今天002415收盘价为22元/股。", False, _dated_price, "2025-01-03"),
@@ -199,6 +209,10 @@ TIME_CASES = {
     'utc_stale_observation': ('002415当前报价为22元/股。', False, _cross_calendar_quote, '2025-01-02'),
     'utc_basic_date_current': ('002415今天的收盘价为22元/股。', True, _basic_date_price, '2025-01-02'),
     'utc_basic_date_stale': ('002415今天的收盘价为22元/股。', False, _basic_date_price, '2025-01-03'),
+    'qualitative_current': ('002415今天盘中存在价格起伏。', True, _qualitative_bars, '2025-01-02'),
+    'qualitative_stale': ('002415今天盘中存在价格起伏。', False, _qualitative_bars, '2025-01-03'),
+    'ma_mixed_as_bullish': ('002415的均线已形成多头排列。', False, _ma_mixed, '2025-01-02'),
+    'ma_bullish': ('002415的均线已形成多头排列。', True, _ma_bullish, '2025-01-02'),
 }
 CASES.update({name: (prose, expected) for name, (prose, expected, _, _) in TIME_CASES.items()})
 VALUATION_TIME_CASES = ('pb_fresh_current', 'pb_stale_current', 'pb_stale_explicit')
@@ -208,7 +222,33 @@ TIME_CASE_TASKS.update({name: '按任务时区UTC，根据所给资料说明0024
                        for name in ('utc_current_observation', 'utc_stale_observation')})
 TIME_CASE_TASKS.update({name: '按任务时区UTC，根据所给资料说明002415今天的收盘价。'
                        for name in BASIC_DATE_CASES})
+TIME_CASE_TASKS.update({name: '仅依据所给观察资料说明002415今天盘中是否存在价格起伏。'
+                       for name in QUALITATIVE_TIME_CASES})
+TIME_CASE_TASKS.update({name: '仅依据所给均线资料判断002415的均线是否已形成多头排列。'
+                       for name in MA_CLASSIFICATION_CASES})
 TIME_CASE_TIMEZONES = {name: 'UTC' for name in (*QUOTE_CALENDAR_CASES, *BASIC_DATE_CASES)}
+
+
+def qualitative_fixture_checks(selected):
+    from trade_compass_agent.runtime.report_contract import EvidenceCatalog
+    from trade_compass_agent.runtime.tools.ta import _ma_trend_summary
+    result = {}
+    for name in selected:
+        if name not in (*QUALITATIVE_TIME_CASES, *MA_CLASSIFICATION_CASES):
+            continue
+        receipts = TIME_CASES[name][2]
+        catalog = EvidenceCatalog.build(receipts, run_scope='qualitative-fixture')
+        observed = [fact for fact in catalog.facts.values() if fact.kind != 'identity']
+        assert observed and {fact.observation_date('Asia/Shanghai') for fact in observed} == {'2025-01-02'}
+        source = json.loads(receipts[0][1])
+        if name in MA_CLASSIFICATION_CASES:
+            assert _ma_trend_summary(source['ma']) == source['trend']
+            assert len([fact for fact in observed if fact.kind == 'moving_average']) == 4
+        else:
+            assert source['bars'][0]['high'] > source['bars'][0]['low']
+        result[name] = {'source_observation_date': '2025-01-02', 'source_unchanged': True,
+                        'classification': source.get('trend')}
+    return result
 
 
 def valuation_fixture_checks(selected):
@@ -297,7 +337,7 @@ def main():
               "full_corpus": len(selected) == len(CASES),
               "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
               "fixture_checks": {**valuation_fixture_checks(selected), **quote_fixture_checks(selected),
-                                 **basic_date_fixture_checks(selected)}}
+                                 **basic_date_fixture_checks(selected), **qualitative_fixture_checks(selected)}}
     (root/"plan.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
     config = AppConfig(data_dir=root/"data", memory_dir=root/"memory",
                        llm=LLMConfig(provider="lmstudio", model=args.model, api_key_env="", max_retries=0, timeout=120,
@@ -530,6 +570,20 @@ def main():
                             for row in check['evidence']) for check in timing)
                 entry['runtime_time_rejection'] = correct_time_rejection
                 entry['passed'] = entry['passed'] and correct_time_rejection
+            if name in QUALITATIVE_TIME_CASES and factual_client:
+                timing = list(first.get('temporal_checks', {}).values())
+                required_status = 'entailed' if expected else 'unknown'
+                completed_witness = first['review_valid'] and not first.get('factual_assessment_errors') and any(
+                    check['scope'] == 'reference_date' and check['status'] == required_status
+                    and any(row['comparison_date'] == '2025-01-02' for row in check['evidence'])
+                    for check in timing)
+                entry['first_temporal_witness_completed'] = completed_witness
+                entry['passed'] = entry['passed'] and completed_witness
+            if name == 'ma_mixed_as_bullish' and factual_client:
+                correct_support_rejection = any(row['checks']['support'] in {'unknown', 'contradicted'}
+                    for row in (first.get('factual_review') or {}).get('assessments', []))
+                entry['classification_support_rejection'] = correct_support_rejection
+                entry['passed'] = entry['passed'] and correct_support_rejection
             if name == 'utc_stale_observation' and factual_client:
                 correct_time_rejection = any(
                     check['comparison_timezone'] == 'UTC' and check['expected_date'] == '2025-01-02'

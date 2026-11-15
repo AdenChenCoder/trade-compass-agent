@@ -279,6 +279,57 @@ def test_owned_provenance_is_independent_of_semantic_scope_and_date(tmp_path, ot
     assert saved['published_text'] == result.text
 
 
+@pytest.mark.parametrize('observed', ['2025-01-02', '2025-01-01'])
+@pytest.mark.parametrize('witness', [True, False])
+def test_qualitative_current_observation_needs_a_completed_time_witness(tmp_path, observed, witness):
+    text = '002415今天盘中存在价格起伏。'
+    raw = json.dumps({'symbol': '002415', 'timeframe': '1d', 'bars': [
+        {'timestamp': observed, 'high': 23, 'low': 22, 'close': 22.5}]})
+    writing = []
+    def writer(system, user):
+        payload = json.loads(user)
+        writing.append(payload)
+        if 'schema' not in payload:
+            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        assert 'revision' not in payload, 'missing review metadata alone cannot retry prose'
+        return json.dumps({'schema_version': 1, 'items': [{'id': 'price', 'type': 'paragraph',
+            'section': 'overview', 'parts': [{'type': 'text', 'text': text}],
+            'refs': [f['id'] for f in report_facts(payload) if f['metric'] in {'high', 'low'}]}]})
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            reply = body_reply(payload)
+            reply['paragraphs'][0]['parts'][0]['time_scope'] = 'reference_date'
+            return json.dumps(reply)
+        reply = assess(payload)
+        row = reply['assessments'][0]
+        row['checks']['quantity'] = 'not_applicable'
+        if witness:
+            row['time_evidence'] = [f['id'] for f in payload['contexts']['p0']['evidence'] if f['metric'] == 'high']
+        return json.dumps(reply)
+    result = publish_report(task='说明本轮观察到的价格表现。', draft='', tool_results=[('get_bars', raw)],
+        run_scope='qualitative-time', call=writer, fact_review_call=checker,
+        reference_date='2025-01-02', max_calls=2 if witness else 4)
+    supported = witness and observed == '2025-01-02'
+    assert (result.verification['status'] == 'complete') is supported
+    assert (text in result.artifact['reader_body']) is supported
+    assert result.artifact['review_valid'] is witness
+    assert len(writing) == 2 and result.artifact['model_calls'] == 4
+    assert not result.artifact.get('revision_attempts')
+    if witness:
+        assert not result.artifact['factual_assessment_errors']
+        assert result.artifact['review_feedback_valid'] is not supported
+        assert result.artifact['temporal_checks']['c0']['status'] == ('entailed' if supported else 'unknown')
+    else:
+        assert result.artifact['factual_assessment_errors']['c0']['code'] == 'temporal_witness_missing'
+        assert not result.artifact['review_feedback_valid']
+        assert result.artifact['factual_review']['assessments'][0]['validation_status'] == 'unavailable'
+        assert any(f['code'] == 'review_unavailable' for f in result.verification['findings'])
+    ref = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(ref['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text and saved['receipts'][0]['result'] == raw
+
+
 @pytest.mark.parametrize('observed', ['2025-01-01', None])
 @pytest.mark.parametrize('uses_feedback', [True, False])
 def test_revision_receives_exact_assertion_and_runtime_dates_and_must_act_on_them(tmp_path, observed, uses_feedback):
