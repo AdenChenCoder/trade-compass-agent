@@ -131,11 +131,12 @@ in the linked regression tests, not in expanding prose exception lists.
   Reuse these exact spans as independently assessed assertions, including a
   conclusion joined to otherwise correct measurements. Give each assertion a
   runtime-owned ID and require exactly one assessment per ID. A paragraph passes
-  only when all its assertions pass. Body-only interpretation copies minimal
-  entity, metric, unit, time and scope labels needed to resolve ellipsis; validate
-  their ownership in the supplied reader text. They clarify the target's meaning
-  and are never factual evidence. The factual assessor receives the exact target
-  and these referents, while source contexts contain only owned facts and
+  only when all its assertions pass. The factual assessor receives every exact
+  original reader span in reading order, grouped by paragraph, so subjects,
+  ellipsis and shared conventions retain their original context. Reader spans
+  are untrusted claims, never evidence for one another. Do not generate copied
+  or normalized referent hints as a second authority for reader meaning; legacy
+  hints are ignored and never reach factual assessment. Source contexts contain only owned facts and
   calculations. Do not duplicate the candidate paragraph as apparent source
   text. Matching activity measurements cannot establish unobserved actors'
   actions or causes. Missing, duplicate or unknown assertion assessments fail

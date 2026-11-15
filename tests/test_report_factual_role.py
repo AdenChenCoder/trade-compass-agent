@@ -77,8 +77,8 @@ def test_current_observation_compares_in_task_calendar_without_changing_display(
     assert saved['published_text'] == result.text and saved['receipts'][0]['result'] == raw
 
 
-def test_reader_referents_resolve_ellipsis_without_becoming_source_evidence():
-    frame = {'entity': ['002415'], 'metric': ['收盘价'], 'unit': ['元/股']}
+@pytest.mark.parametrize('legacy_hint', [None, {'entity': ['reader-only-phantom']}, {'evidence': ['reader-only-phantom']}])
+def test_original_reader_context_resolves_ellipsis_without_copied_hints(legacy_hint):
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' in payload:
@@ -94,11 +94,17 @@ def test_reader_referents_resolve_ellipsis_without_becoming_source_evidence():
         if 'paragraphs' in payload:
             result = body_reply(payload)
             result['paragraphs'][0]['parts'][0]['assertion_kind'] = 'discourse'
-            result['paragraphs'][1]['parts'][0]['referents'] = frame
+            part = result['paragraphs'][1]['parts'][0]
+            if legacy_hint is None:
+                part.pop('referents')
+            else:
+                part['referents'] = legacy_hint
             return json.dumps(result)
         assert all(set(context) == {'evidence', 'calculations'} for context in payload['contexts'].values())
         target = next(row for row in payload['statements'] if row['text'] == '先22，后23。')
-        assert target['referents'] == frame
+        assert [row['text'] for row in payload['statements']] == ['以下002415收盘价均以元/股计。', '先22，后23。']
+        assert all('referents' not in row for row in payload['statements'])
+        assert 'reader-only-phantom' not in json.dumps(payload)
         assert payload['contexts'][target['context_id']]['evidence']
         return json.dumps(assess(payload))
     result = publish_report(task='报告两个观察日的收盘价。', draft='', tool_results=RECEIPTS,
@@ -570,7 +576,7 @@ def body_reply(payload):
         "outcome": "none", "extent": "none"}]} for row in payload["paragraphs"]]}
 
 
-@pytest.mark.parametrize('prefix', ['针对收盘价记录的核对，', '并非没有观察资料，', '若只看已提供的记录；', '说明👩‍💻（e\u0301），'])
+@pytest.mark.parametrize('prefix', ['针对收盘价记录的核对，', '针对持仓逻辑是否仍成立的问题，', '并非没有观察资料，', '若只看已提供的记录；', '说明👩‍💻（e\u0301），'])
 def test_source_unit_selection_preserves_all_reader_text_without_model_copying(tmp_path, prefix):
     expected = prefix + '002415在2025-01-01的收盘价为22元/股。'
     def writer(system, user):
@@ -589,6 +595,7 @@ def test_source_unit_selection_preserves_all_reader_text_without_model_copying(t
             assert row['text'] == expected
             part = body_reply(payload)['paragraphs'][0]['parts'][0]
             part.pop('text')
+            part.pop('referents')
             part['through'] = row['source_units'][-1]['id']
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [part]}]})
         assert payload['statements'][0]['text'] == expected
@@ -833,7 +840,7 @@ def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path,
     assert saved["execution_projections"]["answer"]["removed"][0]["text"] == claim
 
 
-@pytest.mark.parametrize("fault", ["omit", "rewrite", "duplicate", "wrong_id", "wrong_kind", "missing_assertion_kind", "unknown_assertion_kind", "missing_time_scope", "unknown_time_scope", "missing_referents", "unowned_referent", "unknown_referent_role", "timeout"])
+@pytest.mark.parametrize("fault", ["omit", "rewrite", "duplicate", "wrong_id", "wrong_kind", "missing_assertion_kind", "unknown_assertion_kind", "missing_time_scope", "unknown_time_scope", "timeout"])
 def test_missing_or_unfaithful_body_interpretation_cannot_reach_coverage_or_fact_approval(fault):
     calls = []
     def writer(system, user):
@@ -864,12 +871,6 @@ def test_missing_or_unfaithful_body_interpretation_cannot_reach_coverage_or_fact
             row['parts'][0].pop('time_scope')
         elif fault == "unknown_time_scope":
             row['parts'][0]['time_scope'] = 'latest_available'
-        elif fault == 'missing_referents':
-            row['parts'][0].pop('referents')
-        elif fault == 'unowned_referent':
-            row['parts'][0]['referents'] = {'entity': ['reader never supplied this name']}
-        elif fault == 'unknown_referent_role':
-            row['parts'][0]['referents'] = {'evidence': ['002415']}
         else:
             row["parts"][0]["kind"] = "approved"
         return json.dumps(result)
