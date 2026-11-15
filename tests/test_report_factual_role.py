@@ -211,6 +211,99 @@ def test_temporal_links_must_belong_to_the_assertion_context(fault):
     assert '22元/股升至23元/股' not in result.text
 
 
+@pytest.mark.parametrize('other_day,supported', [('2025-01-02', True), ('2025-01-01', False)])
+@pytest.mark.parametrize('other_scope', ['same', 'entity', 'account', 'timeframe', 'adjustment'])
+def test_other_paragraph_date_link_respects_run_business_scope_and_date(tmp_path, other_day, supported, other_scope):
+    first = {'symbol': '002415', 'account': 'short_stock', 'timeframe': '1d', 'adjustment': 'unadjusted',
+             'bars': [{'timestamp': '2025-01-02', 'close': 22}]}
+    second = {'symbol': '002415', 'account': 'short_stock', 'timeframe': '1d', 'adjustment': 'unadjusted',
+              'bars': [{'timestamp': other_day, 'high': 24}]}
+    if other_scope == 'entity':
+        second['symbol'] = '000001'
+    elif other_scope == 'account':
+        second['account'] = 'long_stock'
+    elif other_scope == 'timeframe':
+        second['timeframe'] = '1w'
+    elif other_scope == 'adjustment':
+        second['adjustment'] = 'adjusted'
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            facts = report_facts(payload)
+            close = next(f['id'] for f in facts if f['metric'] == 'close')
+            high = next(f['id'] for f in facts if f['metric'] == 'high')
+            return json.dumps({'schema_version': 1, 'items': [
+                {'id': 'answer', 'section': 'overview', 'type': 'paragraph', 'parts': [
+                    {'type': 'text', 'text': '002415今日收盘价为'},
+                    {'type': 'value', 'ref': close, 'field': 'value_with_unit'}], 'refs': []},
+                {'id': 'history', 'section': 'overview', 'type': 'paragraph', 'parts': [
+                    {'type': 'text', 'text': '另一条已注明日期的观察记录：'},
+                    {'type': 'value', 'ref': high, 'field': 'date'},
+                    {'type': 'value', 'ref': high, 'field': 'value_with_unit'}], 'refs': []}]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            result = body_reply(payload)
+            result['paragraphs'][0]['parts'][0]['time_scope'] = 'reference_date'
+            return json.dumps(result)
+        result = assess(payload)
+        high = next(f['id'] for f in payload['contexts']['p1']['evidence'] if f['metric'] == 'high')
+        result['assessments'][0]['time_evidence'] = [high]
+        return json.dumps(result)
+    result = publish_report(task='核对当日观察并保留另一条注明日期的记录。', draft='',
+        tool_results=[('get_bars', json.dumps(first)), ('get_bars', json.dumps(second))],
+        run_scope='cross-paragraph-date', call=writer, fact_review_call=checker, max_calls=2,
+        reference_date='2025-01-02')
+    assert result.artifact['review_valid'] is (other_scope == 'same')
+    assert (result.verification['status'] == 'complete') is (supported and other_scope == 'same')
+    if other_scope == 'same':
+        timing = result.artifact['temporal_checks']['c0']
+        assert timing['status'] == ('entailed' if supported else 'unknown')
+        assert {row['observed_date'] for row in timing['evidence']} == {'2025-01-02', other_day}
+    else:
+        assert any(row['code'] == 'review_unavailable' for row in result.verification['findings'])
+        assert any(row.get('review_error_code') == 'temporal_evidence_outside_scope'
+                   and row['stage'] == 'factual_review' and row['assertion_id'] == 'c0'
+                   for row in result.artifact['attempts'])
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text
+
+
+def test_newer_fact_in_another_paragraph_cannot_refresh_an_old_bound_pb():
+    receipts = [('get_fundamentals', json.dumps({'symbol': '600928', 'pb': 0.4572, 'as_of': '20261111'})),
+                ('get_fundamentals', json.dumps({'symbol': '600928', 'pe_ttm': 12, 'as_of': '20261112'}))]
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            facts = report_facts(payload)
+            return json.dumps({'schema_version': 1, 'items': [
+                {'id': metric, 'section': 'overview', 'type': 'paragraph', 'parts': [
+                    {'type': 'text', 'text': '600928当前' + metric + '为'},
+                    {'type': 'value', 'ref': next(f['id'] for f in facts if f['metric'] == metric),
+                     'field': 'value_with_unit'}], 'refs': []} for metric in ('pb', 'pe_ttm')]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            result = body_reply(payload)
+            for row in result['paragraphs']:
+                row['parts'][0]['time_scope'] = 'reference_date'
+            return json.dumps(result)
+        result = assess(payload)
+        fresh = next(f['id'] for f in payload['contexts']['p1']['evidence'] if f['metric'] == 'pe_ttm')
+        result['assessments'][0]['time_evidence'] = [fresh]
+        return json.dumps(result)
+    result = publish_report(task='说明估值。', draft='', tool_results=receipts, run_scope='no-date-laundering',
+        call=writer, fact_review_call=checker, max_calls=2, reference_date='2026-11-12')
+    assert result.artifact['review_valid'] and result.verification['status'] == 'incomplete'
+    assert '0.4572倍' not in result.artifact['reader_body'] and '12倍' in result.artifact['reader_body']
+    timing = result.artifact['temporal_checks']['c0']
+    assert timing['reason'] == 'observation_not_at_asserted_date'
+    assert {row['observed_date'] for row in timing['evidence']} == {'2026-11-11', '2026-11-12'}
+
+
 def test_current_bound_change_keeps_the_original_interval_and_checks_its_end_date():
     def writer(system, user):
         payload = json.loads(user)

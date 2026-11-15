@@ -24,7 +24,7 @@ from trade_compass_agent.runtime.report_body import (
 )
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
 from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts
-from trade_compass_agent.runtime.report_time import check_statement_time
+from trade_compass_agent.runtime.report_time import check_statement_time, temporal_evidence_context
 
 
 @dataclass
@@ -32,6 +32,13 @@ class Publication:
     text: str
     verification: dict
     artifact: dict
+
+
+class ReportEvidenceScopeError(ValueError):
+    def __init__(self, code, assertion_id):
+        super().__init__(code)
+        self.code = code
+        self.assertion_id = assertion_id
 
 
 _EVIDENCE_COMPOSE = (
@@ -228,8 +235,12 @@ reader's display calendar. Different calendar labels can describe the same insta
 Date-only observations retain their supplied date; do not invent an instant for them.
 time_scope preserves the body-only temporal commitment; reference_date cannot be
 reinterpreted as latest available. For every assessment return time_evidence, an array
-of exact fact IDs from that statement's contexts[context_id].evidence which support
-its observation time. Use [] for non-observation discourse. Bound fact/date refs are
+of exact fact IDs already supplied in contexts which support its observation time.
+A fact selected in another paragraph is eligible only when its entity, account,
+timeframe and scope match a fact in this statement's context. Paragraph selection
+does not create source ownership. Matching scope alone does not prove relevance or
+the assertion: compare the actual observation and date. Never borrow a different
+security, account or observation scope. Use [] for non-observation discourse. Bound fact/date refs are
 runtime-owned and remain required even if omitted from your selection. The runtime
 independently compares these source dates with the preserved current-date commitment.
 Return only JSON: {"assessments":[{"id":"input id","comparison":"brief target-claim evidence comparison, at most two short sentences",
@@ -675,9 +686,11 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         statement = statements_by_id[assessment['id']]
                         context = contexts[statement['context_id']]
                         available = {fact['id'] for fact in context['evidence']}
-                        if not set([*assessment['time_evidence'], *statement['bound_fact_refs'],
-                                    *statement['time_fact_refs']]) <= available:
-                            raise ValueError('temporal evidence does not belong to assertion context')
+                        if not set([*statement['bound_fact_refs'], *statement['time_fact_refs']]) <= available:
+                            raise ReportEvidenceScopeError('runtime_binding_outside_context', statement['id'])
+                        context = temporal_evidence_context(context, contexts)
+                        if not set(assessment['time_evidence']) <= {fact['id'] for fact in context['evidence']}:
+                            raise ReportEvidenceScopeError('temporal_evidence_outside_scope', statement['id'])
                         assessment['reported_verdict'] = assessment['verdict']
                         assessment['reported_checks'] = dict(assessment['checks'])
                         timing = check_statement_time(statement, assessment, context, report_context)
@@ -736,7 +749,10 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 check_active()
                 findings.append(Finding("review", "review_unavailable", "报告完整性及研判依据尚未完成核验"))
                 findings.extend(Finding("review", "review_unavailable", "该项研判尚未完成核验", item.id) for item in inferences)
-                attempts.append({"review_error_type": type(exc).__name__})
+                diagnostic = {"review_error_type": type(exc).__name__}
+                if isinstance(exc, ReportEvidenceScopeError):
+                    diagnostic.update(stage='factual_review', review_error_code=exc.code, assertion_id=exc.assertion_id)
+                attempts.append(diagnostic)
         published_document = document.model_copy(update={
             "items": [item for item in document.items if item.id not in dismissed_gaps]})
         if dismissed_gaps and not published_document.items and not execution.records:

@@ -4,6 +4,25 @@ from __future__ import annotations
 from trade_compass_agent.runtime.report_contract import PORTFOLIO_OPERATIONS, observation_date
 
 
+def temporal_evidence_context(context, contexts):
+    """Paragraph selection is not ownership of the run's source observations.
+
+    Share only already supplied runtime facts in the same typed business scope.
+    This permits source comparison, not approval: every bound observation and
+    linked date still passes the normal time check.
+    """
+    def scope(fact):
+        return tuple(fact[key] for key in ('entity', 'account', 'timeframe', 'scope'))
+
+    owners = {scope(fact) for fact in context['evidence'] if fact['entity'] or fact['account']}
+    facts = {fact['id']: fact for fact in context['evidence']}
+    for other in contexts.values():
+        for fact in other['evidence']:
+            if scope(fact) in owners:
+                facts.setdefault(fact['id'], fact)
+    return {**context, 'evidence': list(facts.values())}
+
+
 def check_statement_time(statement, assessment, context, report_context):
     expected = report_context['reference_date']
     result = {'scope': statement['time_scope'], 'expected_date': expected,

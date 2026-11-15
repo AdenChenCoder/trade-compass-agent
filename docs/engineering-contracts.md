@@ -80,8 +80,12 @@ in the linked regression tests, not in expanding prose exception lists.
   usable. Before evidence is supplied, body interpretation separately fixes
   whether an observation is asserted as of the task's present date. Review
   cannot reinterpret that commitment as latest available. Temporal evidence
-  links must belong to the assertion context; runtime-owned numeric bindings
-  remain mandatory even if the assessor omits them. The runtime compares those
+  links must be runtime-owned observations in the assertion's business scope.
+  Already supplied facts may be referenced across paragraphs only when entity,
+  account, timeframe and observation scope match; paragraph selection is not
+  source ownership. This permission does not prove relevance or support.
+  Numeric bindings remain tied to their original context and mandatory even
+  if the assessor omits them. The runtime compares those
   source dates in the task's reference timezone with the task date and can withhold a statement despite an
   optimistic model verdict. A bound price-change interval uses its later
   operand's observation date without discarding the earlier operand. This market
