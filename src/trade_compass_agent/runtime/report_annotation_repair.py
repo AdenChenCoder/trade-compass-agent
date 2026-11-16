@@ -69,9 +69,12 @@ def resolved_annotations(value, candidates, statements, decode):
         if not entry['empirical_present'] and statement['time_scope'] == 'reference_date':
             if (assessment.get('support_basis') != 'reasoned' or assessment['time_evidence']
                     or assessment.get('commitments') != {'participant_activity': False, 'causal_relation': False}
-                    or any(assessment['checks'][key] != 'not_applicable'
-                           for key in ('identity_scope', 'time', 'quantity'))):
+                    or assessment['checks']['quantity'] != 'not_applicable'
+                    or any(assessment['checks'][key] not in {'entailed', 'not_applicable'}
+                           for key in ('identity_scope', 'time'))):
                 continue
+            assessment['reported_checks'] = dict(assessment['checks'])
+            assessment['checks']['time'] = 'not_applicable'
             statement.update(time_scope='other', observation_dates=[])
         result[identifier] = (statement, assessment)
     return result

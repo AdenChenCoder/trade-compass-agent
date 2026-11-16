@@ -12,16 +12,18 @@ from trade_compass_agent.runtime.report_publication import publish_report, persi
     ('actor', False), ('cause', False), ('qualitative_observation', False), ('bound_stale_value', False),
 ])
 @pytest.mark.parametrize('fault', [None, 'foreign_id', 'duplicate', 'missing', 'bad_metadata', 'unowned_reference',
-                                   'invalid_initial_metadata'])
+                                   'invalid_initial_metadata', 'time_entailed', 'identity_entailed', 'support_unknown'])
 def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obligations(tmp_path, scene, accepted, fault):
     texts = {
-        'opinion': '从所给资料看，倾向维持持有判断。',
-        'event_interpretation': '结合所给注册证公告，短期回踩可视为技术性调整，持仓逻辑仍成立。',
+        'opinion': '从所给资料看，倾向保持观察。',
+        'event_interpretation': '结合所给注册证公告，相关产品进展值得继续跟踪。',
         'actor': '这些统计证明当日非主力出货。',
         'cause': '注册证公告直接导致了当日股价上涨。',
         'qualitative_observation': '002415今天盘中存在价格起伏。',
         'bound_stale_value': '600928当前市净率为',
     }
+    if scene == 'opinion' and fault == 'support_unknown':
+        texts['opinion'] = '从所给资料看，倾向维持持有判断。'
     raw = json.dumps({'symbol': '002415', 'timeframe': '1d', 'bars': [
         {'timestamp': '2025-01-01', 'close': 22, 'high': 23, 'low': 21}]})
     receipts = [('get_bars', raw), ('fetch_url', json.dumps({'symbol': '002415', 'as_of': '2025-01-01',
@@ -69,6 +71,12 @@ def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obliga
                 resolution['assessment']['checks'].pop('quantity')
             elif fault == 'unowned_reference':
                 resolution['assessment']['time_evidence'] = ['outside-this-run']
+            elif fault == 'time_entailed':
+                resolution['assessment']['checks']['time'] = 'entailed'
+            elif fault == 'identity_entailed':
+                resolution['assessment']['checks']['identity_scope'] = 'entailed'
+            elif fault == 'support_unknown':
+                resolution['assessment']['checks'].update(time='entailed', support='unknown')
             result['annotation_resolutions'] = values
         return json.dumps(result)
 
@@ -90,7 +98,7 @@ def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obliga
     result = publish_report(task='说明所给日期的价格，并给出基于这些资料的研究看法。', draft='', tool_results=receipts,
         run_scope='annotation-control', run_id='annotation-control', call=writer, fact_review_call=checker,
         reference_date='2025-01-02', max_calls=2)
-    succeeds = accepted and fault is None
+    succeeds = accepted and fault in {None, 'time_entailed', 'identity_entailed'}
     assert ('002415在2025-01-01的收盘价为22元/股。' in result.artifact['reader_body'])
     assert (texts[scene] in result.artifact['reader_body']) is succeeds
     assert (result.verification['status'] == 'complete') is succeeds
@@ -103,6 +111,10 @@ def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obliga
     assert result.artifact['receipts'][0]['result'] == raw
     if succeeds:
         assert result.artifact['annotation_resolutions'] and result.artifact['review_valid']
+    if fault == 'support_unknown' and repair_inputs:
+        assert result.artifact['review_valid']
+        assert not result.artifact['factual_assessment_errors']
+        assert any(f['code'] == 'insufficient_support' for f in result.verification['findings'])
     reference = persist_publication(tmp_path, result)
     saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
     assert saved['document'] == result.artifact['document'] and saved['published_text'] == result.text

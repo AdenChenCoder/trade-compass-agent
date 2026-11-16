@@ -166,6 +166,12 @@ in the linked regression tests, not in expanding prose exception lists.
   Invalid or unresolved repairs retain their original failures and valid siblings.
   This uses the existing coverage call after factual review; call limits, the
   single prose revision, cancellation and parent deadlines stay unchanged.
+  For that mutually identified opinion, an entailed identity of a known subject
+  or an entailed time-axis label does not establish a new market observation.
+  Preserve the reported axes and normalize its observation-time applicability;
+  unknown/contradicted axes or quantities remain blocking. Unknown substantive
+  support remains unsupported after annotation repair, never approved or
+  relabelled as unavailable review merely because its time label was inconsistent.
 - An explicitly configured `llm.local_report_review_model` separates factual
   entailment from task coverage. It uses only local LM Studio, original receipts,
   typed calculations, current execution records and the final statements. The original
