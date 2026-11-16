@@ -130,12 +130,13 @@ in the linked regression tests, not in expanding prose exception lists.
   a gap or invalidate independently valid paragraph reviews. Preserve cancellation
   and the parent deadline, and never replay business tools to repair prose.
   A removable gap cannot supply an answer during task-coverage review and then
-  disappear from the published body. Coverage checks the candidate without
-  optional gap text, while receiving the original gaps separately. Apply gap
-  removal only when that remaining body answers the task completely; otherwise
-  preserve the declared gap and useful verified analysis. Runtime-protected
-  gaps remain in both views. This consumes the existing review call, not an
-  additional model request.
+  disappear from the published body. Coverage reviews the complete candidate
+  and records the original gap IDs it uses as answers, independently of the
+  optional gap-disposition decisions. Preserve those dependencies even when a
+  disposition calls them unrelated. Valid unrelated gaps can still be removed
+  when another answer is missing: incomplete writing must not become unavailable
+  business data. Invalid or missing dependency metadata cannot clear gaps or
+  discard independently verified prose. This uses the existing review call.
 - An explicitly configured `llm.local_report_review_model` separates factual
   entailment from task coverage. It uses only local LM Studio, original receipts,
   typed calculations, current execution records and the final statements. The original

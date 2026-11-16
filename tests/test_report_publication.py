@@ -433,7 +433,7 @@ def test_gap_review_checks_task_scope_without_releasing_unsupported_evidence(dec
         assert payload["gaps"] == [{"id": "gap", "text": "模型声明的资料缺口"}]
         assert payload["verified_items"][0]["id"] == "price"
         assert "2026-11-10" in payload["verified_items"][0]["rendered"]
-        review = {"reviews": [], "coverage": {"complete": True, "missing": []}}
+        review = {"reviews": [], "coverage": {"complete": True, "missing": [], "gap_answer_ids": []}}
         if decision:
             review["gap_reviews"] = [{"id": "gap", "status": decision, "refs": refs, "reason": reason}]
         return json.dumps(review)
@@ -458,7 +458,7 @@ def test_gap_review_cannot_clear_deterministic_failure_or_publish_empty_report()
             return json.dumps({"schema_version": 1, "items": [
                 {"id": "bad", "type": "fact", "section": "market", "ref": "unknown"},
                 {"id": "gap", "type": "gap", "section": "gaps", "text": "不预测未来"}]})
-        return json.dumps({"reviews": [], "coverage": {"complete": True, "missing": []},
+        return json.dumps({"reviews": [], "coverage": {"complete": True, "missing": [], "gap_answer_ids": []},
             "gap_reviews": [{"id": "gap", "status": "outside_task", "refs": [], "reason": "不属于任务目标"}]})
     result = publish_report(task="报告价格", draft="", tool_results=[], run_scope="invalid", call=call)
     assert result.verification["status"] == "incomplete"
@@ -469,7 +469,7 @@ def test_gap_review_cannot_clear_deterministic_failure_or_publish_empty_report()
         payload = json.loads(user)
         if "schema" in payload:
             return '{"schema_version":1,"items":[{"id":"gap","type":"gap","section":"gaps","text":"不预测"}]}'
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]},"gap_reviews":[{"id":"gap","status":"outside_task","refs":[],"reason":"不属于任务目标"}]}'
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[],"gap_answer_ids":[]},"gap_reviews":[{"id":"gap","status":"outside_task","refs":[],"reason":"不属于任务目标"}]}'
     result = publish_report(task="报告价格", draft="", tool_results=[], run_scope="empty", call=empty_call)
     assert result.verification["report"] == "partial"
     assert any(f["code"] == "empty_report" for f in result.verification["findings"])

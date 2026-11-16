@@ -480,7 +480,7 @@ def test_bound_report_fact_can_resolve_duplicate_gap_without_approving_prose(tmp
         fact_id = payload["inferences"][0]["evidence"][0]["id"]
         return json.dumps({"reviews": [{"id": "answer", "supported": supported,
             "reason": "资料支持所写内容。" if supported else "句子中的含义尚不能支持。"}],
-            "coverage": {"complete": True, "missing": []},
+            "coverage": {"complete": True, "missing": [], "gap_answer_ids": ['gap'] if genuine_gap else []},
             "gap_reviews": [{"id": "gap", "status": "required" if genuine_gap else "already_present",
                 "refs": [] if genuine_gap else [fact_id],
                 "reason": "仍无营收资料。" if genuine_gap else "报告已给出相同证券相同日期的收盘价。"}]})

@@ -167,10 +167,12 @@ _REVISION = (
     "required_gaps由程序保留，无法靠改写或删除解除。修订后的完整正文仍须重新核验。"
 )
 _GAP_COVERAGE = (
-    "本次report已排除可移除的缺口说明，gaps仍保留完整缺口供单独判断。"
-    "coverage只检查这个候选正文，不能把gaps中的文字视为已回答任务。"
-    "任务要求比较业务数据、或资料不足时说明限制，都属于任务答案；缺口处理要求不使真实业务缺口变成outside_task。"
-    "只有去掉缺口说明后的正文仍完整回答任务，程序才会应用缺口移除决定。"
+    "本次report是完整候选正文，gaps是其中可单独处理的缺口条目。"
+    "coverage额外返回gap_answer_ids：列出正文用来回答任务的缺口条目id，未使用时返回[]。"
+    "例如任务要求资料不足时说明不能比较，而正文通过某个gap给出了该答案，该id必须保留在gap_answer_ids中。"
+    "这只记录答案对原文的依赖，不表示缺口已解决，也不取决于gap_reviews把它判成哪种状态。"
+    "程序不会删除已被coverage用于回答任务的条目；其他无关缺口仍可移除，即使另有正文答案尚未补齐。"
+    "仅使用gaps中的实际id，不复制或改写正文，不把业务资料缺失与正文遗漏混为一谈。"
 )
 _FACT_REVIEW = """Apply the supplied source_semantics as the product's business interpretation contract; it is not a market observation and never supplies a missing source. Differentiate a statistical market property from attribution of a particular actor or class of actors. participant_activity means the latter (identity, action or absence), not anonymous aggregate volume/concentration alone. causal_relation means a claimed event or process actually causing an observed outcome; a bounded research interpretation or conditional watchpoint does not itself assert that event. Preserve adjacent actual actor/causal claims. Do not infer either flag merely because the market statistics ultimately involve trading.
 You assess factual support and the scope of research reasoning in a report.
@@ -407,6 +409,13 @@ def _dismissed_gaps(review, gaps, verified_ids):
             raise ValueError("invalid gap rationale")
         if status != "required":
             dismissed.add(row["id"])
+    if dismissed:
+        dependencies = review['coverage'].get('gap_answer_ids')
+        if (not isinstance(dependencies, list) or any(not isinstance(ref, str) for ref in dependencies)
+                or len(dependencies) != len(set(dependencies))
+                or not set(dependencies) <= {item.id for item in gaps}):
+            raise ValueError('gap removal lacks valid answer dependencies')
+        dismissed -= set(dependencies)
     return dismissed
 
 
@@ -742,15 +751,6 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 coverage_review_input = ({**review_input, "inferences": [], "receipts": []}
                                          if fact_call else {**review_input})
                 optional_gaps = {item.id for item in gaps} - protected_gaps.keys()
-                if optional_gaps:
-                    # A gap verdict may remove reader text after this review.
-                    # Check the body that can remain, so a fallback answer
-                    # cannot establish completeness and then disappear.
-                    coverage_document = document.model_copy(update={
-                        'items': [item for item in document.items if item.id not in optional_gaps]})
-                    coverage_review_input['report'] = present(
-                        coverage_document, preview, preview_findings if body_review_input else findings,
-                        include_sources=False)
                 with llm_response_contract(max_tokens=16384, precise=True):
                     review = _json_value(call(_REVIEW + (_GAP_COVERAGE if optional_gaps else ""),
                         json.dumps(coverage_review_input, ensure_ascii=False, separators=(",", ":"))))
@@ -766,7 +766,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                                or not isinstance(row["reason"], str)
                                or len(row["reason"]) > 500
                                or (not row["supported"] and not row["reason"].strip()) for row in rows)
-                        or set(coverage) not in ({"complete", "missing"}, {"complete", "missing", "repairable"})
+                        or not {'complete', 'missing'} <= set(coverage)
+                        or set(coverage) - {'complete', 'missing', 'repairable', 'gap_answer_ids'}
                         or ("repairable" in coverage and type(coverage["repairable"]) is not bool)
                         or type(coverage["complete"]) is not bool
                         or not isinstance(coverage["missing"], list) or len(coverage["missing"]) > 8
@@ -905,8 +906,10 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     rows = [unconfirmed_execution.get(row["id"], row) for row in rows]
                     review = {**review, "reviews": rows}
                 try:
-                    proposed = _dismissed_gaps(review, gaps, set(verified_items)) - protected_gaps.keys()
-                    dismissed_gaps = proposed if coverage['complete'] else set()
+                    # Coverage may credit a gap as the requested unavailable-
+                    # data answer. Its original text must then survive even an
+                    # inconsistent optional dismissal decision.
+                    dismissed_gaps = _dismissed_gaps(review, gaps, set(verified_items)) - protected_gaps.keys()
                 except (ValueError, TypeError, KeyError):
                     # Gap-dismissal metadata owns only gap removal. A bad optional
                     # decision cannot discard independently valid paragraph reviews.

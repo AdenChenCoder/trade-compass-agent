@@ -1752,7 +1752,8 @@ def test_bound_gap_review_keeps_local_factual_and_coverage_roles_independent(gen
             return json.dumps(doc)
         assert payload["inferences"] == [] and payload["receipts"] == []
         assert len(payload["verified_items"]) == 2
-        return json.dumps({"reviews": [], "coverage": {"complete": True, "missing": []},
+        return json.dumps({"reviews": [], "coverage": {"complete": True, "missing": [],
+            "gap_answer_ids": ['gap'] if genuine_gap else []},
             "gap_reviews": [{"id": "gap", "status": "required" if genuine_gap else "already_present",
                 "refs": [] if genuine_gap else [payload["verified_items"][0]["id"]],
                 "reason": "仍无营收资料。" if genuine_gap else "已有收盘价。"}]})
@@ -1797,7 +1798,7 @@ def test_gap_removal_cannot_complete_a_different_reader_answer(
             'reviews': [{'id': row['id'], 'supported': True, 'reason': '收盘价与来源一致。'}
                         for row in payload['inferences']],
             'coverage': {'complete': complete, 'missing': [] if complete else ['尚未说明无法比较年度收入。'],
-                         'repairable': False},
+                         'repairable': False, 'gap_answer_ids': ['gap'] if requires_revenue else []},
             'gap_reviews': [{'id': 'gap', 'status': 'outside_task', 'refs': [],
                              'reason': '缺口说明被误当作任务之外的执行要求。'}],
         })
@@ -1819,6 +1820,73 @@ def test_gap_removal_cannot_complete_a_different_reader_answer(
     assert saved['published_text'] == report.text
     assert saved['verification'] == report.verification
     assert saved['document']['items'][0 if gap_first else -1]['text'] == gap_text
+
+
+@pytest.mark.parametrize('local_review', [True, False])
+@pytest.mark.parametrize('requires_revenue', [True, False])
+def test_unrelated_gap_does_not_turn_missing_prose_into_missing_data(local_review, requires_revenue):
+    gap_text = '缺少年度营收数据。'
+
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            document = compose(payload)
+            document['items'].append({'id': 'gap', 'type': 'gap', 'section': 'gaps', 'text': gap_text})
+            return json.dumps(document)
+        return json.dumps({
+            'reviews': [{'id': row['id'], 'supported': True, 'reason': '历史价格与来源一致。'}
+                        for row in payload['inferences']],
+            'coverage': {'complete': False, 'missing': ['正文未提供两日变动百分比。'],
+                         'repairable': True, 'gap_answer_ids': ['gap'] if requires_revenue else []},
+            'gap_reviews': [{'id': 'gap', 'status': 'outside_task', 'refs': [],
+                             'reason': '把财务缺口判断成与任务无关。'}],
+        })
+
+    def checker(system, user):
+        payload = json.loads(user)
+        return json.dumps(body_reply(payload) if 'paragraphs' in payload else assess(payload))
+
+    task = ('报告历史收盘价和两日变动百分比；年度营收缺失时保留说明。' if requires_revenue else
+            '只报告历史收盘价和两日变动百分比，不做财务比较。')
+    report = publish_report(task=task, draft='',
+                            tool_results=RECEIPTS, run_scope='missing-output-not-data', call=writer,
+                            fact_review_call=checker if local_review else None, max_calls=2)
+    assert report.verification['status'] == 'incomplete'
+    assert report.verification['data'] == ('insufficient' if requires_revenue else 'available')
+    assert (gap_text in report.text) is requires_revenue
+    assert '22元/股升至23元/股' in report.text
+    assert any(f['code'] == 'required_content_missing' for f in report.verification['findings'])
+    assert any(f['code'] == 'declared_gap' for f in report.verification['findings']) is requires_revenue
+
+
+@pytest.mark.parametrize('dependencies', ['omitted', None, ['foreign'], ['gap', 'gap'], [True], 'gap', {}])
+def test_invalid_gap_answer_dependencies_preserve_verified_analysis(dependencies):
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            document = compose(payload)
+            document['items'].append({'id': 'gap', 'type': 'gap', 'section': 'gaps',
+                                      'text': '缺少年度营收资料，无法比较。'})
+            return json.dumps(document)
+        coverage = {'complete': True, 'missing': []}
+        if dependencies != 'omitted':
+            coverage['gap_answer_ids'] = dependencies
+        return json.dumps({'reviews': [], 'coverage': coverage,
+            'gap_reviews': [{'id': 'gap', 'status': 'outside_task', 'refs': [], 'reason': '错误的移除建议。'}]})
+
+    def checker(system, user):
+        payload = json.loads(user)
+        return json.dumps(body_reply(payload) if 'paragraphs' in payload else assess(payload))
+
+    report = publish_report(task='比较历史收盘价及年度营收，缺少资料时保留限制。', draft='',
+                            tool_results=RECEIPTS, run_scope='invalid-gap-dependency', call=writer,
+                            fact_review_call=checker, max_calls=2)
+    assert report.artifact['review_valid']
+    assert '22元/股升至23元/股' in report.text
+    assert '缺少年度营收资料，无法比较。' in report.text
+    assert report.verification['status'] == 'incomplete'
+    assert report.artifact['model_calls'] == 4
+    assert any(a.get('gap_review_error_type') == 'invalid_gap_review' for a in report.artifact['attempts'])
 
 
 @pytest.mark.parametrize('fault', METADATA_FAULTS)
