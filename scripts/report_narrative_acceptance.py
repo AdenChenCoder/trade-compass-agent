@@ -135,6 +135,8 @@ SCOPE_CASES = {
                             "说明002415在2025年1月1日的收盘价。"),
     "bound_genuine_gap": ("002415在2025-01-01的收盘价为22元/股。", True, _prices,
                           "说明002415在2025年1月1日的收盘价及该公司的营收资料。"),
+    "bound_outside_task_gap": ("002415在2025-01-01的收盘价为22元/股。", True, _prices,
+                               "说明002415在2025年1月1日的收盘价，不预测未来。"),
     "holding_observation": (_position_prose, True, _holding, "说明当前持仓观察。"),
     "currency_missing": ("002415在2025年1月1日的收盘价为22。", False, _prices, "说明资料中002415在2025年1月1日的收盘价。"),
     "currency_shared_unit": ("以下价格均以元/股计。002415在2025年1月1日的收盘价为22。", True, _prices, "说明资料中002415在2025年1月1日的收盘价。"),
@@ -562,14 +564,16 @@ def main():
                         items[0]['parts'] = [{'type': 'value', 'ref': pct, 'field': 'subject'},
                             {'type': 'text', 'text': '的涨跌幅为'}, {'type': 'value', 'ref': pct, 'field': 'value_with_unit'},
                             {'type': 'text', 'text': '。'}]
-                    if name in {"bound_duplicate_gap", "bound_genuine_gap"}:
+                    if name in {"bound_duplicate_gap", "bound_genuine_gap", "bound_outside_task_gap"}:
                         first = next(group["rows"][0][0] for group in payload["facts"] if group["metric"] == "close")
                         items[0]["parts"] = [
                             {"type": "value", "ref": first, "field": "subject"}, {"type": "text", "text": "在"},
                             {"type": "value", "ref": first, "field": "date"}, {"type": "text", "text": "的收盘价为"},
                             {"type": "value", "ref": first, "field": "value_with_unit"}, {"type": "text", "text": "。"}]
                         items.append({"id": "gap", "section": "overview", "type": "gap",
-                            "text": "缺少营收资料。" if name == "bound_genuine_gap" else "缺少002415在2025年1月1日的收盘价。"})
+                            "text": ("缺少营收资料。" if name == "bound_genuine_gap" else
+                                     "未提供未来股价预测。" if name == "bound_outside_task_gap" else
+                                     "缺少002415在2025年1月1日的收盘价。")})
                     return json.dumps({"schema_version": 1, "items": items}, ensure_ascii=False)
                 facts = [dict(zip(payload["fact_columns"], row, strict=True))
                          for group in payload["facts"] if group["metric"] == "close" for row in group["rows"]]
@@ -682,7 +686,7 @@ def main():
                               (report.verification["status"] == "complete") if expected else
                               (prose not in report.text
                                and report.verification["report"] == "partial")))
-            if name in {"bound_duplicate_gap", "bound_genuine_gap"}:
+            if name in {"bound_duplicate_gap", "bound_genuine_gap", "bound_outside_task_gap"}:
                 gap = (report.artifact.get("review") or {}).get("gap_reviews", [])
                 facts_by_id = {row["id"]: row for row in report.artifact["facts"]}
                 price_visible = any(
@@ -693,13 +697,18 @@ def main():
                     for item in report.artifact["document"]["items"] if item["type"] == "paragraph"
                     for part in item["parts"])
                 correct_gap = len(gap) == 1 and gap[0]["id"] == "gap" and gap[0]["status"] == (
-                    "required" if name == "bound_genuine_gap" else "already_present")
+                    "required" if name == "bound_genuine_gap" else
+                    "outside_task" if name == "bound_outside_task_gap" else "already_present")
                 if name == "bound_genuine_gap":
                     entry["passed"] = (entry["passed"] and final_supported and correct_gap and price_visible
                         and report.verification["status"] == "incomplete" and "缺少营收资料" in report.text
                         and any(f["code"] == "declared_gap" for f in report.verification["findings"]))
                 else:
                     entry["passed"] = entry["passed"] and price_visible and (correct_gap or revised and not gap)
+                    if name == 'bound_outside_task_gap':
+                        entry['passed'] = (entry['passed'] and report.verification['data'] == 'available'
+                            and '未提供未来股价预测。' not in report.text
+                            and not any(f['code'] == 'declared_gap' for f in report.verification['findings']))
             if name in {"missing_percentage_unit", "currency_missing"} and factual_client:
                 # The body-only boundary must catch this, even if evidence
                 # entailment would silently supply the omitted reader unit.

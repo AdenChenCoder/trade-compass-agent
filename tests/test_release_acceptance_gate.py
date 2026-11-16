@@ -16,6 +16,16 @@ MODEL = runpy.run_path(str(ROOT / "scripts/release_model_acceptance.py"))
 NARRATIVE = runpy.run_path(str(ROOT / 'scripts/report_narrative_acceptance.py'))
 
 
+def test_gap_controls_preserve_the_same_observation_and_sources():
+    cases = NARRATIVE['SCOPE_CASES']
+    names = ['bound_genuine_gap', 'bound_duplicate_gap', 'bound_outside_task_gap']
+    rows = [cases[name] for name in names]
+    assert len({row[0] for row in rows}) == 1
+    assert all(row[1] is True and row[2] == rows[0][2] for row in rows)
+    assert rows[-1][3] == '说明002415在2025年1月1日的收盘价，不预测未来。'
+    assert rows[0][3] != rows[1][3] != rows[2][3]
+
+
 def test_rule_controls_preserve_identical_body_and_missing_zero_one_many_sources():
     names = ['empty_rule_result', 'missing_rule_result_as_empty',
         'one_rule_alert_as_empty', 'multiple_rule_alerts_as_empty']

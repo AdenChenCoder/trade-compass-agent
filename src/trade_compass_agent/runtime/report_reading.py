@@ -146,10 +146,22 @@ def _narrative(document, rendered, findings, catalog, *, execution, include_sour
     unknown_execution = {finding.item_id for finding in findings if finding.code == "execution_claim_unconfirmed"}
     other_unresolved = {finding.item_id for finding in findings if finding.code != "execution_claim_unconfirmed"}
     incomplete_sections = set()
+    date_notices = defaultdict(list)
+    for finding in findings:
+        if finding.code == 'observation_date_unavailable':
+            date_notices[finding.item_id].append(finding.message)
+    shown_date_notices = set()
 
     def incomplete_notice(item):
         # Review diagnostics may quote rejected claims or internal field names.
         # Keep them in the artifact; the reader needs the unfinished business area.
+        for message in date_notices[item.id]:
+            if message not in shown_date_notices:
+                shown_date_notices.add(message)
+                blocks.append(_plain(message))
+        if date_notices[item.id] and all(finding.code == 'observation_date_unavailable'
+                for finding in findings if finding.item_id == item.id):
+            return
         if item.id in unknown_execution:
             if "execution_status" not in incomplete_sections:
                 incomplete_sections.add("execution_status")

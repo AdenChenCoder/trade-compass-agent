@@ -24,7 +24,9 @@ from trade_compass_agent.runtime.report_body import (
 )
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
 from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts, source_record_context, composition_source_records, source_reference_view
-from trade_compass_agent.runtime.report_time import check_statement_time, temporal_evidence_context
+from trade_compass_agent.runtime.report_time import (
+    check_statement_time, temporal_evidence_context, unavailable_bound_observation_dates,
+)
 from trade_compass_agent.runtime.report_support import check_support_basis
 from trade_compass_agent.runtime.report_assessments import assessments_with_availability
 from trade_compass_agent.runtime.report_classifications import check_classifications
@@ -171,9 +173,12 @@ _REVISION = (
 )
 _GAP_COVERAGE = (
     "本次report是完整候选正文，gaps是其中可单独处理的缺口条目。"
-    "coverage额外返回gap_answer_ids：列出正文用来回答任务的缺口条目id，未使用时返回[]。"
+    "coverage额外返回gap_answer_ids：只列出删除后会丢失任务必需业务答案的缺口条目id，否则返回[]。"
     "例如任务要求资料不足时说明不能比较，而正文通过某个gap给出了该答案，该id必须保留在gap_answer_ids中。"
-    "这只记录答案对原文的依赖，不表示缺口已解决，也不取决于gap_reviews把它判成哪种状态。"
+    "这是必需答案对原文的依赖，不是报告提到某项约束或遵守要求的清单。"
+    "单纯说明遵守了执行或写作约束，不是必需业务答案；只有任务明确索取该状态时才作为答案。"
+    "不要把用户不要求的内容缺失、或没有违反禁止项，变成用户索取但尚不可得的业务结果。"
+    "这不表示缺口已解决，也不取决于gap_reviews把它判成哪种状态。"
     "程序不会删除已被coverage用于回答任务的条目；其他无关缺口仍可移除，即使另有正文答案尚未补齐。"
     "仅使用gaps中的实际id，不复制或改写正文，不把业务资料缺失与正文遗漏混为一谈。"
 )
@@ -902,6 +907,10 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         elif 'unknown' in checks and assessment['verdict'] == 'entailed':
                             assessment['verdict'] = 'unknown'
                     by_assertion = {row['id']: row for row in assessments}
+                    date_gaps = {row['id']: refs for row in assessments
+                        if row['id'] not in factual_assessment_errors
+                        and (refs := unavailable_bound_observation_dates(
+                            statements_by_id[row['id']], row, temporal_checks[row['id']]))}
                     review_feedback_valid = any((row['id'] not in factual_assessment_errors
                         and row['verdict'] != 'entailed') or row.get('runtime_findings') for row in assessments)
                     original_text = {row['id']: row['text'] for row in statements}
@@ -960,7 +969,14 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                                      or by_assertion[key].get('runtime_findings')] if fact_call else []
                         if unavailable:
                             findings.append(Finding('review', 'review_unavailable', '该部分研判尚未完成核验', item.id))
-                        if not unavailable or confirmed:
+                        for key in confirmed:
+                            for ref in date_gaps.get(key, []):
+                                fact = catalog.resolve(ref)
+                                identity = f'{fact.subject}的' if fact.subject else ''
+                                message = f'{identity}{fact.label}缺少观测日期，无法确认其为任务日数据。'
+                                findings.append(Finding('data', 'observation_date_unavailable', message, item.id, (ref,)))
+                        if (not fact_call or any(key not in date_gaps for key in confirmed)
+                                or not unavailable and not confirmed):
                             findings.append(Finding("analysis", "insufficient_support", row["reason"], item.id, tuple(item.refs)))
                 review_valid = not factual_assessment_errors
             except TurnInterruptedError:

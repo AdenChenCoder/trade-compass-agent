@@ -62,3 +62,23 @@ def check_statement_time(statement, assessment, context, report_context):
     else:
         result.update(status='entailed', reason='matched_observation_date')
     return result
+
+
+def unavailable_bound_observation_dates(statement, assessment, timing):
+    """Identify a sole date-availability failure; never approve its claim.
+
+    Unknown reviewer references or metadata are handled by the caller first.
+    A known stale observation or another unsupported dimension must retain its
+    factual failure rather than becoming a missing-data notice.
+    """
+    if (timing['status'] != 'unknown' or timing['reason'] != 'observation_not_at_asserted_date'
+            or assessment['verdict'] == 'contradicted'
+            or assessment['checks']['time'] != 'unknown'
+            or any(value not in {'entailed', 'not_applicable'}
+                   for key, value in assessment['checks'].items() if key != 'time')):
+        return []
+    conflicts = [row for row in timing['evidence'] if row['comparison_date'] != timing['expected_date']]
+    if any(row['comparison_date'] is not None for row in conflicts):
+        return []
+    mandatory = set(statement['time_fact_refs'])
+    return [row['ref'] for row in conflicts if row['ref'] in mandatory]

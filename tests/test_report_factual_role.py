@@ -683,6 +683,73 @@ def test_newer_fact_in_another_paragraph_cannot_refresh_an_old_bound_pb():
     assert {row['observed_date'] for row in timing['evidence']} == {'2026-11-11', '2026-11-12'}
 
 
+@pytest.mark.parametrize('as_of', [None, '20250101', '20250102'])
+@pytest.mark.parametrize('other_failure', [None, 'support', 'metadata'])
+def test_missing_observation_date_is_a_specific_gap_without_hiding_other_failures(tmp_path, as_of, other_failure):
+    raw = json.dumps({'symbol': '600928', 'pb': 0.8, 'as_of': as_of,
+                      '_meta': {'timestamp': '2025-01-02T15:00:00+08:00'}})
+    receipts = [('get_fundamentals', raw), ('get_bars', json.dumps({
+        'symbol': '002415', 'timeframe': '1d', 'bars': [{'timestamp': '2025-01-02', 'close': 23}]}))]
+    calls = []
+
+    def writer(system, user):
+        calls.append('writer')
+        payload = json.loads(user)
+        if 'schema' in payload:
+            facts = report_facts(payload)
+            return json.dumps({'schema_version': 1, 'items': [
+                {'id': metric, 'section': 'market', 'type': 'paragraph', 'parts': [
+                    {'type': 'text', 'text': text},
+                    {'type': 'value', 'ref': next(f['id'] for f in facts if f['metric'] == metric),
+                     'field': 'value_with_unit'}, {'type': 'text', 'text': '。'}], 'refs': []}
+                for metric, text in [('close', '002415今日收盘价为'), ('pb', '600928当前市净率为')]]})
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+
+    def checker(system, user):
+        payload = json.loads(user)
+        calls.append('body' if 'paragraphs' in payload else 'fact')
+        if 'paragraphs' in payload:
+            reply = body_reply(payload)
+            for row in reply['paragraphs']:
+                row['parts'][0]['time_scope'] = 'reference_date'
+            return json.dumps(reply)
+        reply = assess(payload)
+        # Bound source dates remain mandatory even if the assessor approves
+        # everything and omits time_evidence. Retrieval time cannot fill them.
+        if other_failure == 'support':
+            reply['assessments'][1]['checks']['support'] = 'unknown'
+        elif other_failure == 'metadata':
+            reply['assessments'][1]['checks'].pop('support')
+        return json.dumps(reply)
+
+    result = publish_report(task='说明今日收盘价和市净率。', draft='', tool_results=receipts,
+        run_scope='missing-observation-date', call=writer, fact_review_call=checker, max_calls=2,
+        reference_date='2025-01-02')
+    genuine_gap = as_of is None and other_failure is None
+    complete = as_of == '20250102' and other_failure is None
+    findings = result.verification['findings']
+    body = result.artifact['reader_body']
+    assert ('002415今日收盘价为23元/股。' in body)
+    assert ('600928当前市净率为0.8倍。' in body) is complete
+    assert ('市净率缺少观测日期' in body) is genuine_gap
+    assert any(f['code'] == 'observation_date_unavailable' for f in findings) is genuine_gap
+    if genuine_gap:
+        assert 'insufficient_support' not in {f['code'] for f in findings}
+        assert result.verification['data'] == 'insufficient'
+        assert result.artifact['review_valid']
+    elif not complete:
+        assert any(f['category'] in {'analysis', 'review'} for f in findings)
+    assert (result.verification['status'] == 'complete') is complete
+    assert calls == ['writer', 'body', 'writer', 'fact']
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text
+    assert saved['receipts'][0]['result'] == raw
+    pb = next(f for f in saved['facts'] if f['metric'] == 'pb')
+    assert pb['observed_at'] == (None if as_of is None else f'{as_of[:4]}-{as_of[4:6]}-{as_of[6:]}')
+    assert saved['factual_review']['assessments'][1]['verdict'] != 'entailed' or complete
+
+
 def test_current_bound_change_keeps_the_original_interval_and_checks_its_end_date():
     def writer(system, user):
         payload = json.loads(user)

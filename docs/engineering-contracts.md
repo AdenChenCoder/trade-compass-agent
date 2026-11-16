@@ -137,6 +137,11 @@ in the linked regression tests, not in expanding prose exception lists.
   when another answer is missing: incomplete writing must not become unavailable
   business data. Invalid or missing dependency metadata cannot clear gaps or
   discard independently verified prose. This uses the existing review call.
+  These dependencies concern necessary business answers, not acknowledgments
+  that execution or writing constraints were followed. Omission of content the
+  task excludes cannot become an unavailable requested result merely because
+  the draft mentions that exclusion. Explicit requests to report a state remain
+  distinct from instructions constraining how the task should be performed.
   When completed factual review finds a failed assertion beside retained
   assertions in the same paragraph, and task coverage is already complete,
   revision may replace only the addressed failed spans. Preserve all other
@@ -194,6 +199,12 @@ in the linked regression tests, not in expanding prose exception lists.
   observation check preserves the existing ownership contract for account
   snapshots. Display dates keep the display timezone; a different displayed day
   cannot by itself establish that a task-time observation is stale or current.
+  A completed assessment whose sole failure is an unknown mandatory observation
+  date retains the rejected current claim and reports a specific business data
+  gap. Keep independently verified paragraphs visible. Never fill that date from
+  retrieval time, classify a known stale date as missing, or clear another factual
+  conflict or unavailable assessment through this notice. Persistence retains
+  the original source and the incomplete/data-insufficient outcome.
   Date-only observations, including provider `YYYYMMDD` and ISO `YYYY-MM-DD`,
   keep their supplied calendar date without an invented instant. Newly derived
   evidence preserves this precision; original receipts and already saved
