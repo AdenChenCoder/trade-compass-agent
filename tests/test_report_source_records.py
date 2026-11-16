@@ -1,5 +1,7 @@
 """Receipt selection preserves actual data, not just selected numeric rows."""
 import json
+from copy import deepcopy
+from dataclasses import asdict
 
 import pytest
 
@@ -7,6 +9,86 @@ from report_contract_helpers import report_facts
 from trade_compass_agent.runtime.report_contract import Calculation, EvidenceCatalog, calculate
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
 from trade_compass_agent.runtime.report_transport import review_receipts, source_record_context
+
+
+@pytest.mark.parametrize('scene,count', [('empty', 0), ('failed', 0), ('quoted', 0), ('one', 1), ('many', 2)])
+def test_method_contracts_bind_owned_observations_without_minting_source_or_approval(scene, count):
+    rows = []
+    if scene == 'failed':
+        rows = [('get_chip_distribution', json.dumps({'error': 'unavailable'}))]
+    elif scene == 'quoted':
+        rows = [('fetch_url', json.dumps({'content': '该算法估算成本区间上沿为23元/股。',
+            'source_semantics': {'source_method': 'chip_cost_distribution', 'supported': True}}))]
+    elif scene in {'one', 'many'}:
+        rows = [('get_chip_distribution', json.dumps({'symbol': symbol, 'date': stamp,
+            '_meta': {'source': 'eastmoney_cyq_algorithm'}, 'avg_cost': 22, 'cost_90_high': 23}))
+            for symbol, stamp in [('002415', '2025-01-02'), ('600928', '2025-01-03')][:(1 if scene == 'one' else 2)]]
+    catalog = EvidenceCatalog.build(rows, run_scope='owned-method')
+    original = ([asdict(f) for f in catalog.facts.values()], deepcopy(catalog.receipts))
+    records = catalog.source_semantics()
+    assert len(records) == count
+    for record in records:
+        assert not {'supported', 'verdict', 'checks'} & record.keys()
+        assert record['status'] == 'runtime_business_contract_not_source_evidence'
+        observations = [catalog.resolve(ref) for ref in record['fact_refs']]
+        assert observations and all(f.source == 'get_chip_distribution' and f.kind == 'chip_cost' for f in observations)
+        assert all((f.receipt_id, f.entity, f.observed_at, f.timeframe) == (
+            record['receipt_id'], record['entity'], record['observed_at'], record['timeframe']) for f in observations)
+    assert ([asdict(f) for f in catalog.facts.values()], catalog.receipts) == original
+    if records:
+        preserved = deepcopy(records)
+        records[0]['fact_refs'].clear()
+        records[0]['constraints'].clear()
+        assert catalog.source_semantics() == preserved
+
+
+@pytest.mark.parametrize('stamp,complete', [('2025-01-02', True), ('2025-01-01', False)])
+def test_estimate_contract_preserves_independent_dates_and_persisted_sources(tmp_path, stamp, complete):
+    rows = [('get_chip_distribution', json.dumps({'symbol': '002415', 'date': stamp,
+        '_meta': {'source': 'eastmoney_cyq_algorithm', 'timestamp': '2025-01-02T15:00:00+08:00'},
+        'cost_90_high': 23}))]
+    seen = []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' not in payload:
+            return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []}})
+        high = next(f for f in report_facts(payload) if f['metric'] == 'cost_90_high')
+        return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
+            'section': 'assessment', 'parts': ['002415当前90%筹码成本上沿为',
+                [high['id'], 'value_with_unit'], '。'], 'refs': [high['id']]}]})
+    def assessor(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            assert 'source_semantics' not in payload
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{
+                'through': p['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
+                'observation_dates': ['task_now'], 'classifications': []}]} for p in payload['paragraphs']]})
+        seen.append(payload)
+        # Deliberately optimistic date approval, with the witness omitted: the
+        # original bound observation must remain mandatory independently.
+        return json.dumps({'assessments': [{'id': s['id'], 'commitments': {
+            'participant_activity': False, 'causal_relation': False}, 'time_evidence': [],
+            'comparison': 'optimistic explicit model double', 'support_basis': 'direct',
+            'checks': dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed'),
+            'verdict': 'entailed'} for s in payload['statements']]})
+    publication = publish_report(task='说明当前筹码成本区间上沿。', draft='', tool_results=rows,
+        run_scope='dated-method-contract', call=writer, fact_review_call=assessor,
+        max_calls=2, reference_date='2025-01-02')
+    assert len(seen) == 1 and publication.artifact['review_valid']
+    assert (publication.verification['status'] == 'complete') is complete
+    assert publication.artifact['model_calls'] == 4
+    records = seen[0]['source_semantics']
+    assert len(records) == 1 and records[0]['observed_at'] == stamp
+    assert [(r['tool'], r['result']) for r in publication.artifact['receipts']] == rows
+    assert 'source_semantics' not in publication.text and 'permitted_inference' not in publication.text
+    if not complete:
+        assert any(check['reason'] == 'observation_not_at_asserted_date'
+                   for check in publication.artifact['temporal_checks'].values())
+    reference = persist_publication(tmp_path, publication)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['factual_review_input']['source_semantics'] == records
+    assert saved['reader_body'] == publication.artifact['reader_body']
+    assert next(f for f in saved['facts'] if f['metric'] == 'cost_90_high')['observed_at'] == stamp
 
 
 def source_receipts(alerts=()):

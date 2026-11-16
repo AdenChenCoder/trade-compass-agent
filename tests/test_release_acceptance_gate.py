@@ -74,6 +74,11 @@ def test_source_method_controls_preserve_the_claim_value_and_date_in_both_direct
     assert quote.value == json.loads(measured[2][-1][1])['content']
     assert [(r['tool'], r['result']) for r in catalogs[1].receipts] == measured[2]
     assert cases['estimate_as_measured_profile'][2] == cases['estimated_pressure_plan'][2]
+    quoted = cases['quoted_estimate_method_supported']
+    assert quoted[0] == estimated[0] and quoted[3] == estimated[3] and quoted[1] is True
+    quoted_catalog = EvidenceCatalog.build(quoted[2], run_scope='same-method-claim')
+    assert quoted_catalog.source_semantics() == catalogs[1].source_semantics() == []
+    assert next(f for f in quoted_catalog.facts.values() if f.kind == 'quotation').value == json.loads(quoted[2][-1][1])['content']
 
 
 @pytest.mark.parametrize('selected,cases,passed', [

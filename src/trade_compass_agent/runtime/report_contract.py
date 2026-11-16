@@ -489,6 +489,35 @@ class EvidenceCatalog:
                  if key not in {"receipt_id", "pointer", "entity", "timeframe"} and value not in ("", None)}
                 for fact in self.facts.values()]
 
+    def source_semantics(self):
+        """Bind method admissibility to owned observations, never to reader prose.
+
+        These records neither invent a source nor approve a claim. Quoted sources
+        still retain their own text for independent review of their methodology.
+        """
+        groups = {}
+        for fact in self.facts.values():
+            if fact.source != 'get_chip_distribution':
+                continue
+            scope = json.loads(fact.scope) if fact.scope else {}
+            if scope.get('estimate') != 'chip_cost_distribution':
+                continue
+            key = (fact.receipt_id, fact.entity, fact.observed_at, fact.timeframe)
+            groups.setdefault(key, []).append(fact.id)
+        return [{
+            'status': 'runtime_business_contract_not_source_evidence',
+            'source_method': 'chip_cost_distribution',
+            'required_owned_fact_scope': {'estimate': 'chip_cost_distribution'},
+            'permitted_inference': ['qualitative_historical_distribution_structure',
+                                   'support_resistance_watchpoint'],
+            'not_established': ['directly_measured_volume_profile', 'exact_price_frequency_maximum',
+                                'specific_participant_attribution', 'realized_causation'],
+            'constraints': ['source_must_actually_be_supplied', 'identity_level_date_and_scope_must_match',
+                            'retain_source_estimate_method', 'no_required_reader_formula_or_repeated_qualifier'],
+            'receipt_id': receipt, 'entity': entity, 'observed_at': stamp,
+            'timeframe': timeframe, 'fact_refs': refs,
+        } for (receipt, entity, stamp, timeframe), refs in groups.items()]
+
     def model_table(self):
         columns = ["id", "subject", "account", "metric", "label", "value", "unit", "observed_at", "kind", "source", "scope"]
         return {"fact_columns": columns, "facts": [[getattr(fact, column) for column in columns] for fact in self.facts.values()]}

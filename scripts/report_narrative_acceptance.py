@@ -113,9 +113,15 @@ SCOPE_CASES = {
     'profile_property_in_plan_estimated': (_chip_plan, True, [*_chip_bars, *_chip_estimate],
         '根据所给日期的资料给出后续观察位，并说明依据。'),
     'estimate_method_supported': (_chip_method_claim, True, [*_chip_bars, *_chip_estimate],
-        '说明所给日期的分布结构、来源方法和可提出的观察位。'),
+        '说明所给日期的分布结构及其来源方法。'),
+    'quoted_estimate_method_supported': (_chip_method_claim, True, [*_chip_bars,
+        ('fetch_url', json.dumps({'symbol': '002415', 'as_of': '2025-01-02',
+            'url': 'https://example.invalid/frozen-chip-estimate',
+            'content': '筹码算法根据日线和换手率估算，002415在2025-01-02的90%成本区间上沿为23元/股；'
+                '23元附近可作为前期成交密集区的估算观察位，非逐价成交量实测。'}))],
+        '说明所给日期的分布结构及其来源方法。'),
     'measured_profile_as_estimate': (_chip_method_claim, False, _profile,
-        '说明所给日期的分布结构、来源方法和可提出的观察位。'),
+        '说明所给日期的分布结构及其来源方法。'),
     'estimated_pressure_plan': ('002415在2025-01-02的筹码算法估算中，90%成本区间上沿为23元/股；'
         '据此可把23元附近作为后续压力观察位，但这不是逐价成交量的实测结论。', True, _chip_estimate,
         '说明所给日期的筹码成本估算、可据此提出的观察位及其局限。'),

@@ -53,6 +53,11 @@ in the linked regression tests, not in expanding prose exception lists.
   estimate-backed research interpretations. A general analytical lookback is
   not an additional calendar-date commitment; specific observation dates and
   relative calendar references retain their original temporal obligations.
+  Method-admissibility records bind to actual owned source observations and keep
+  their fact IDs, instrument and original date. They are business interpretation
+  contracts, not additional observations or approval decisions. A quoted source
+  may establish its own method through its original text; absence of a typed
+  method record does not establish absence of that method in a quoted source.
   Choosing numeric bindings does not withdraw other owned sources from review.
   Original announcements, source qualifications and successful first-party read
   results remain available, including an empty result with no numeric rows.
