@@ -6,7 +6,7 @@ import pytest
 from report_contract_helpers import report_facts
 from trade_compass_agent.runtime.report_contract import Calculation, EvidenceCatalog, calculate
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
-from trade_compass_agent.runtime.report_transport import review_receipts, source_record_context, composition_source_records
+from trade_compass_agent.runtime.report_transport import review_receipts, source_record_context, composition_source_records, source_reference_view
 
 
 def source_receipts(alerts=()):
@@ -279,6 +279,40 @@ def test_writing_metadata_view_preserves_limits_positions_empty_states_and_all_v
     assert catalog.receipts == before
 
 
+def test_source_reference_view_retains_exact_canonical_addresses_and_dates():
+    from copy import deepcopy
+    from dataclasses import asdict
+    receipts = [*source_receipts(), ('compute_ma', json.dumps({'symbol': '002415', 'timestamp': '2025-01-02',
+        'ma': {'MA5': 22, 'MA10': 23, 'MA20': 21}}))]
+    catalog = EvidenceCatalog.build(receipts, run_scope='address-view')
+    facts = [{**asdict(f), 'observed_date': f.observation_date('Asia/Shanghai'),
+              'display_value_with_unit': f.display_value_with_unit} for f in catalog.facts.values()]
+    selected = {next(f['id'] for f in facts if f['metric'] == 'MA5')}
+    contexts = {'p0': {'evidence': facts, 'calculations': []}}
+    before = deepcopy(contexts)
+    view, references = source_reference_view(contexts, selected)
+    kept = {f['id']: f for f in view['p0']['evidence']}
+    assert selected <= kept.keys()
+    assert all(f['id'] in kept for f in facts if f['kind'] in {'identity', 'quotation', 'classification'})
+    addressed = {}
+    originals = {r['id']: json.loads(r['result']) for r in catalog.receipts}
+    for source in references['sources']:
+        for row in source['rows']:
+            ref = dict(zip(references['columns'], row, strict=True))
+            fact = next(f for f in facts if f['id'] == ref['id'])
+            assert source['receipt_id'] == fact['receipt_id']
+            assert ref == {key: fact[key] for key in references['columns']}
+            raw = originals[source['receipt_id']]
+            for segment in ref['pointer'].split('/')[1:]:
+                key = segment.replace('~1', '/').replace('~0', '~')
+                raw = raw[int(key)] if isinstance(raw, list) else raw[key]
+            assert str(raw) == fact['value']
+            addressed[ref['id']] = ref
+    assert kept.keys().isdisjoint(addressed)
+    assert kept.keys() | addressed.keys() == {f['id'] for f in facts}
+    assert contexts == before
+
+
 @pytest.mark.parametrize('body', [
     '300406当前日线RSI处于中性区间。',
     '就当前日线RSI而言，300406既不过热，也不过冷。',
@@ -313,6 +347,14 @@ def test_unselected_indicator_remains_addressable_without_changing_body_or_origi
         seen.append(payload)
         facts = [f for ctx in payload['contexts'].values() for f in ctx['evidence']]
         rsi = next((f for f in facts if f['metric'] == 'current_rsi'), None)
+        references = payload.get('source_fact_references', {})
+        for source in references.get('sources', []):
+            receipt = next(r for r in payload['receipts'] if r['id'] == source['receipt_id'])
+            raw = json.loads(receipt['result'])
+            for values in source['rows']:
+                ref = dict(zip(references['columns'], values, strict=True))
+                if ref['pointer'] == '/current_rsi':
+                    rsi = {**ref, 'metric': 'current_rsi', 'entity': raw['symbol'], 'value': str(raw['current_rsi'])}
         # A real assessor must decide identity and support independently. An
         # optimistic date verdict is deliberately checked by the runtime.
         checks = dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed')
@@ -336,7 +378,7 @@ def test_unselected_indicator_remains_addressable_without_changing_body_or_origi
     original = result.artifact['document']['items'][0]
     assert original['parts'] == [{'type': 'text', 'text': body}]
     assert len(original['refs']) == 1  # Original writer bindings stay immutable.
-    rsi = next(f for ctx in seen[0]['contexts'].values() for f in ctx['evidence'] if f['metric'] == 'current_rsi')
+    rsi = next(f for f in result.artifact['facts'] if f['metric'] == 'current_rsi')
     assert rsi['observed_at'] == stamp and rsi['value'] == str(value)
     assert not result.artifact.get('factual_assessment_errors')
     if accepted:

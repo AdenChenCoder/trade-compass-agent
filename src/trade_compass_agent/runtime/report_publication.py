@@ -23,7 +23,7 @@ from trade_compass_agent.runtime.report_body import (
     BODY_MEANING, BodyMeaningError, reader_source_units, validate_body_meaning, runtime_bound_quantity_issue, factual_assertions, factual_review_statements,
 )
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
-from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts, source_record_context, composition_source_records
+from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts, source_record_context, composition_source_records, source_reference_view
 from trade_compass_agent.runtime.report_time import check_statement_time, temporal_evidence_context
 from trade_compass_agent.runtime.report_support import check_support_basis
 from trade_compass_agent.runtime.report_assessments import assessments_with_availability
@@ -180,6 +180,12 @@ freshness, risk absence or trading outcomes. Missing fields are not empty lists.
 inside source contexts. Matching another reader claim or repeating the author's
 analysis never establishes truth. Compare the target with actual source records
 and typed facts, not with reader wording or task instructions.
+source_fact_references addresses numerical observations not bound by the writer.
+Its columns describe each row; receipt_id identifies an original receipt and pointer
+is its exact JSON pointer. Check the value, unit, identity and scope in that original
+record, retaining the supplied original timestamp and display-calendar observed_date.
+The row's id is a canonical runtime-owned fact ID usable in time_evidence; receipt_id
+is not a fact ID. These addresses establish ownership, never semantic support.
 Interpret each assertion's actual empirical commitments independently. requirements contains only positive obligations obtained without source evidence: participant_activity, causal_relation, task_present or proposal. A true obligation cannot be weakened. proposal preserves a prospective choice, not a completed execution; its empirical premises remain independently applicable. ABSENCE of an obligation establishes no exemption and is not proof that no such claim occurs. No body category or negative temporal classification is supplied as an authority about reader meaning.
 A conventional market interpretation is not evidence of an unobserved actor or
 cause. If the observations could coexist with materially different actors or
@@ -753,12 +759,15 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 if fact_call and factual_items:
                     contexts, statements, assertion_owners = factual_assertions(
                         [row for row in review_input['inferences'] if row['id'] not in forced_reviews], body_meaning)
+                    selected_ids = {fact['id'] for context in contexts.values() for fact in context['evidence']}
                     contexts = source_record_context(catalog, contexts, review_input['receipts'],
                                                      report_context['display_timezone'])
+                    review_contexts, source_references = source_reference_view(contexts, selected_ids)
                     factual_review_input = {
                         "report_context": report_context,
                         "request_context": {"role": "requirements", "text": task},
-                        "contexts": contexts, "statements": factual_review_statements(statements),
+                        "contexts": review_contexts, "statements": factual_review_statements(statements),
+                        **({'source_fact_references': source_references} if source_references['sources'] else {}),
                         "receipts": review_input["receipts"], "execution_records": execution.records,
                     }
                     factual_response = fact_call(_FACT_REVIEW, json.dumps(factual_review_input, ensure_ascii=False,

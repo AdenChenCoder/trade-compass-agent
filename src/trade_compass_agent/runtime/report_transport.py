@@ -124,6 +124,28 @@ def composition_source_records(catalog):
     return records
 
 
+def source_reference_view(contexts, selected_ids):
+    """Address unselected numbers through original receipts without copying them.
+
+    Runtime checks retain the complete canonical contexts. The assessor gets
+    every original receipt and the exact ID/pointer/date linkage; selected
+    facts, quotations and derived categorical facts retain their full shape.
+    """
+    sources, result = {}, {}
+    for name, context in contexts.items():
+        evidence = []
+        for fact in context['evidence']:
+            if fact['id'] in selected_ids or fact['kind'] in {'identity', 'quotation', 'classification'}:
+                evidence.append(fact)
+            else:
+                sources.setdefault(fact['receipt_id'], []).append([
+                    fact['id'], fact['pointer'], fact['observed_at'], fact['observed_date']])
+        result[name] = {**context, 'evidence': evidence}
+    references = {'columns': ['id', 'pointer', 'observed_at', 'observed_date'],
+        'sources': [{'receipt_id': key, 'rows': rows} for key, rows in sources.items()]}
+    return result, references
+
+
 class ReportTransport:
     def __init__(self, catalog: EvidenceCatalog):
         self.references = {f"e{i}": key for i, key in enumerate(catalog.facts)}

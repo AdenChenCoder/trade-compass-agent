@@ -153,6 +153,11 @@ in the linked regression tests, not in expanding prose exception lists.
   and original dates in review context. Approved review observations remain
   navigable in reader source notes; original text, bindings and receipts stay
   unchanged. Unavailable or rejected assertions cannot add approved sources.
+  The assessor may receive unselected numerical observations as canonical
+  ID/receipt/JSON-pointer/date rows alongside the full original receipts,
+  rather than a second copy of every number and its metadata. Runtime checks
+  retain the complete typed contexts. Selected values, quotations and derived
+  categorical facts remain explicit; addresses cannot establish support.
   Numeric bindings remain tied to their original context and mandatory even
   if the assessor omits them. The runtime compares those
   source dates in the task's reference timezone with the task date and can withhold a statement despite an
