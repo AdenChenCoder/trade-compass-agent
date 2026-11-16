@@ -132,7 +132,7 @@ def test_qualitative_time_control_checks_completed_temporal_outcome(
     ('missing_rule_result_as_empty', '所给规则扫描没有退出预警。'),
     ('profile_property_in_plan_missing', '上方23元/股为前期成交密集区，突破仍需观察成交量。'),
     ('estimate_as_measured_profile', '002415在2025-01-02的逐价成交量实测证实，23元附近是该日成交最密集的价位。'),
-    ('measured_profile_as_estimate', '002415在2025-01-02的筹码算法估算显示，23元附近是前期成交密集区。'),
+    ('measured_profile_as_estimate', '002415在2025-01-02的23元附近这一参考位，依据是筹码算法估算。'),
 ])
 def test_thesis_negative_requires_its_own_completed_inferential_rejection(
     target_status, unrelated_status, dimension, available, passed, case, target_text,
