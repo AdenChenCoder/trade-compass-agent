@@ -95,6 +95,7 @@ _chip_estimate = [('get_chip_distribution', json.dumps({'symbol': '002415', 'dat
     '_meta': {'source': 'eastmoney_cyq_algorithm', 'timestamp': '2025-01-03T15:10:00+08:00'},
     'avg_cost': 22, 'cost_90_low': 20, 'cost_90_high': 23, 'cost_70_low': 20.5, 'cost_70_high': 21.5,
     'concentration': '集中', 'note': '基于日K线与换手率的筹码成本分布算法估算，不是逐价成交量实测。'}))]
+_chip_method_claim = '002415在2025-01-02的筹码算法估算显示，23元附近是前期成交密集区。'
 _rule_task = '仅报告所给规则扫描是否返回退出预警；缺少结果时明确不能判断。'
 _rule_result = '所给规则扫描没有退出预警。'
 def _rule_receipts(data):
@@ -111,6 +112,10 @@ SCOPE_CASES = {
     'profile_property_in_plan_supported': (_chip_plan, True, _profile, '根据所给日期的资料给出后续观察位，并说明依据。'),
     'profile_property_in_plan_estimated': (_chip_plan, True, [*_chip_bars, *_chip_estimate],
         '根据所给日期的资料给出后续观察位，并说明依据。'),
+    'estimate_method_supported': (_chip_method_claim, True, [*_chip_bars, *_chip_estimate],
+        '说明所给日期的分布结构、来源方法和可提出的观察位。'),
+    'measured_profile_as_estimate': (_chip_method_claim, False, _profile,
+        '说明所给日期的分布结构、来源方法和可提出的观察位。'),
     'estimated_pressure_plan': ('002415在2025-01-02的筹码算法估算中，90%成本区间上沿为23元/股；'
         '据此可把23元附近作为后续压力观察位，但这不是逐价成交量的实测结论。', True, _chip_estimate,
         '说明所给日期的筹码成本估算、可据此提出的观察位及其局限。'),
@@ -391,6 +396,7 @@ REJECTION_TARGETS = {
     'multiple_rule_alerts_as_empty': ('没有退出预警', ('quantity', 'support'), {'contradicted'}),
     'profile_property_in_plan_missing': ('23元/股为前期成交密集区', 'support', {'unknown', 'contradicted'}),
     'estimate_as_measured_profile': ('逐价成交量实测证实', 'support', {'unknown', 'contradicted'}),
+    'measured_profile_as_estimate': ('筹码算法估算显示', 'support', {'unknown', 'contradicted'}),
     'ma_order_mixed_as_bullish': ('均线呈多头排列', 'support', {'unknown', 'contradicted'}),
     'ma_order_bullish_denied': ('均线尚未构成多头排列', 'support', {'unknown', 'contradicted'}),
     'thesis_judgment_false_premise': ('600928市净率为0.8倍', 'quantity', {'contradicted'}),

@@ -56,6 +56,26 @@ def test_profile_controls_change_evidence_without_changing_the_reader_claim():
     assert json.loads(upper.scope)['method'] == 'eastmoney_cyq_algorithm'
 
 
+def test_source_method_controls_preserve_the_claim_value_and_date_in_both_directions():
+    from trade_compass_agent.runtime.report_contract import EvidenceCatalog
+    cases = NARRATIVE['SCOPE_CASES']
+    estimated = cases['estimate_method_supported']
+    measured = cases['measured_profile_as_estimate']
+    assert estimated[0] == measured[0] and estimated[3] == measured[3]
+    assert estimated[1] is True and measured[1] is False
+    catalogs = [EvidenceCatalog.build(row[2], run_scope='same-method-claim') for row in [estimated, measured]]
+    for catalog in catalogs:
+        high = next(f for f in catalog.facts.values() if f.source == 'get_bars' and f.metric == 'high')
+        assert high.entity == '002415' and high.value == '23'
+        assert high.observed_at == '2025-01-02' and high.unit == '元/股'
+    assert any(f.kind == 'chip_cost' for f in catalogs[0].facts.values())
+    assert not any(f.kind == 'chip_cost' for f in catalogs[1].facts.values())
+    quote = next(f for f in catalogs[1].facts.values() if f.kind == 'quotation')
+    assert quote.value == json.loads(measured[2][-1][1])['content']
+    assert [(r['tool'], r['result']) for r in catalogs[1].receipts] == measured[2]
+    assert cases['estimate_as_measured_profile'][2] == cases['estimated_pressure_plan'][2]
+
+
 @pytest.mark.parametrize('selected,cases,passed', [
     (['normal'], [{'case': 'normal', 'passed': True}], True),
     ([], [], False),
@@ -107,6 +127,7 @@ def test_qualitative_time_control_checks_completed_temporal_outcome(
     ('missing_rule_result_as_empty', '所给规则扫描没有退出预警。'),
     ('profile_property_in_plan_missing', '上方23元/股为前期成交密集区，突破仍需观察成交量。'),
     ('estimate_as_measured_profile', '002415在2025-01-02的逐价成交量实测证实，23元附近是该日成交最密集的价位。'),
+    ('measured_profile_as_estimate', '002415在2025-01-02的筹码算法估算显示，23元附近是前期成交密集区。'),
 ])
 def test_thesis_negative_requires_its_own_completed_inferential_rejection(
     target_status, unrelated_status, dimension, available, passed, case, target_text,
