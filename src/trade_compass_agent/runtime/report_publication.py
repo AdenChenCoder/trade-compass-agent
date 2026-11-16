@@ -890,15 +890,16 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         evaluate_assessment(assessment, statements_by_id[assessment['id']])
                     annotation_candidates = annotation_conflicts(statements, assessments, factual_assessment_errors)
                     if annotation_candidates:
+                        coverage_review_input['annotation_conflicts'] = [
+                            {'id': key, 'unresolved_axes': ['empirical_time', 'empirical_commitments']}
+                            for key in annotation_candidates]
                         coverage_review_input['annotation_review'] = {
                             **factual_review_input,
                             'statements': [{**{key: value for key, value in row.items() if key != 'observation_dates'},
                                 'requirements': {key: value
                                 for key, value in row.get('requirements', {}).items() if key != 'task_present'}}
                                 for row in factual_review_input['statements'] if row['id'] in annotation_candidates],
-                            'annotation_conflicts': [{'id': key,
-                                'unresolved_axes': ['empirical_time', 'empirical_commitments']}
-                                for key in annotation_candidates],
+                            'annotation_conflicts': coverage_review_input['annotation_conflicts'],
                         }
                 with llm_response_contract(max_tokens=16384, precise=True):
                     review = _json_value(call(_REVIEW + (_GAP_COVERAGE if optional_gaps else "")

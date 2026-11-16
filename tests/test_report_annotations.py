@@ -87,7 +87,7 @@ def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obliga
             rows[1]['checks'] = None
         return json.dumps({'assessments': rows})
 
-    result = publish_report(task='说明所给价格并评估持仓资料。', draft='', tool_results=receipts,
+    result = publish_report(task='说明所给日期的价格，并给出基于这些资料的研究看法。', draft='', tool_results=receipts,
         run_scope='annotation-control', run_id='annotation-control', call=writer, fact_review_call=checker,
         reference_date='2025-01-02', max_calls=2)
     succeeds = accepted and fault is None
