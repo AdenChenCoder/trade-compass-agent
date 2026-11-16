@@ -29,6 +29,9 @@ from trade_compass_agent.runtime.report_time import (
 )
 from trade_compass_agent.runtime.report_support import check_support_basis
 from trade_compass_agent.runtime.report_assessments import assessments_with_availability
+from trade_compass_agent.runtime.report_annotation_repair import (
+    ANNOTATION_REPAIR, annotation_conflicts, resolved_annotations,
+)
 from trade_compass_agent.runtime.report_classifications import check_classifications
 from trade_compass_agent.runtime.report_revision import (
     assertion_edit_plan, assertion_edit_schema, apply_assertion_edits,
@@ -568,6 +571,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     body_review_input = body_response = body_meaning = None
     execution_projections, body_quantity_issues, bound_quantity_checks, temporal_checks = {}, {}, {}, {}
     support_basis_checks, classification_checks = {}, {}
+    annotation_candidates, annotation_resolutions = {}, []
     reader_body = ""
     candidate_body_sha256 = None
     findings, rendered, traces = [], {}, {}
@@ -775,29 +779,6 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 coverage_review_input = ({**review_input, "inferences": [], "receipts": []}
                                          if fact_call else {**review_input})
                 optional_gaps = {item.id for item in gaps} - protected_gaps.keys()
-                with llm_response_contract(max_tokens=16384, precise=True):
-                    review = _json_value(call(_REVIEW + (_GAP_COVERAGE if optional_gaps else ""),
-                        json.dumps(coverage_review_input, ensure_ascii=False, separators=(",", ":"))))
-                check_active()
-                rows = review["reviews"]
-                coverage = review["coverage"]
-                reviewed_items = [] if fact_call else inferences
-                if (set(review) not in ({"reviews", "coverage"}, {"reviews", "coverage", "gap_reviews"}) or not isinstance(rows, list)
-                        or len(rows) != len(reviewed_items)
-                        or {row["id"] for row in rows} != {item.id for item in reviewed_items}
-                        or any(set(row) != {"id", "supported", "reason"}
-                               or type(row["supported"]) is not bool
-                               or not isinstance(row["reason"], str)
-                               or len(row["reason"]) > 500
-                               or (not row["supported"] and not row["reason"].strip()) for row in rows)
-                        or not {'complete', 'missing'} <= set(coverage)
-                        or set(coverage) - {'complete', 'missing', 'repairable', 'gap_answer_ids'}
-                        or ("repairable" in coverage and type(coverage["repairable"]) is not bool)
-                        or type(coverage["complete"]) is not bool
-                        or not isinstance(coverage["missing"], list) or len(coverage["missing"]) > 8
-                        or any(not isinstance(s, str) or not s.strip() or len(s) > 500 for s in coverage["missing"])
-                        or coverage["complete"] != (not coverage["missing"])):
-                    raise ValueError("invalid inference review")
                 factual_items = [item for item in inferences if item.id not in forced_reviews]
                 if fact_call and factual_items:
                     contexts, statements, assertion_owners = factual_assertions(
@@ -831,8 +812,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     # A blanket approval cannot hide an unresolved dimension.
                     # These are typed semantic outcomes, not prose truth rules.
                     statements_by_id = {statement['id']: statement for statement in statements}
-                    for assessment in assessments:
-                        statement = statements_by_id[assessment['id']]
+                    def evaluate_assessment(assessment, statement):
                         context = contexts[statement['context_id']]
                         available = {fact['id'] for fact in context['evidence']}
                         if not set([*statement['bound_fact_refs'], *statement['time_fact_refs']]) <= available:
@@ -906,6 +886,63 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             assessment['verdict'] = 'contradicted'
                         elif 'unknown' in checks and assessment['verdict'] == 'entailed':
                             assessment['verdict'] = 'unknown'
+                    for assessment in assessments:
+                        evaluate_assessment(assessment, statements_by_id[assessment['id']])
+                    annotation_candidates = annotation_conflicts(statements, assessments, factual_assessment_errors)
+                    if annotation_candidates:
+                        coverage_review_input['annotation_review'] = {
+                            **factual_review_input,
+                            'statements': [{**{key: value for key, value in row.items() if key != 'observation_dates'},
+                                'requirements': {key: value
+                                for key, value in row.get('requirements', {}).items() if key != 'task_present'}}
+                                for row in factual_review_input['statements'] if row['id'] in annotation_candidates],
+                            'annotation_conflicts': [{'id': key,
+                                'unresolved_axes': ['empirical_time', 'empirical_commitments']}
+                                for key in annotation_candidates],
+                        }
+                with llm_response_contract(max_tokens=16384, precise=True):
+                    review = _json_value(call(_REVIEW + (_GAP_COVERAGE if optional_gaps else "")
+                        + (ANNOTATION_REPAIR if annotation_candidates else ""),
+                        json.dumps(coverage_review_input, ensure_ascii=False, separators=(",", ":"))))
+                check_active()
+                rows = review["reviews"]
+                coverage = review["coverage"]
+                reviewed_items = [] if fact_call else inferences
+                if (set(review) - ({'annotation_resolutions'} if annotation_candidates else set()) not in ({"reviews", "coverage"}, {"reviews", "coverage", "gap_reviews"}) or not isinstance(rows, list)
+                        or len(rows) != len(reviewed_items)
+                        or {row["id"] for row in rows} != {item.id for item in reviewed_items}
+                        or any(set(row) != {"id", "supported", "reason"}
+                               or type(row["supported"]) is not bool
+                               or not isinstance(row["reason"], str)
+                               or len(row["reason"]) > 500
+                               or (not row["supported"] and not row["reason"].strip()) for row in rows)
+                        or not {'complete', 'missing'} <= set(coverage)
+                        or set(coverage) - {'complete', 'missing', 'repairable', 'gap_answer_ids'}
+                        or ("repairable" in coverage and type(coverage["repairable"]) is not bool)
+                        or type(coverage["complete"]) is not bool
+                        or not isinstance(coverage["missing"], list) or len(coverage["missing"]) > 8
+                        or any(not isinstance(s, str) or not s.strip() or len(s) > 500 for s in coverage["missing"])
+                        or coverage["complete"] != (not coverage["missing"])):
+                    raise ValueError("invalid inference review")
+                if fact_call and factual_items:
+                    if annotation_candidates:
+                        try:
+                            resolutions = resolved_annotations(review.get('annotation_resolutions', []),
+                                annotation_candidates, statements, transport.decode_factual_review)
+                        except (ValueError, TypeError, KeyError):
+                            resolutions = {}
+                            attempts.append({'annotation_review_error_type': 'invalid_annotation_resolution'})
+                        for identifier, (statement, assessment) in resolutions.items():
+                            index = next(i for i, row in enumerate(assessments) if row['id'] == identifier)
+                            previous = assessments[index]
+                            previous_error = factual_assessment_errors.pop(identifier, None)
+                            evaluate_assessment(assessment, statement)
+                            assessments[index] = assessment
+                            annotation_resolutions.append({'id': identifier,
+                                'previous_statement': statements_by_id[identifier],
+                                'previous_assessment': previous, 'previous_error': previous_error,
+                                'statement': statement, 'assessment': assessment})
+                            statements_by_id[identifier] = statement
                     by_assertion = {row['id']: row for row in assessments}
                     date_gaps = {row['id']: refs for row in assessments
                         if row['id'] not in factual_assessment_errors
@@ -1033,6 +1070,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "support_basis_checks": support_basis_checks, "classification_checks": classification_checks,
                 "factual_review": factual_review,
                 "factual_assessment_errors": factual_assessment_errors, "review_feedback_valid": review_feedback_valid,
+                "annotation_candidates": annotation_candidates, "annotation_resolutions": annotation_resolutions,
                 "revision_input": revision, "reader_body": reader_body or text,
                 "candidate_body_sha256": candidate_body_sha256,
                 "published_text": text, "attempts": attempts}
@@ -1109,7 +1147,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "candidate_body_sha256",
                 "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues", "bound_quantity_checks",
                 "coverage_review_input", "factual_review_input", "factual_response", "factual_review", "temporal_checks",
-                "support_basis_checks", "classification_checks")
+                "support_basis_checks", "classification_checks", "annotation_candidates", "annotation_resolutions")
         history = [{key: attempt.artifact[key] for key in keys} for attempt in (publication, revised)]
         selected.artifact["revision_attempts"] = history
         selected.artifact["selected_attempt"] = int(selected is revised)

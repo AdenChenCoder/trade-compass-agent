@@ -153,6 +153,19 @@ in the linked regression tests, not in expanding prose exception lists.
   Reject foreign, duplicate, missing and unchanged edits, and keep the existing
   single-revision/call/deadline policy. No prior approval substitutes for review
   of the resulting body.
+  Conflicting semantic annotations are repairable metadata, not permission to
+  approve unsupported prose or rewrite verified text. After factual assessment,
+  the existing task-coverage call may independently recheck a narrowly selected
+  disagreement: an unbound opinion mislabelled as a present observation, or a
+  reasoned interpretation with inconsistent empirical-commitment flags. Preserve
+  the original body, responses and checks. Recheck any proposed assessment through
+  the same ownership, date, support and classification guards. A present anchor
+  can be corrected only for a mutually identified opinion with no new empirical
+  identity, quantity or time claim. Never clear a positive actor/causal body
+  requirement, owned value/date, categorical conflict or unrelated failed row.
+  Invalid or unresolved repairs retain their original failures and valid siblings.
+  This uses the existing coverage call after factual review; call limits, the
+  single prose revision, cancellation and parent deadlines stay unchanged.
 - An explicitly configured `llm.local_report_review_model` separates factual
   entailment from task coverage. It uses only local LM Studio, original receipts,
   typed calculations, current execution records and the final statements. The original

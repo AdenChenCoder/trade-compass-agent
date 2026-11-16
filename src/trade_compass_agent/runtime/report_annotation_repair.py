@@ -1,0 +1,74 @@
+"""Bounded reconciliation of inconsistent semantic annotations, never prose."""
+from __future__ import annotations
+
+from trade_compass_agent.runtime.report_assessments import assessments_with_availability
+
+
+ANNOTATION_REPAIR = """The annotation_conflicts are unresolved disagreements about the exact reader text, not proof that its claims are true. Resolve them independently using the original paragraphs, source contexts and receipts. Do not rewrite prose, change observations or satisfy a task by changing its meaning.
+For each listed conflict return annotation_resolutions entries with id, empirical_present (boolean), and assessment. An assessment contains id, comparison (source comparison), verdict (entailed|contradicted|unknown), support_basis (direct|calculated|reasoned|unknown|not_applicable), commitments ({participant_activity:boolean,causal_relation:boolean}), time_evidence (owned fact IDs), and checks ({identity_scope,time,quantity,support}, each entailed|contradicted|unknown|not_applicable). Return [] for conflicts you cannot resolve. Use only supplied statement IDs and owned fact references. Every assessment is a fresh source review; no prior interpretation or verdict is supplied as authority. Do not assume that a selected statement is an opinion or that it is supported.
+A current research opinion is not automatically a new current market measurement. An opinion's actual empirical premises, even qualitative or embedded ones, still require their real dates. empirical_present=false only if the exact statement adds no present empirical observation; an assessment of holding rationale is distinct from an investor's actual beliefs/actions. Do not erase explicit current values or qualitative observations by calling them opinions.
+Distinguish analytical use of an evidenced event from a claim that it actually caused price action. A reasoned interpretation may be supported without asserting causation or observed participant activity. Preserve all actual actor/causal predicates, including negation; aggregate volume cannot prove absence of an actor. Explain the reader's actual commitment and its source support in comparison. A previous positive verdict or a named source never establishes truth.
+Coverage still independently checks the complete reader report. annotation_resolutions may repair only the listed annotations; they cannot clear a bound value/date conflict, invent a source or rewrite any reader text. The runtime applies its normal source-ownership and factual checks again.
+"""
+
+
+def annotation_conflicts(statements, assessments, errors):
+    """Only two observed protocol disagreements qualify, not arbitrary failures."""
+    by_id = {row['id']: row for row in statements}
+    result = {}
+    for row in assessments:
+        statement = by_id[row['id']]
+        reported = row.get('reported_checks', row['checks'])
+        error = errors.get(row['id'])
+        if error and error['code'] != 'temporal_witness_missing':
+            continue
+        if (statement['assertion_kind'] != 'judgment' or statement['meaning_kind'] != 'other'
+                or statement['bound_fact_refs'] or statement['time_fact_refs']
+                or statement.get('classifications') or row.get('support_basis') != 'reasoned'
+                or row.get('reported_verdict', row['verdict']) != 'entailed'
+                or not isinstance(reported, dict)
+                or any(value not in {'entailed', 'not_applicable'} for value in reported.values())):
+            continue
+        commitments = row.get('commitments')
+        if (not isinstance(commitments, dict) or set(commitments) != {'participant_activity', 'causal_relation'}
+                or any(type(value) is not bool for value in commitments.values())):
+            continue
+        if any(commitments.values()):
+            result[row['id']] = 'empirical_scope'
+        elif (statement['time_scope'] == 'reference_date' and not row['time_evidence']
+                and all(reported[key] == 'not_applicable' for key in ('identity_scope', 'time', 'quantity'))):
+            result[row['id']] = 'opinion_time'
+    return result
+
+
+def resolved_annotations(value, candidates, statements, decode):
+    """Invalid optional repairs leave original failures and usable siblings intact."""
+    if not isinstance(value, list) or len(value) > len(candidates):
+        raise ValueError('invalid annotation resolutions')
+    seen, result = set(), {}
+    by_id = {row['id']: row for row in statements}
+    for entry in value:
+        if (not isinstance(entry, dict) or set(entry) != {'id', 'empirical_present', 'assessment'}
+                or not isinstance(entry['id'], str) or entry['id'] not in candidates or entry['id'] in seen
+                or type(entry['empirical_present']) is not bool):
+            raise ValueError('invalid annotation resolution identity')
+        identifier = entry['id']
+        seen.add(identifier)
+        rows, errors = assessments_with_availability(decode({'assessments': [entry['assessment']]}), [identifier])
+        if errors:
+            continue
+        assessment = rows[0]
+        statement = dict(by_id[identifier])
+        # An optional metadata repair cannot remove a positive body requirement
+        # about an actor, cause, owned value or indicator classification. Only a
+        # mutually identified opinion with no new identity/quantity/time claim
+        # can correct its inconsistent present-observation annotation.
+        if not entry['empirical_present'] and statement['time_scope'] == 'reference_date':
+            if (assessment.get('support_basis') != 'reasoned' or assessment['time_evidence']
+                    or assessment.get('commitments') != {'participant_activity': False, 'causal_relation': False}
+                    or any(assessment['checks'][key] != 'not_applicable'
+                           for key in ('identity_scope', 'time', 'quantity'))):
+                continue
+            statement.update(time_scope='other', observation_dates=[])
+        result[identifier] = (statement, assessment)
+    return result
