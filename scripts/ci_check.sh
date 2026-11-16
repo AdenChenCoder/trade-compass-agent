@@ -59,6 +59,7 @@ fi
   src/trade_compass_agent/runtime/report_contract.py \
   src/trade_compass_agent/runtime/report_execution.py \
   src/trade_compass_agent/runtime/report_publication.py \
+  src/trade_compass_agent/runtime/report_assessments.py \
   src/trade_compass_agent/runtime/report_body.py \
   src/trade_compass_agent/runtime/report_classifications.py \
   src/trade_compass_agent/runtime/indicator_values.py \

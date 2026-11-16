@@ -35,6 +35,26 @@ def assess(payload, verdict="entailed"):
                             for row in payload["statements"]]}
 
 
+METADATA_FAULTS = ('bad_check', 'missing_check', 'bad_verdict', 'bad_comparison', 'bad_time_refs', 'extra_field')
+
+
+def break_assessment_metadata(row, fault):
+    if fault == 'bad_check':
+        row['checks']['support'] = 'reasoned'
+    elif fault == 'missing_check':
+        row['checks'].pop('quantity')
+    elif fault == 'bad_verdict':
+        row['verdict'] = 'not_applicable'
+    elif fault == 'bad_comparison':
+        row['comparison'] = None
+    elif fault == 'bad_time_refs':
+        row['time_evidence'] = [True]
+    elif fault == 'extra_field':
+        row['unrequested'] = 'not evidence'
+    else:
+        raise AssertionError('unknown fixture fault')
+
+
 @pytest.mark.parametrize('assertion_kind', ['actor_activity', 'causal_relation'])
 @pytest.mark.parametrize('basis,supported,unavailable', [
     ('direct', True, False), ('reasoned', False, False), ('calculated', False, False),
@@ -506,7 +526,8 @@ def test_revision_receives_exact_assertion_and_runtime_dates_and_must_act_on_the
     assert saved['revision_attempts'][1]['revision_input']['factual_feedback'] == writing[1]['revision']['factual_feedback']
 
 
-def test_partial_review_can_repair_a_verified_error_once_without_resampling_annotation_failures(tmp_path):
+@pytest.mark.parametrize('annotation_fault', ('invalid_reference', *METADATA_FAULTS))
+def test_partial_review_can_repair_a_verified_error_once_without_resampling_annotation_failures(tmp_path, annotation_fault):
     counts = {'compose': 0, 'body': 0, 'fact': 0}
     def writer(system, user):
         payload = json.loads(user)
@@ -538,7 +559,10 @@ def test_partial_review_can_repair_a_verified_error_once_without_resampling_anno
         counts['fact'] += 1
         result = assess(payload)
         if counts['fact'] == 1:
-            result['assessments'][0]['time_evidence'] = ['not-a-run-fact']
+            if annotation_fault == 'invalid_reference':
+                result['assessments'][0]['time_evidence'] = ['not-a-run-fact']
+            else:
+                break_assessment_metadata(result['assessments'][0], annotation_fault)
             result['assessments'][1]['checks']['support'] = 'unknown'
         return json.dumps(result)
     result = publish_report(task='报告观察价格并说明能否据此判断交易主体。', draft='', tool_results=RECEIPTS,
@@ -1669,3 +1693,117 @@ def test_bound_gap_review_keeps_local_factual_and_coverage_roles_independent(gen
     assert ("22元/股升至23元/股" in report.text) is supported
     assert any(f["code"] == "declared_gap" for f in report.verification["findings"]) is genuine_gap
     assert report.artifact["factual_model_calls"] == report.artifact["body_review_model_calls"] == 1
+
+
+@pytest.mark.parametrize('fault', METADATA_FAULTS)
+def test_bad_assessment_row_retains_other_verified_prose_without_annotation_retry(tmp_path, fault):
+    counts = {'compose': 0, 'body': 0, 'fact': 0}
+    good = '另外，002415在2025-01-02的收盘价为23元/股。'
+    raw_answers = []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' not in payload:
+            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        counts['compose'] += 1
+        assert 'revision' not in payload, 'a metadata-only failure cannot resample the same body'
+        document = compose(payload)
+        fact = next(f for f in report_facts(payload) if f['metric'] == 'close' and f['observed_at']=='2025-01-02')
+        document['items'].append({'id': 'good', 'type': 'paragraph', 'section': 'market',
+            'parts': ['另外，', [fact['id'], 'subject'], '在', [fact['id'], 'date'],
+                      '的收盘价为', [fact['id'], 'value_with_unit'], '。'], 'refs': []})
+        return json.dumps(document)
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            counts['body'] += 1
+            return json.dumps(body_reply(payload))
+        counts['fact'] += 1
+        response = assess(payload)
+        break_assessment_metadata(response['assessments'][0], fault)
+        raw_answers.append(json.dumps(response))
+        return raw_answers[-1]
+    result = publish_report(task='报告两日收盘记录。', draft='', tool_results=RECEIPTS,
+        run_scope='per-row-availability', call=writer, fact_review_call=checker, max_calls=4)
+    assert result.verification['status'] == 'incomplete' and not result.artifact['review_valid']
+    assert counts == {'compose': 1, 'body': 1, 'fact': 1}
+    assert good in result.artifact['reader_body']
+    assert '22元/股升至23元/股' not in result.artifact['reader_body']
+    assert set(result.artifact['factual_assessment_errors']) == {'c0'}
+    rows = {row['id']: row for row in result.artifact['factual_review']['assessments']}
+    assert rows['c0']['validation_status'] == 'unavailable' and rows['c0']['verdict'] != 'entailed'
+    assert rows['c1']['verdict'] == 'entailed' and 'validation_status' not in rows['c1']
+    assert not result.artifact['review_feedback_valid'] and not result.artifact.get('revision_attempts')
+    assert result.artifact['factual_response'] == raw_answers[0]
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['reader_body'] == result.artifact['reader_body']
+    assert saved['factual_response'] == raw_answers[0] and saved['receipts'] == result.artifact['receipts']
+
+
+@pytest.mark.parametrize('scene', ['dated_valuation', 'ma_alignment', 'correct_valuation'])
+def test_owned_date_or_indicator_conflict_can_fund_real_revision_despite_bad_annotation(tmp_path, scene):
+    counts = {'compose': 0, 'body': 0, 'fact': 0}
+    needs_change = scene != 'correct_valuation'
+    day = '2025-01-01' if needs_change else '2025-01-02'
+    receipts = [('compute_ma', json.dumps({'symbol': '002415', 'timeframe': '1d',
+        '_meta': {'as_of': '2025-01-02'}, 'ma': {'MA5': 22, 'MA10': 23, 'MA20': 20, 'MA60': 18},
+        'trend': 'mixed'}))] if scene == 'ma_alignment' else [
+            ('get_fundamentals', json.dumps({'symbol': '002415', 'as_of': day, 'pb': 0.8}))]
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' not in payload:
+            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        counts['compose'] += 1
+        changed = 'revision' in payload
+        if changed:
+            assert needs_change
+            feedback = payload['revision']['factual_feedback'][0]
+            assert feedback['completed'] is False and feedback['runtime_findings']
+        facts = report_facts(payload)
+        if scene == 'ma_alignment':
+            parts = ['002415在2025-01-02的均线呈' + ('混合排列。' if changed else '多头排列。')]
+        else:
+            fact = next(f for f in facts if f['metric'] == 'pb')
+            parts = ['002415在', [fact['id'], 'date'], '的市净率为', [fact['id'], 'value_with_unit'], '。'] if changed else [
+                '002415当前的市净率为', [fact['id'], 'value_with_unit'], '。']
+        return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
+            'section': 'assessment', 'parts': parts, 'refs': [f['id'] for f in facts]}]})
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            counts['body'] += 1
+            p = payload['paragraphs'][0]
+            changed = counts['body'] > 1
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{
+                'through': p['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
+                'observation_dates': ['2025-01-02'] if scene == 'ma_alignment' else [day] if changed else ['task_now'],
+                'classifications': [{'property': 'moving_average_order',
+                    'value': 'mixed' if changed else 'bullish_alignment', 'operator': 'eq',
+                    'scope': 'all_mentioned', 'periods': []}] if scene == 'ma_alignment' else []}]}]})
+        counts['fact'] += 1
+        response = assess(payload)
+        owned = next(f for c in payload['contexts'].values() for f in c['evidence']
+                     if f['kind'] in {'ratio', 'moving_average'})
+        response['assessments'][0]['time_evidence'] = [owned['id']]
+        if counts['fact'] == 1:
+            break_assessment_metadata(response['assessments'][0], 'bad_check')
+        return json.dumps(response)
+    result = publish_report(task='说明所给日期的均线排列。' if scene == 'ma_alignment' else '说明所给市净率和数据日期。',
+        draft='', tool_results=receipts, run_scope='owned-conflict-'+scene, call=writer,
+        fact_review_call=checker, max_calls=4, reference_date='2025-01-02')
+    assert counts == dict.fromkeys(counts, 2 if needs_change else 1)
+    assert (result.verification['status'] == 'complete') is needs_change
+    if needs_change:
+        first, final = result.artifact['revision_attempts']
+        assert first['review_feedback_valid'] and not first['review_valid']
+        row = first['factual_review']['assessments'][0]
+        assert row['validation_status'] == 'unavailable' and row['runtime_findings']
+        assert final['review_valid'] and not final['factual_assessment_errors']
+        assert result.artifact['revision_changed_body'] and result.artifact['selected_attempt'] == 1
+        assert ('混合排列' if scene == 'ma_alignment' else day) in result.artifact['reader_body']
+    else:
+        assert not result.artifact['review_feedback_valid'] and not result.artifact.get('revision_attempts')
+    ref = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(ref['artifact_id']+'.json')).read_text())
+    assert [(r['tool'], r['result']) for r in saved['receipts']] == receipts
+    assert saved['reader_body'] == result.artifact['reader_body']

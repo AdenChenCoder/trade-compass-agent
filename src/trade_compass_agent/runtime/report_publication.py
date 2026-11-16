@@ -26,6 +26,7 @@ from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_
 from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts, source_record_context
 from trade_compass_agent.runtime.report_time import check_statement_time, temporal_evidence_context
 from trade_compass_agent.runtime.report_support import check_support_basis
+from trade_compass_agent.runtime.report_assessments import assessments_with_availability
 from trade_compass_agent.runtime.report_classifications import check_classifications
 
 
@@ -736,28 +737,10 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                                                                           separators=(",", ":")))
                     check_active()
                     factual_review = _json_value(factual_response)
-                    assessments = factual_review["assessments"]
-                    if (set(factual_review) != {"assessments"} or not isinstance(assessments, list)
-                            or len(assessments) != len(statements)
-                            or any(not isinstance(row, dict) or set(row) not in (
-                                       {"id", "comparison", "checks", "time_evidence", "verdict"},
-                                       {"id", "comparison", "checks", "time_evidence", "verdict", "support_basis"},
-                                       {"id", "comparison", "checks", "time_evidence", "verdict", "commitments"},
-                                       {"id", "comparison", "checks", "time_evidence", "verdict", "support_basis", "commitments"})
-                                   or not isinstance(row["id"], str)
-                                   or row["verdict"] not in {"entailed", "contradicted", "unknown"}
-                                   or not isinstance(row["comparison"], str) or not row["comparison"].strip()
-                                   or len(row["comparison"]) > 5000
-                                   or not isinstance(row['time_evidence'], list) or len(row['time_evidence']) > 100
-                                   or any(not isinstance(ref, str) for ref in row['time_evidence'])
-                                   or len(row['time_evidence']) != len(set(row['time_evidence']))
-                                   or not isinstance(row['checks'], dict)
-                                   or set(row['checks']) != {'identity_scope', 'time', 'quantity', 'support'}
-                                   or any(not isinstance(value, str) or value not in {
-                                       'entailed', 'contradicted', 'unknown', 'not_applicable'}
-                                       for value in row['checks'].values()) for row in assessments)
-                            or {row["id"] for row in assessments} != {row['id'] for row in statements}):
-                        raise ValueError("invalid factual review")
+                    assessments, row_errors = assessments_with_availability(
+                        factual_review, [row['id'] for row in statements])
+                    factual_review['assessments'] = assessments
+                    factual_assessment_errors.update(row_errors)
                     # A blanket approval cannot hide an unresolved dimension.
                     # These are typed semantic outcomes, not prose truth rules.
                     statements_by_id = {statement['id']: statement for statement in statements}
@@ -768,8 +751,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         if not set([*statement['bound_fact_refs'], *statement['time_fact_refs']]) <= available:
                             raise ReportEvidenceScopeError('runtime_binding_outside_context', statement['id'])
                         context = temporal_evidence_context(context, contexts)
-                        assessment['reported_verdict'] = assessment['verdict']
-                        assessment['reported_checks'] = dict(assessment['checks'])
+                        assessment.setdefault('reported_verdict', assessment['verdict'])
+                        assessment.setdefault('reported_checks', dict(assessment['checks']))
                         available = {fact['id'] for fact in context['evidence']}
                         unknown_refs = set(assessment['time_evidence']) - available
                         timing_assessment = assessment if not unknown_refs else {
@@ -781,10 +764,12 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             # Keep other independently assessed assertions usable.
                             # Never promote an invalid reference to a fact or count
                             # this row as a completed semantic rejection.
-                            factual_assessment_errors[statement['id']] = {
-                                'stage': 'factual_review', 'code': ('temporal_reference_not_in_run_facts'
-                                    if unknown_refs else 'temporal_witness_missing'),
-                                'invalid_reference_count': len(unknown_refs)}
+                            code = 'temporal_reference_not_in_run_facts' if unknown_refs else 'temporal_witness_missing'
+                            error = factual_assessment_errors.setdefault(statement['id'], {
+                                'stage': 'factual_review', 'code': code})
+                            if error['code'] != code:
+                                error.setdefault('additional_codes', []).append(code)
+                            error['invalid_reference_count'] = len(unknown_refs)
                             assessment['validation_status'] = 'unavailable'
                             timing.update(status='unknown', reason='temporal_evidence_unavailable')
                             assessment['checks']['time'] = 'unknown'
@@ -814,14 +799,29 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             if assessment['checks']['support'] != 'contradicted':
                                 assessment['checks']['support'] = 'unknown'
                             assessment['comparison'] += ' 原文所断言的指标分类与本轮计算尚不能对应。'
+                        if statement['id'] in factual_assessment_errors:
+                            # Owned bindings and indicator operands can prove a
+                            # real content conflict independently of malformed
+                            # model metadata. They never approve that bad row.
+                            independent = {**assessment, 'time_evidence': []}
+                            bound_time = check_statement_time(statement, independent, context, report_context)
+                            bound_category = check_classifications(statement, independent, context)
+                            runtime_findings = []
+                            if bound_time['reason'] == 'observation_not_at_asserted_date':
+                                runtime_findings.append({'code': 'bound_observation_date_conflict', 'check': bound_time})
+                            if any(row['reason'] == 'indicator_classification_conflict'
+                                   for row in bound_category['claims']):
+                                runtime_findings.append({'code': 'indicator_classification_conflict', 'check': bound_category})
+                            if runtime_findings:
+                                assessment['runtime_findings'] = runtime_findings
                         checks = set(assessment['checks'].values())
                         if 'contradicted' in checks:
                             assessment['verdict'] = 'contradicted'
                         elif 'unknown' in checks and assessment['verdict'] == 'entailed':
                             assessment['verdict'] = 'unknown'
                     by_assertion = {row['id']: row for row in assessments}
-                    review_feedback_valid = any(row['id'] not in factual_assessment_errors
-                        and row['verdict'] != 'entailed' for row in assessments)
+                    review_feedback_valid = any((row['id'] not in factual_assessment_errors
+                        and row['verdict'] != 'entailed') or row.get('runtime_findings') for row in assessments)
                     original_text = {row['id']: row['text'] for row in statements}
                     rows = []
                     for identifier, claim_ids in assertion_owners.items():
@@ -860,8 +860,9 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     if not row["supported"] and item.id not in unconfirmed_execution:
                         claim_ids = assertion_owners.get(item.id, []) if fact_call else []
                         unavailable = [key for key in claim_ids if key in factual_assessment_errors]
-                        confirmed = [key for key in claim_ids if key not in factual_assessment_errors
-                                     and by_assertion[key]['verdict'] != 'entailed'] if fact_call else []
+                        confirmed = [key for key in claim_ids if (key not in factual_assessment_errors
+                                     and by_assertion[key]['verdict'] != 'entailed')
+                                     or by_assertion[key].get('runtime_findings')] if fact_call else []
                         if unavailable:
                             findings.append(Finding('review', 'review_unavailable', '该部分研判尚未完成核验', item.id))
                         if not unavailable or confirmed:
@@ -944,6 +945,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     'temporal_check': temporal_checks[identifier],
                     'support_basis_check': support_basis_checks[identifier],
                     'classification_check': classification_checks[identifier],
+                    'runtime_findings': assessment.get('runtime_findings', []),
                 })
         revised = _publish_report(task=task, draft=draft, tool_results=tool_results, run_scope=run_scope,
             call=call, run_id=run_id, current_tool_results=current_tool_results,

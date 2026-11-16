@@ -178,6 +178,10 @@ in the linked regression tests, not in expanding prose exception lists.
   Unlike retrieval chunks, these units have no overlap, trimming or content
   normalization, and belong to one immutable body snapshot.
   An invalid temporal reference makes that assertion unavailable, not false.
+  The same row ownership applies to malformed assessment fields. Preserve valid
+  sibling assessments, the original response and the unavailable row's causes;
+  never coerce an invalid label into an approval or completed rejection.
+  Missing, repeated or foreign assertion IDs invalidate the shared envelope.
   The same applies when review claims an entailed current observation time but
   supplies neither a source witness nor an existing runtime date binding.
   Qualitative observations still need their source date; absence of an explicit
@@ -186,7 +190,11 @@ in the linked regression tests, not in expanding prose exception lists.
   Persist this distinction and withhold its paragraph while preserving other
   independently verified analysis. A completed rejection elsewhere can justify
   the one existing genuine body revision; an annotation error alone cannot
-  trigger a review retry. Normal completion and learning still require all
+  trigger a review retry. A conflict independently established by original bound
+  dates or owned indicator operands may also justify that single changed-body
+  revision while the model annotation remains unavailable. Exclude model-selected
+  witnesses from this independent check; missing or ambiguous evidence is not
+  a demonstrated conflict. Normal completion and learning still require all
   checks. An incomplete reader revision may retain independently approved
   paragraphs despite another paragraph's annotation error; withhold that
   paragraph and preserve the unavailable status, causes and prior supported
