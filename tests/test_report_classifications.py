@@ -99,6 +99,29 @@ def test_explicit_subset_does_not_invent_whole_system_alignment():
     assert check['actual'] == 'bullish_alignment' and len(check['evidence']) == 2
 
 
+@pytest.mark.parametrize('values,bullish', [(MIXED, False), (BULLISH, True)])
+@pytest.mark.parametrize('redundant', [[20], [20, 60]])
+@pytest.mark.parametrize('operator', ['eq', 'ne'])
+def test_whole_system_scope_is_not_narrowed_by_redundant_period_metadata(tmp_path, values, bullish, redundant, operator):
+    prose = '均线呈多头排列。' if operator == 'eq' else '均线尚未构成多头排列。'
+    result, receipts, calls = publication(values=values, prose=prose, wire_change={'classifications': [{
+        'property': 'moving_average_order', 'value': 'bullish_alignment', 'operator': operator,
+        'scope': 'all_mentioned', 'periods': redundant}]})
+    supported = bullish if operator == 'eq' else not bullish
+    assert result.artifact['review_valid'] and not result.artifact['factual_assessment_errors']
+    assert (result.verification['status'] == 'complete') is supported
+    assert (prose in result.artifact['reader_body']) is supported
+    check = result.artifact['classification_checks']['c0']['claims'][0]
+    assert check['claim']['periods'] == [] and len(check['evidence']) == 4
+    assert check['actual'] == ('bullish_alignment' if bullish else 'mixed')
+    original = json.loads(result.artifact['body_response'])['paragraphs'][0]['parts'][0]['classifications'][0]
+    assert original['periods'] == redundant and len(calls) == 2
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text and saved['body_response'] == result.artifact['body_response']
+    assert [r['result'] for r in saved['receipts']] == [raw for _, raw in receipts]
+
+
 @pytest.mark.parametrize('values,periods', [({}, ()), ({'MA5': 3.8}, ()), (MIXED, (10, 120))])
 def test_unavailable_indicator_operands_do_not_manufacture_an_approved_category(values, periods):
     result, _, _ = publication(values=values, periods=periods, anchors=())

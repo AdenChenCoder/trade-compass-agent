@@ -172,6 +172,12 @@ in the linked regression tests, not in expanding prose exception lists.
   unknown/contradicted axes or quantities remain blocking. Unknown substantive
   support remains unsupported after annotation repair, never approved or
   relabelled as unavailable review merely because its time label was inconsistent.
+  The categorical scope discriminator owns a moving-average claim's range.
+  Well-typed redundant periods on a whole-system claim are retained in the raw
+  response and canonicalized to an unused empty list; they never select a
+  favorable subset. Explicit subsets still require at least two distinct periods.
+  Verify the canonical whole-system claim against all its owned operands,
+  including rejection when a redundant listed subset would have passed.
 - An explicitly configured `llm.local_report_review_model` separates factual
   entailment from task coverage. It uses only local LM Studio, original receipts,
   typed calculations, current execution records and the final statements. The original

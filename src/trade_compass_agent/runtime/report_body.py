@@ -25,7 +25,7 @@ such a horizon. A specific relative calendar reference still needs an anchor:
 resolve it from the reader's established dates or runtime calendar, and preserve
 unresolved when that required anchor is absent. This distinction never removes
 the actual date of an adjacent price, valuation or completed operation.
-classifications records categorical indicator properties the reader actually asserts, without deciding truth. It is an array of {"property":"moving_average_order","value":"bullish_alignment|bearish_alignment|mixed","operator":"eq|ne","scope":"all_mentioned|explicit_subset","periods":[]}. operator is eq for an asserted category and ne for its denial; preserve negation, rather than changing it into an opposite category. Record an asserted ordering/alignment of moving averages; preserve the author's claimed category even if you doubt it. all_mentioned concerns the stated moving-average system; explicit_subset preserves only periods explicitly named in the prose, as positive integers. Do not invent period numbers from price values, infer an ordering from merely being above a moving average, or strengthen a bounded trend opinion into an assertion about every moving average. Other empirical commitments retain claim_kind and still need factual assessment. Use [] when no such categorical ordering is asserted.
+classifications records categorical indicator properties the reader actually asserts, without deciding truth. It is an array of {"property":"moving_average_order","value":"bullish_alignment|bearish_alignment|mixed","operator":"eq|ne","scope":"all_mentioned|explicit_subset","periods":[]}. operator is eq for an asserted category and ne for its denial; preserve negation, rather than changing it into an opposite category. Record an asserted ordering/alignment of moving averages; preserve the author's claimed category even if you doubt it. all_mentioned concerns the stated moving-average system and uses periods=[]; periods is meaningful only for explicit_subset and contains at least two distinct positive integers explicitly selected by the prose. A separately mentioned moving average does not narrow a whole-system alignment claim to that period. Do not invent period numbers from price values, infer an ordering from merely being above a moving average, or strengthen a bounded trend opinion into an assertion about every moving average. Other empirical commitments retain claim_kind and still need factual assessment. Use [] when no such categorical ordering is asserted.
 operation_code is ONE integer selecting a complete operation meaning. It concerns an actor's state-changing order or memory operation, not price/return/valuation/holding/balance observations. Market movements are code 0 even when current. These labels classify meaning, not whether the claim is true:
 0: No assertion about a business operation, and no proposal or unconfirmed operation.
 1: A proposed action, recommendation, conditional watchpoint or authored choice/decision; it does not itself assert execution. This is usually a judgment; retain separately asserted empirical premises.
@@ -105,9 +105,13 @@ def _observation_commitments(part):
                 or not isinstance(claim['periods'], list)
                 or any(type(period) is not int or period <= 0 for period in claim['periods'])
                 or len(set(claim['periods'])) != len(claim['periods'])
-                or (claim['periods'] != [] if claim['scope'] == 'all_mentioned' else len(claim['periods']) < 2)):
+                or claim['scope'] == 'explicit_subset' and len(claim['periods']) < 2):
             raise BodyMeaningError('invalid_observation_commitment')
-        values.append({**claim, 'operator': claim.get('operator', 'eq')})
+        # The scope discriminator owns the claim's range. Redundant, well-typed
+        # period metadata cannot narrow a whole-system claim to a favorable
+        # subset, or prevent review of every independently valid paragraph.
+        values.append({**claim, 'operator': claim.get('operator', 'eq'),
+                       'periods': claim['periods'] if claim['scope'] == 'explicit_subset' else []})
     return {'observation_dates': anchors, 'classifications': values}
 
 
