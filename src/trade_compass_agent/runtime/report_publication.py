@@ -28,7 +28,7 @@ from trade_compass_agent.runtime.report_time import (
     check_statement_time, temporal_evidence_context, unavailable_bound_observation_dates,
 )
 from trade_compass_agent.runtime.report_support import check_support_basis
-from trade_compass_agent.runtime.report_assessments import assessments_with_availability
+from trade_compass_agent.runtime.report_assessments import assessments_with_availability, reasoned_empirical_ids
 from trade_compass_agent.runtime.report_annotation_repair import (
     ANNOTATION_REPAIR, annotation_conflicts, resolved_annotations,
 )
@@ -184,6 +184,16 @@ _GAP_COVERAGE = (
     "这不表示缺口已解决，也不取决于gap_reviews把它判成哪种状态。"
     "程序不会删除已被coverage用于回答任务的条目；其他无关缺口仍可移除，即使另有正文答案尚未补齐。"
     "仅使用gaps中的实际id，不复制或改写正文，不把业务资料缺失与正文遗漏混为一谈。"
+)
+_SOURCE_REVIEW = (
+    "本次inferences是需要独立核对来源的原文事实性陈述，id可以是单个原文片段，不能因其他模型已核对过而默认正确。"
+    "逐字还原其全部对象、关系、参与者身份/行为及因果承诺，再与原始依据比较；不要只认可旁边正确的数字。"
+    "匿名总量或价格统计可支持限定范围的技术解读，不能据此确认或排除特定参与者行为，也不能自行证明实际因果。"
+    "合理的限定分析与未来观察安排不需要唯一的量化证明；其中实际声称的事实前提仍需依据。"
+    "source_semantics是业务解释契约，不是市场观察；估算与实测的实际方法和范围仍依原始来源核验。"
+    "reviews必须逐一覆盖inferences实际id；coverage独立核对完整正文，不能用覆盖齐全代替事实支持。"
+    "review_requirements列出本次各类输出的实际id；按实际集合返回，非空inferences不能返回空reviews。"
+    "有annotation_conflicts时仍同时返回annotation_resolutions，不以某一维度替代另一维度。"
 )
 _ASSERTION_EDIT = (
     "本次是按原文片段修改的修订，assertion_edits是程序给出的唯一可修改范围。"
@@ -572,6 +582,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     execution_projections, body_quantity_issues, bound_quantity_checks, temporal_checks = {}, {}, {}, {}
     support_basis_checks, classification_checks = {}, {}
     annotation_candidates, annotation_resolutions = {}, []
+    source_review_ids, independent_source_reviews = set(), {}
+    fact_verified_before_coverage = set()
     reader_body = ""
     candidate_body_sha256 = None
     findings, rendered, traces = [], {}, {}
@@ -888,30 +900,64 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             assessment['verdict'] = 'unknown'
                     for assessment in assessments:
                         evaluate_assessment(assessment, statements_by_id[assessment['id']])
+                    source_review_ids = reasoned_empirical_ids(statements, assessments, factual_assessment_errors)
+                    if source_review_ids:
+                        coverage_review_input['inferences'] = [{
+                            'id': statement['id'], 'text': statement['text'],
+                            'segments': [{'origin': 'author', 'text': statement['text']}],
+                            **contexts[statement['context_id']],
+                        } for statement in statements if statement['id'] in source_review_ids]
+                        coverage_review_input['receipts'] = review_input['receipts']
+                        coverage_review_input['source_semantics'] = catalog.source_semantics()
                     annotation_candidates = annotation_conflicts(statements, assessments, factual_assessment_errors)
                     if annotation_candidates:
                         coverage_review_input['annotation_conflicts'] = [
-                            {'id': key, 'unresolved_axes': ['empirical_time', 'empirical_commitments']}
-                            for key in annotation_candidates]
+                            {'id': key, 'unresolved_axes': ['time_evidence'] if mode == 'temporal_witness'
+                                else ['empirical_time', 'empirical_commitments']}
+                            for key, mode in annotation_candidates.items()]
                         coverage_review_input['annotation_review'] = {
                             **factual_review_input,
-                            'statements': [{**{key: value for key, value in row.items() if key != 'observation_dates'},
+                            'statements': [{**{key: value for key, value in row.items()
+                                if key != 'observation_dates' or annotation_candidates[row['id']] == 'temporal_witness'},
                                 'requirements': {key: value
-                                for key, value in row.get('requirements', {}).items() if key != 'task_present'}}
+                                for key, value in row.get('requirements', {}).items()
+                                    if key != 'task_present' or annotation_candidates[row['id']] == 'temporal_witness'}}
                                 for row in factual_review_input['statements'] if row['id'] in annotation_candidates],
                             'annotation_conflicts': coverage_review_input['annotation_conflicts'],
                         }
+                    if source_review_ids or annotation_candidates:
+                        coverage_review_input['review_requirements'] = {
+                            'review_ids': [statement['id'] for statement in statements if statement['id'] in source_review_ids],
+                            'annotation_ids': list(annotation_candidates), 'gap_ids': [gap.id for gap in gaps]}
+                    # Completed independent factual work survives a subsequent
+                    # protocol/availability fault. An item awaiting another
+                    # required source check or metadata repair stays withheld.
+                    first_by_id = {row['id']: row for row in assessments}
+                    for identifier, claim_ids in assertion_owners.items():
+                        if (identifier in forced_reviews or identifier in unconfirmed_execution
+                                or any(key in factual_assessment_errors or key in source_review_ids
+                                       or key in annotation_candidates or first_by_id[key]['verdict'] != 'entailed'
+                                       for key in claim_ids)):
+                            continue
+                        fact_verified_before_coverage.add(identifier)
+                        rendered[identifier] = prose[identifier]
+                        refs = list(dict.fromkeys(ref for key in claim_ids
+                            for ref in first_by_id[key]['time_evidence']
+                            if catalog.resolve(ref).kind not in {'identity', 'quotation'}))
+                        if refs:
+                            reviewed_source_refs[identifier] = refs
                 with llm_response_contract(max_tokens=16384, precise=True):
                     review = _json_value(call(_REVIEW + (_GAP_COVERAGE if optional_gaps else "")
-                        + (ANNOTATION_REPAIR if annotation_candidates else ""),
+                        + (ANNOTATION_REPAIR if annotation_candidates else "")
+                        + (_SOURCE_REVIEW if source_review_ids else ""),
                         json.dumps(coverage_review_input, ensure_ascii=False, separators=(",", ":"))))
                 check_active()
                 rows = review["reviews"]
                 coverage = review["coverage"]
-                reviewed_items = [] if fact_call else inferences
+                reviewed_ids = source_review_ids if fact_call else {item.id for item in inferences}
                 if (set(review) - ({'annotation_resolutions'} if annotation_candidates else set()) not in ({"reviews", "coverage"}, {"reviews", "coverage", "gap_reviews"}) or not isinstance(rows, list)
-                        or len(rows) != len(reviewed_items)
-                        or {row["id"] for row in rows} != {item.id for item in reviewed_items}
+                        or len(rows) != len(reviewed_ids)
+                        or {row["id"] for row in rows} != reviewed_ids
                         or any(set(row) != {"id", "supported", "reason"}
                                or type(row["supported"]) is not bool
                                or not isinstance(row["reason"], str)
@@ -926,6 +972,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         or coverage["complete"] != (not coverage["missing"])):
                     raise ValueError("invalid inference review")
                 if fact_call and factual_items:
+                    independent_source_reviews = {row['id']: row for row in rows}
                     if annotation_candidates:
                         try:
                             resolutions = resolved_annotations(review.get('annotation_resolutions', []),
@@ -944,6 +991,14 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                                 'previous_assessment': previous, 'previous_error': previous_error,
                                 'statement': statement, 'assessment': assessment})
                             statements_by_id[identifier] = statement
+                    for assessment in assessments:
+                        source_review = independent_source_reviews.get(assessment['id'])
+                        if source_review and not source_review['supported']:
+                            # This independent review is a veto, never a way to
+                            # clear a source/date conflict or a failed first check.
+                            assessment['checks']['support'] = 'unknown'
+                            assessment['verdict'] = 'unknown'
+                            assessment['comparison'] += ' 独立来源核对：' + source_review['reason']
                     by_assertion = {row['id']: row for row in assessments}
                     date_gaps = {row['id']: refs for row in assessments
                         if row['id'] not in factual_assessment_errors
@@ -1022,8 +1077,11 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
             except Exception as exc:
                 check_active()
                 review_feedback_valid = False
-                findings.append(Finding("review", "review_unavailable", "报告完整性及研判依据尚未完成核验"))
-                findings.extend(Finding("review", "review_unavailable", "该项研判尚未完成核验", item.id) for item in inferences)
+                message = ("报告完整性及部分内容尚未完成核验。" if fact_verified_before_coverage
+                           else "报告完整性及研判依据尚未完成核验")
+                findings.append(Finding("review", "review_unavailable", message))
+                findings.extend(Finding("review", "review_unavailable", "该项研判尚未完成核验", item.id)
+                                for item in inferences if item.id not in fact_verified_before_coverage)
                 diagnostic = {"review_error_type": type(exc).__name__}
                 if isinstance(exc, ReportEvidenceScopeError):
                     diagnostic.update(stage='factual_review', review_error_code=exc.code, assertion_id=exc.assertion_id)
@@ -1072,6 +1130,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "factual_review": factual_review,
                 "factual_assessment_errors": factual_assessment_errors, "review_feedback_valid": review_feedback_valid,
                 "annotation_candidates": annotation_candidates, "annotation_resolutions": annotation_resolutions,
+                "independent_source_reviews": independent_source_reviews,
+                "fact_verified_before_coverage": sorted(fact_verified_before_coverage),
                 "revision_input": revision, "reader_body": reader_body or text,
                 "candidate_body_sha256": candidate_body_sha256,
                 "published_text": text, "attempts": attempts}
@@ -1148,7 +1208,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "candidate_body_sha256",
                 "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues", "bound_quantity_checks",
                 "coverage_review_input", "factual_review_input", "factual_response", "factual_review", "temporal_checks",
-                "support_basis_checks", "classification_checks", "annotation_candidates", "annotation_resolutions")
+                "support_basis_checks", "classification_checks", "annotation_candidates", "annotation_resolutions",
+                "independent_source_reviews", "fact_verified_before_coverage")
         history = [{key: attempt.artifact[key] for key in keys} for attempt in (publication, revised)]
         selected.artifact["revision_attempts"] = history
         selected.artifact["selected_attempt"] = int(selected is revised)

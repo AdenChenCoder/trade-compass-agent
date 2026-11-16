@@ -24,6 +24,7 @@ SUITES = (
     "test_report_narrative.py",
     "test_report_factual_role.py",
     "test_report_annotations.py",
+    "test_report_source_review.py",
     "test_report_revision.py",
     "test_report_classifications.py",
     "test_report_chip_facts.py",

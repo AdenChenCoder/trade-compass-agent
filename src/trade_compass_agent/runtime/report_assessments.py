@@ -11,6 +11,23 @@ CORE_FIELDS = {'id', 'comparison', 'checks', 'time_evidence', 'verdict'}
 OPTIONAL_FIELDS = ('support_basis', 'commitments')
 
 
+def reasoned_empirical_ids(statements, assessments, errors):
+    """A model's reasoned empirical approval needs an independent source veto.
+
+    Positive typed obligations select review work; this does not classify text
+    or turn a prior verdict into evidence for the second reviewer.
+    """
+    by_id = {row['id']: row for row in statements}
+    return {row['id'] for row in assessments if row['id'] not in errors
+        and row['verdict'] == 'entailed' and row.get('support_basis') == 'reasoned'
+        and (by_id[row['id']]['assertion_kind'] in {'observation', 'comparison'}
+             or by_id[row['id']]['bound_fact_refs'] or by_id[row['id']]['time_fact_refs']
+             or by_id[row['id']].get('observation_dates')
+             or by_id[row['id']].get('classifications')
+             or by_id[row['id']]['meaning_kind'] != 'plan'
+             and any(row['checks'][key] == 'entailed' for key in ('identity_scope', 'time', 'quantity')))}
+
+
 def assessments_with_availability(value, statement_ids):
     """An invalid envelope/identity cannot be attributed; row faults can.
 

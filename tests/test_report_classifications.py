@@ -20,7 +20,9 @@ def publication(*, values, prose='均线呈多头排列。', operator='eq', peri
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+            return json.dumps({'reviews': [{'id': row['id'], 'supported': True,
+                'reason': '独立的乐观来源替身；程序仍须核对实际分类。'} for row in payload['inferences']],
+                'coverage': {'complete': True, 'missing': []}})
         selected = [f for f in report_facts(payload) if f['kind'] == ('classification' if category_only else 'moving_average') and f['subject'] == '600928']
         if select_values is not None:
             selected = [f for f in selected if float(f['value']) == select_values[f['metric']]]

@@ -24,7 +24,15 @@ def check_support_basis(statement, assessment):
     if basis == "unknown":
         return {"status": "unknown", "basis": basis, "reason": "support_not_established"}
     if basis == "not_applicable" and kind != "discourse":
-        return {"status": "unknown", "basis": basis, "reason": "substantive_commitment_needs_support"}
+        pure_choice = (kind == 'judgment' and statement.get('meaning_kind') == 'plan'
+            and statement.get('time_scope') != 'reference_date'
+            and not any(statement.get(key) for key in ('bound_fact_refs', 'time_fact_refs',
+                                                      'observation_dates', 'classifications'))
+            and not any(commitments.values())
+            and all(assessment['checks'][key] == 'not_applicable'
+                    for key in ('identity_scope', 'time', 'quantity')))
+        if not pure_choice:
+            return {"status": "unknown", "basis": basis, "reason": "substantive_commitment_needs_support"}
     if (kind in {"actor_activity", "causal_relation"} or any(commitments.values())) and basis != "direct":
         return {"status": "unknown", "basis": basis, "reason": "inference_is_not_actor_or_cause_evidence"}
     return {"status": "compatible", "basis": basis, "reason": ""}

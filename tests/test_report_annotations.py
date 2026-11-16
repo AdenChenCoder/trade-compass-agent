@@ -102,7 +102,7 @@ def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obliga
     assert ('002415在2025-01-01的收盘价为22元/股。' in result.artifact['reader_body'])
     assert (texts[scene] in result.artifact['reader_body']) is succeeds
     assert (result.verification['status'] == 'complete') is succeeds
-    assert bool(repair_inputs) is (scene not in {'qualitative_observation', 'bound_stale_value'}
+    assert bool(repair_inputs) is (scene != 'bound_stale_value'
                                   and fault != 'invalid_initial_metadata')
     assert len(calls) == result.artifact['model_calls'] == 4
     assert calls[:2] == ['writer', 'body']
@@ -111,7 +111,7 @@ def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obliga
     assert result.artifact['receipts'][0]['result'] == raw
     if succeeds:
         assert result.artifact['annotation_resolutions'] and result.artifact['review_valid']
-    if fault == 'support_unknown' and repair_inputs:
+    if fault == 'support_unknown' and repair_inputs and scene != 'qualitative_observation':
         assert result.artifact['review_valid']
         assert not result.artifact['factual_assessment_errors']
         assert any(f['code'] == 'insufficient_support' for f in result.verification['findings'])

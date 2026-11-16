@@ -178,6 +178,31 @@ in the linked regression tests, not in expanding prose exception lists.
   favorable subset. Explicit subsets still require at least two distinct periods.
   Verify the canonical whole-system claim against all its owned operands,
   including rejection when a redundant listed subset would have passed.
+  An approved reasoned empirical assertion also receives an independent source
+  check in the existing coverage call. Select by typed empirical commitments and
+  bindings, not prose keywords; the reviewer receives exact statements and owned
+  sources without the first verdict as authority. Both source checks must support
+  publication. The independent result is a veto only: it cannot clear an earlier
+  rejection or a runtime-owned value, identity, date or categorical conflict.
+  Retain both results through persistence and bounded revision feedback. This
+  catches inferred participant/causal facts hidden beside correct measurements
+  even when the first classifier misses that subtype. Existing call and deadline
+  limits remain unchanged. A pure proposed choice with no empirical premises
+  may have a non-applicable measurement basis; actual premises, commitments,
+  quantities and unresolved support remain independently blocking.
+  A missing witness reference on an otherwise completed current empirical
+  assessment may be repaired through that same call. Keep its positive current
+  scope and require an actual owned witness for the same subject/property; do
+  not infer it from retrieval time or a fresh unrelated fact. A witness-only
+  repair cannot erase the current observation by relabelling it an opinion,
+  and a known linked stale/unknown source date is never an annotation fault.
+  Re-run normal ownership and observation-date checks on supplied references;
+  missing, foreign or unresolved references still block that item.
+  Preserve paragraphs whose factual assertions completed all required checks
+  before a separate coverage/source response becomes unavailable or malformed.
+  Items awaiting a source veto or metadata repair remain withheld. Retain approved
+  provenance and the incomplete report status; a failure of the later call cannot
+  turn completed factual work into unavailable review or manufacture task success.
 - An explicitly configured `llm.local_report_review_model` separates factual
   entailment from task coverage. It uses only local LM Studio, original receipts,
   typed calculations, current execution records and the final statements. The original

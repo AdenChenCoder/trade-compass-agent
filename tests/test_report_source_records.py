@@ -490,7 +490,9 @@ def test_positive_current_qualitative_observation_needs_its_own_date_witness(
     def writer(system, user):
         p = json.loads(user)
         if 'schema' not in p:
-            return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []}})
+            return json.dumps({'reviews': [{'id': row['id'], 'supported': True,
+                'reason': '乐观来源替身；原始日期约束仍独立适用。'} for row in p['inferences']],
+                'coverage': {'complete': True, 'missing': []}})
         return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
             'section': 'assessment', 'parts': [body], 'refs': []}]})
     def assessor(system, user):

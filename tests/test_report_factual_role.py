@@ -147,7 +147,8 @@ def test_support_feedback_repairs_body_once_and_survives_saved_publication(tmp_p
             document['items'].append({'id': 'claim', 'type': 'paragraph', 'section': 'assessment',
                 'parts': [text], 'refs': [f['id'] for f in report_facts(payload)]})
             return json.dumps(document)
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': '来源仅支持所述资料局限。'}
+            for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:

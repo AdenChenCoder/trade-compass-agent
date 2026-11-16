@@ -44,7 +44,8 @@ def test_publisher_preserves_correct_observation_when_neighbor_is_repaired(tmp_p
                 'parts': ['002415在2025-01-02的收盘价为', [fact['id'], 'value_with_unit'],
                           '。' + original_error], 'refs': []}]})
         complete = price in payload['report']
-        return json.dumps({'reviews': [], 'coverage': {'complete': complete,
+        return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': '价格资料不足以识别交易主体。'}
+            for row in payload['inferences']], 'coverage': {'complete': complete,
             'missing': [] if complete else ['缺少日期及收盘价。'], 'repairable': not complete}})
 
     def checker(system, user):
