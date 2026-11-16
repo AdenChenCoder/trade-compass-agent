@@ -187,7 +187,10 @@ in the linked regression tests, not in expanding prose exception lists.
   Retain both results through persistence and bounded revision feedback. This
   catches inferred participant/causal facts hidden beside correct measurements
   even when the first classifier misses that subtype. Existing call and deadline
-  limits remain unchanged. A pure proposed choice with no empirical premises
+  limits remain unchanged. Both reviewers receive the same owned source contexts,
+  observation pointers and method records in one reference namespace; paragraph
+  bindings cannot withdraw other supplied evidence from independent review.
+  A pure proposed choice with no empirical premises
   may have a non-applicable measurement basis; actual premises, commitments,
   quantities and unresolved support remain independently blocking.
   A missing witness reference on an otherwise completed current empirical
@@ -203,6 +206,15 @@ in the linked regression tests, not in expanding prose exception lists.
   Items awaiting a source veto or metadata repair remain withheld. Retain approved
   provenance and the incomplete report status; a failure of the later call cannot
   turn completed factual work into unavailable review or manufacture task success.
+  An unbound judgment or plan rejected on support may independently resolve a
+  conflicting non-empirical time annotation. Preserve that first support veto
+  even if the fresh assessment is optimistic; resolving availability never
+  promotes a rejected claim. Actor, causal, bound-value and categorical
+  obligations remain ineligible for this narrow reconciliation.
+  Bounded prose editing is a distinct authoring task. Supply the editable spans,
+  their feedback and read-only context without competing full-draft instructions.
+  Keep full previous documents internally for exact reassembly and recovery;
+  newly assembled prose still undergoes the complete factual and coverage checks.
 - An explicitly configured `llm.local_report_review_model` separates factual
   entailment from task coverage. It uses only local LM Studio, original receipts,
   typed calculations, current execution records and the final statements. The original

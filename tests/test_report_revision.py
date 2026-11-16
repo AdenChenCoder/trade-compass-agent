@@ -92,6 +92,10 @@ def test_publisher_preserves_correct_observation_when_neighbor_is_repaired(tmp_p
     assert (replacement in report.text) is (repair_status == 'valid')
     assert original_error not in report.text
     assert len(writes) == len(bodies) == len(reviews) == 2
+    assert writes[1]['draft'] == ''
+    assert 'previous_document' not in writes[1]['revision']
+    assert 'reader_body' not in writes[1]['revision']
+    assert len(writes[1]['revision']['factual_feedback']) == 1
     assert report.artifact['model_calls'] == report.artifact['call_limit'] == 8
     if writes[1]['revision'].get('assertion_edits'):
         assert len(bodies[1]['paragraphs']) == 2

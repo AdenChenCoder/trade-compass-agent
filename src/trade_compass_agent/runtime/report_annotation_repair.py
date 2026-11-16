@@ -38,6 +38,16 @@ def annotation_conflicts(statements, assessments, errors):
             and not statement.get('classifications') and row.get('support_basis') == 'reasoned'
             and not any(commitments.values()) and valid_report
             and all(reported[key] == 'not_applicable' for key in ('identity_scope', 'time', 'quantity')))
+        if (error and statement['assertion_kind'] == 'judgment' and statement['meaning_kind'] in {'other', 'plan'}
+                and statement['time_scope'] == 'reference_date' and not row['time_evidence']
+                and not statement['bound_fact_refs'] and not statement['time_fact_refs']
+                and not statement.get('classifications') and row.get('support_basis') == 'reasoned'
+                and not any(commitments.values()) and isinstance(reported, dict)
+                and row.get('reported_verdict', row['verdict']) == 'unknown'
+                and reported['support'] == 'unknown'
+                and all(reported[key] == 'not_applicable' for key in ('identity_scope', 'time', 'quantity'))):
+            result[row['id']] = 'nonempirical_rejection'
+            continue
         if (error and valid_report and not pure_opinion and statement['time_scope'] == 'reference_date'
                 and not statement['time_fact_refs'] and row.get('support_basis') in {'direct', 'calculated', 'reasoned'}):
             result[row['id']] = 'temporal_witness'
@@ -93,7 +103,9 @@ def resolved_annotations(value, candidates, statements, decode):
         # mutually identified opinion with no new identity/quantity/time claim
         # can correct its inconsistent present-observation annotation.
         if not entry['empirical_present'] and statement['time_scope'] == 'reference_date':
-            if (assessment.get('support_basis') != 'reasoned' or assessment['time_evidence']
+            basis_allowed = (assessment.get('support_basis') == 'reasoned'
+                or statement['meaning_kind'] == 'plan' and assessment.get('support_basis') == 'not_applicable')
+            if (not basis_allowed or assessment['time_evidence']
                     or assessment.get('commitments') != {'participant_activity': False, 'causal_relation': False}
                     or assessment['checks']['quantity'] != 'not_applicable'
                     or any(assessment['checks'][key] not in {'entailed', 'not_applicable'}

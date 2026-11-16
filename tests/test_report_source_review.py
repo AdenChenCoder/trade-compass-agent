@@ -8,6 +8,89 @@ from test_report_factual_role import assess, body_reply
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
 
 
+@pytest.mark.parametrize('estimated', [True, False])
+def test_independent_review_keeps_unbound_owned_sources_and_their_reference_namespace(estimated):
+    receipts = [('get_bars', json.dumps({'symbol': '600928', 'timeframe': '1d',
+        'bars': [{'timestamp': '2026-11-12', 'high': 3.84}]}))]
+    if estimated:
+        receipts.append(('get_chip_distribution', json.dumps({'symbol': '600928', 'date': '2026-11-11',
+            'cost_90_high': 3.84, '_meta': {'source': 'eastmoney_cyq_algorithm'},
+            'note': '基于K线与换手率的CYQ估算。'})))
+    fact_inputs = []
+    text = '600928上方3.84元/股为前期成交密集区压力。'
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            high = next(f['id'] for f in report_facts(payload) if f['metric'] == 'high')
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'target', 'type': 'paragraph',
+                'section': 'plan', 'parts': ['600928上方', [high, 'value_with_unit'],
+                    '为前期成交密集区压力。'], 'refs': []}]})
+        first = fact_inputs[-1]
+        assert payload['source_contexts'] == first['contexts']
+        assert payload['source_fact_references'] == first['source_fact_references']
+        assert payload['source_semantics'] == first['source_semantics']
+        assert payload['receipts'] == first['receipts']
+        assert 'assessments' not in payload
+        available = {f['id'] for c in payload['source_contexts'].values() for f in c['evidence']}
+        available.update(row[0] for source in payload['source_fact_references']['sources']
+                         for observation in source['observations'] for row in observation['rows'])
+        assert all(set(source['fact_refs']) <= available for source in payload['source_semantics'])
+        return json.dumps({'reviews': [{'id': row['id'], 'supported': estimated,
+            'reason': '已有相应筹码估算。' if estimated else '仅有价格高点，没有分布依据。'}
+            for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            return json.dumps(body_reply(payload))
+        fact_inputs.append(payload)
+        result = assess(payload)
+        result['assessments'][0]['support_basis'] = 'reasoned'
+        return json.dumps(result)
+    report = publish_report(task='说明所给资料可支持的压力观察位。', draft='', tool_results=receipts,
+        run_scope='unbound-estimate-source', call=writer, fact_review_call=checker,
+        reference_date='2026-11-12', max_calls=2)
+    assert (text in report.artifact['reader_body']) is estimated
+    assert (report.verification['status'] == 'complete') is estimated
+    assert report.artifact['review_valid'] and not report.artifact['factual_assessment_errors']
+
+
+@pytest.mark.parametrize('operation', [0, 1])
+@pytest.mark.parametrize('fresh_support', ['entailed', 'unknown', 'contradicted'])
+def test_repairing_rejected_nonempirical_time_metadata_cannot_clear_the_first_rejection(operation, fresh_support):
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'target', 'type': 'paragraph',
+                'section': 'plan', 'parts': ['暂以观察为主。'], 'refs': []}]})
+        assert payload['annotation_conflicts']
+        row = assess({'statements': [{'id': 'c0'}]})['assessments'][0]
+        row.update(support_basis='reasoned', verdict=fresh_support)
+        row['checks'].update(identity_scope='not_applicable', time='not_applicable',
+                             quantity='not_applicable', support=fresh_support)
+        return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []},
+            'annotation_resolutions': [{'id': 'c0', 'empirical_present': False, 'assessment': row}]})
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'target', 'parts': [{
+                'through': payload['paragraphs'][0]['source_units'][-1]['id'], 'operation_code': operation,
+                'claim_kind': 'judgment', 'observation_dates': ['task_now'], 'classifications': []}]}]})
+        result = assess(payload)
+        row = result['assessments'][0]
+        row.update(support_basis='reasoned', verdict='unknown')
+        row['checks'].update(identity_scope='not_applicable', time='not_applicable',
+                             quantity='not_applicable', support='unknown')
+        return json.dumps(result)
+    report = publish_report(task='说明后续安排。', draft='', tool_results=[], run_scope='negative-metadata',
+        call=writer, fact_review_call=checker, reference_date='2026-11-12', max_calls=2)
+    assert report.verification['status'] == 'incomplete' and '暂以观察为主。' not in report.artifact['reader_body']
+    assert report.artifact['review_valid'] and not report.artifact['factual_assessment_errors']
+    assert report.artifact['factual_review']['assessments'][0]['checks']['support'] == (
+        'contradicted' if fresh_support == 'contradicted' else 'unknown')
+    assert report.artifact['annotation_resolutions'][0]['previous_assessment']['reported_verdict'] == 'unknown'
+    assert report.artifact['model_calls'] == 4
+
+
 @pytest.mark.parametrize('scene,first_supported,second_supported,accepted', [
     ('aggregate', True, True, True), ('actor', True, False, False),
     ('cause', True, False, False), ('actor', False, True, False),

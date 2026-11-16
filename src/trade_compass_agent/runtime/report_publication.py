@@ -191,13 +191,20 @@ _SOURCE_REVIEW = (
     "匿名总量或价格统计可支持限定范围的技术解读，不能据此确认或排除特定参与者行为，也不能自行证明实际因果。"
     "合理的限定分析与未来观察安排不需要唯一的量化证明；其中实际声称的事实前提仍需依据。"
     "source_semantics是业务解释契约，不是市场观察；估算与实测的实际方法和范围仍依原始来源核验。"
+    "source_contexts和source_fact_references与事实核验使用同一完整来源视图及引用命名空间。"
+    "后者的id、pointer及观察日期定位receipts中的原始值；其他段落未绑定的来源仍可用。"
+    "先核对这些实际来源；局部选取未包含某项依据，不代表本轮没有提供该依据。"
     "reviews必须逐一覆盖inferences实际id；coverage独立核对完整正文，不能用覆盖齐全代替事实支持。"
     "review_requirements列出本次各类输出的实际id；按实际集合返回，非空inferences不能返回空reviews。"
     "有annotation_conflicts时仍同时返回annotation_resolutions，不以某一维度替代另一维度。"
 )
 _ASSERTION_EDIT = (
-    "本次是按原文片段修改的修订，assertion_edits是程序给出的唯一可修改范围。"
+    "你是局部文本编辑器。assertion_edits是程序给出的唯一可修改范围；这不是重新撰写报告的任务。"
     "只为edits中的每个id返回一次替换parts和refs，不返回整篇报告，不新增其他编辑id。"
+    "每个edits.text只是要替换的原文片段；paragraphs.spans是只读上下文，不是需要重写的段落。"
+    "替换内容只承担该片段的含义，不能复制相邻片段、整段或整篇；它们会由程序原样拼回。"
+    "parts按阅读顺序使用自然文字字符串及[事实id,字段]数组。数值使用value_with_unit，日期使用date；"
+    "value_with_unit已有完整单位，文字不再补单位。对象、指标、日期和来源范围必须与实际事实相符。"
     "原文中其他文字、顺序和数值引用由程序保留；程序会把修改范围分成独立段落，避免一处未完成掩盖相邻内容。"
     "只使用原事实目录或上一版已有计算的引用，不新增计算。"
     "可用空parts及空refs移除无依据且任务不需要的断言；任务仍需要的结果不能靠删除逃避。"
@@ -505,9 +512,9 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     catalog = EvidenceCatalog.build(tool_results, run_scope=run_scope)
     execution = execution_evidence(tool_results if current_tool_results is None else current_tool_results)
     response_model = ReportDocument if execution.records else ReportContentDocument
-    compose_prompt = (_COMPOSE if reader_prose else _EVIDENCE_COMPOSE) + (_REVISION if revision else "")
-    if revision and revision.get('assertion_edits'):
-        compose_prompt += _ASSERTION_EDIT
+    bounded_edit = bool(reader_prose and revision and revision.get('assertion_edits'))
+    compose_prompt = (_REVISION + _ASSERTION_EDIT if bounded_edit else
+        (_COMPOSE if reader_prose else _EVIDENCE_COMPOSE) + (_REVISION if revision else ""))
     compose_prompt += (
         "report_context由程序提供：相对日期以reference_date和reference_timezone为准，日期片段按display_timezone显示。"
         "reference_date为空时无法确定今天，不得以最新资料日期或取回时间代替；保留资料原有的具体时点。"
@@ -569,6 +576,16 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
         payload.pop("date_rendering_example", None)
     if revision:
         payload["revision"] = revision
+        if bounded_edit:
+            # Retain full recovery/reassembly data internally. The author edits
+            # only the requested spans; duplicate full drafts compete with that
+            # task and invite a whole paragraph at each replacement location.
+            selected = {row['id'] for row in revision['assertion_edits']['edits']}
+            payload['draft'] = ''
+            payload['revision'] = {key: value for key, value in revision.items()
+                if key not in {'previous_document', 'reader_body', 'review', 'factual_feedback'}}
+            payload['revision']['factual_feedback'] = [row for row in revision['factual_feedback']
+                if row['assertion_id'] in selected]
     protected_gaps = {item["id"]: item for item in (revision or {}).get("required_gaps", [])}
     document = None
     review_valid = False
@@ -905,10 +922,12 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         coverage_review_input['inferences'] = [{
                             'id': statement['id'], 'text': statement['text'],
                             'segments': [{'origin': 'author', 'text': statement['text']}],
-                            **contexts[statement['context_id']],
+                            **review_contexts[statement['context_id']],
                         } for statement in statements if statement['id'] in source_review_ids]
                         coverage_review_input['receipts'] = review_input['receipts']
-                        coverage_review_input['source_semantics'] = catalog.source_semantics()
+                        coverage_review_input['source_contexts'] = review_contexts
+                        coverage_review_input['source_fact_references'] = source_references
+                        coverage_review_input['source_semantics'] = factual_review_input['source_semantics']
                     annotation_candidates = annotation_conflicts(statements, assessments, factual_assessment_errors)
                     if annotation_candidates:
                         coverage_review_input['annotation_conflicts'] = [
@@ -984,6 +1003,16 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             index = next(i for i, row in enumerate(assessments) if row['id'] == identifier)
                             previous = assessments[index]
                             previous_error = factual_assessment_errors.pop(identifier, None)
+                            if annotation_candidates[identifier] == 'nonempirical_rejection':
+                                # Resolve availability only. A second semantic
+                                # opinion cannot clear the first source veto.
+                                assessment.setdefault('reported_verdict', assessment['verdict'])
+                                assessment.setdefault('reported_checks', dict(assessment['checks']))
+                                if assessment['checks']['support'] != 'contradicted':
+                                    assessment['checks']['support'] = 'unknown'
+                                if assessment['verdict'] != 'contradicted':
+                                    assessment['verdict'] = 'unknown'
+                                assessment['comparison'] += ' 该项断言此前的依据支持仍未成立。'
                             evaluate_assessment(assessment, statement)
                             assessments[index] = assessment
                             annotation_resolutions.append({'id': identifier,
