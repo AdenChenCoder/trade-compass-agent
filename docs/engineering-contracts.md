@@ -137,6 +137,17 @@ in the linked regression tests, not in expanding prose exception lists.
   when another answer is missing: incomplete writing must not become unavailable
   business data. Invalid or missing dependency metadata cannot clear gaps or
   discard independently verified prose. This uses the existing review call.
+  When completed factual review finds a failed assertion beside retained
+  assertions in the same paragraph, and task coverage is already complete,
+  revision may replace only the addressed failed spans. Preserve all other
+  original text, binding identity and item order. A span boundary cannot cut an
+  atomic bound value; unsupported shapes retain the existing full revision path.
+  Affected spans become separate reader paragraphs before the new complete
+  body undergoes fresh meaning, coverage and factual review. This isolates a
+  failed replacement without approving it or hiding adjacent observations.
+  Reject foreign, duplicate, missing and unchanged edits, and keep the existing
+  single-revision/call/deadline policy. No prior approval substitutes for review
+  of the resulting body.
 - An explicitly configured `llm.local_report_review_model` separates factual
   entailment from task coverage. It uses only local LM Studio, original receipts,
   typed calculations, current execution records and the final statements. The original

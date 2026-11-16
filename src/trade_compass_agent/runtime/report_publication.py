@@ -28,6 +28,9 @@ from trade_compass_agent.runtime.report_time import check_statement_time, tempor
 from trade_compass_agent.runtime.report_support import check_support_basis
 from trade_compass_agent.runtime.report_assessments import assessments_with_availability
 from trade_compass_agent.runtime.report_classifications import check_classifications
+from trade_compass_agent.runtime.report_revision import (
+    assertion_edit_plan, assertion_edit_schema, apply_assertion_edits,
+)
 
 
 @dataclass
@@ -173,6 +176,15 @@ _GAP_COVERAGE = (
     "这只记录答案对原文的依赖，不表示缺口已解决，也不取决于gap_reviews把它判成哪种状态。"
     "程序不会删除已被coverage用于回答任务的条目；其他无关缺口仍可移除，即使另有正文答案尚未补齐。"
     "仅使用gaps中的实际id，不复制或改写正文，不把业务资料缺失与正文遗漏混为一谈。"
+)
+_ASSERTION_EDIT = (
+    "本次是按原文片段修改的修订，assertion_edits是程序给出的唯一可修改范围。"
+    "只为edits中的每个id返回一次替换parts和refs，不返回整篇报告，不新增其他编辑id。"
+    "原文中其他文字、顺序和数值引用由程序保留；程序会把修改范围分成独立段落，避免一处未完成掩盖相邻内容。"
+    "只使用原事实目录或上一版已有计算的引用，不新增计算。"
+    "可用空parts及空refs移除无依据且任务不需要的断言；任务仍需要的结果不能靠删除逃避。"
+    "日期未知时明确说明来源限制，不再断言为任务日观察；日期早于任务日时保留实际观察日期。"
+    "必要的真实资料缺口放入gaps，否则gaps为空数组。修改合并后的完整正文仍接受新的含义、覆盖和事实核验。"
 )
 _FACT_REVIEW = """Apply the supplied source_semantics as the product's business interpretation contract; it is not a market observation and never supplies a missing source. Differentiate a statistical market property from attribution of a particular actor or class of actors. participant_activity means the latter (identity, action or absence), not anonymous aggregate volume/concentration alone. causal_relation means a claimed event or process actually causing an observed outcome; a bounded research interpretation or conditional watchpoint does not itself assert that event. Preserve adjacent actual actor/causal claims. Do not infer either flag merely because the market statistics ultimately involve trading.
 You assess factual support and the scope of research reasoning in a report.
@@ -476,6 +488,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     execution = execution_evidence(tool_results if current_tool_results is None else current_tool_results)
     response_model = ReportDocument if execution.records else ReportContentDocument
     compose_prompt = (_COMPOSE if reader_prose else _EVIDENCE_COMPOSE) + (_REVISION if revision else "")
+    if revision and revision.get('assertion_edits'):
+        compose_prompt += _ASSERTION_EDIT
     compose_prompt += (
         "report_context由程序提供：相对日期以reference_date和reference_timezone为准，日期片段按display_timezone显示。"
         "reference_date为空时无法确定今天，不得以最新资料日期或取回时间代替；保留资料原有的具体时点。"
@@ -504,6 +518,9 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                  'minItems': 2, 'maxItems': 2}]}
             for name in ('Prose', 'EvidenceValue'):
                 schema['$defs'].pop(name)
+        if revision and revision.get('assertion_edits'):
+            return assertion_edit_schema(revision['assertion_edits'],
+                schema['$defs']['Paragraph']['properties']['parts']['items'])
         return schema
 
     def present(document, rendered, findings, *, include_sources=True):
@@ -566,7 +583,9 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
             with mode:
                 raw = call(compose_prompt + (_REPAIR if attempts else ""), json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
             check_active()
-            parsed = transport.decode_document(_json_value(raw))
+            parsed = (apply_assertion_edits(_json_value(raw), revision, transport, catalog)
+                      if revision and revision.get('assertion_edits') else
+                      transport.decode_document(_json_value(raw)))
             candidate = parsed
             if fixed_items and isinstance(parsed, dict) and isinstance(parsed.get("items"), list):
                 # Repairs own unresolved IDs only. Discard attempts to replace
@@ -1027,14 +1046,22 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     'classification_check': classification_checks[identifier],
                     'runtime_findings': assessment.get('runtime_findings', []),
                 })
+        revision_input = {"previous_document": transport.encode_document(document.model_dump()),
+                          "reader_body": reader_body, "review": review,
+                          "factual_feedback": feedback,
+                          "required_gaps": [item.model_dump() for item in required_gaps]}
+        if reader_prose and factual_review_input and review['coverage']['complete']:
+            failed = {row['assertion_id'] for row in feedback
+                      if row['completed'] and row['verdict'] != 'entailed' or row['runtime_findings']}
+            edit_plan = assertion_edit_plan(document, catalog, factual_review_input['statements'],
+                                            assertion_owners, failed)
+            if edit_plan:
+                revision_input['assertion_edits'] = edit_plan
         revised = _publish_report(task=task, draft=draft, tool_results=tool_results, run_scope=run_scope,
             call=call, run_id=run_id, current_tool_results=current_tool_results,
             check_active=check_active, reader_prose=reader_prose, remaining=remaining, fact_call=fact_call, body_call=body_call,
             report_context=report_context,
-            revision={"previous_document": transport.encode_document(document.model_dump()),
-                      "reader_body": reader_body, "review": review,
-                      "factual_feedback": feedback,
-                      "required_gaps": [item.model_dump() for item in required_gaps]})
+            revision=revision_input)
         # A failed correction cannot replace readable, verified analysis with
         # nothing, even if its JSON review itself was structurally valid.
         def verified_sections(attempt):

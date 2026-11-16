@@ -49,6 +49,8 @@ fi
   tests/test_report_reading.py \
   tests/test_report_narrative.py \
   tests/test_report_factual_role.py \
+  tests/test_report_revision.py \
+  src/trade_compass_agent/runtime/report_revision.py \
   tests/test_report_classifications.py \
   tests/test_report_chip_facts.py \
   tests/test_report_source_records.py \
