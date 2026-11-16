@@ -23,7 +23,7 @@ from trade_compass_agent.runtime.report_body import (
     BODY_MEANING, BodyMeaningError, reader_source_units, validate_body_meaning, runtime_bound_quantity_issue, factual_assertions, factual_review_statements,
 )
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
-from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts, source_record_context
+from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts, source_record_context, composition_source_records, source_reference_view
 from trade_compass_agent.runtime.report_time import check_statement_time, temporal_evidence_context
 from trade_compass_agent.runtime.report_support import check_support_basis
 from trade_compass_agent.runtime.report_assessments import assessments_with_availability
@@ -91,6 +91,7 @@ _COMPOSE = (
     "每个事实行保留其原始日期；未知日期仍是null，不能拿别的日期补齐。"
     "数值有来源不代表其当日归属已确认：观测日期未知的数据若与任务有关，正文须保留时点限制，不得与任务当日行情合并成确定的当日观察。"
     "source_records保留原始工具结果中的非数值信息和来源限制，不是新的事实id目录。"
+    "selection标记的来源视图省略了事实目录已有的数值；视图缺少该字段不代表原始来源缺失，不得据此断言没有数据。"
     "数值对照不能替代其中已有的分类、状态或口径；只有facts中的id可以用于事实引用。"
     "fact_rendering_example展示来源明细，不是正文格式；正文的日期、数值和单位由各自的parts指定。"
     "报告条目的id不能使用事实目录的id。"
@@ -180,6 +181,12 @@ freshness, risk absence or trading outcomes. Missing fields are not empty lists.
 inside source contexts. Matching another reader claim or repeating the author's
 analysis never establishes truth. Compare the target with actual source records
 and typed facts, not with reader wording or task instructions.
+source_fact_references addresses observations not bound by the writer. Each source's
+receipt_id identifies an original receipt. Its observations group rows by unchanged
+observed_at timestamp and display-calendar observed_date; columns describe each row.
+pointer is the exact JSON pointer. Check value, unit, identity and scope in that
+original record. Fact IDs use request-local aliases usable in time_evidence; a
+receipt_id is not a fact ID. These addresses establish ownership, never support.
 Interpret each assertion's actual empirical commitments independently. requirements contains only positive obligations obtained without source evidence: participant_activity, causal_relation, task_present or proposal. A true obligation cannot be weakened. proposal preserves a prospective choice, not a completed execution; its empirical premises remain independently applicable. ABSENCE of an obligation establishes no exemption and is not proof that no such claim occurs. No body category or negative temporal classification is supplied as an authority about reader meaning.
 A conventional market interpretation is not evidence of an unobserved actor or
 cause. If the observations could coexist with materially different actors or
@@ -300,7 +307,7 @@ reader's display calendar. Different calendar labels can describe the same insta
 Date-only observations retain their supplied date; do not invent an instant for them.
 requirements.task_present, when true, requires present-date comparison and cannot
 be weakened. Its absence does not establish historical scope; independently inspect the actual prose for present-time commitments. For every assessment return time_evidence, an array
-of exact fact IDs already supplied in contexts which support its observation time.
+of exact fact IDs supplied in contexts OR source_fact_references which support its observation time.
 Facts may be selected in any paragraph of this run: comparisons can legitimately
 span securities, accounts, periods and observation scopes. Paragraph selection
 does not create source ownership, and owned provenance does not prove semantic
@@ -498,8 +505,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
         # deterministic classifications and source limitations must not vanish
         # before writing. The immutable original receipt stays in the artifact;
         # this parsed view supplies context, never a second binding namespace.
-        payload['source_records'] = [{'receipt_id': row['id'], 'tool': row['tool'],
-                                      'data': json.loads(row['result'])} for row in catalog.receipts]
+        payload['source_records'] = composition_source_records(catalog)
         # Paragraph order belongs to the writer. Repeating every alias in an
         # interleaving index adds no evidence: each literal row already carries
         # its identity, value and observation date in its contextual group.
@@ -754,21 +760,30 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 if fact_call and factual_items:
                     contexts, statements, assertion_owners = factual_assertions(
                         [row for row in review_input['inferences'] if row['id'] not in forced_reviews], body_meaning)
+                    selected_ids = {fact['id'] for context in contexts.values() for fact in context['evidence']}
                     contexts = source_record_context(catalog, contexts, review_input['receipts'],
                                                      report_context['display_timezone'])
+                    review_contexts, source_references = source_reference_view(contexts, selected_ids)
+                    review_contexts, review_statements, source_references = transport.encode_factual_review(
+                        review_contexts, factual_review_statements(statements), source_references)
                     factual_review_input = {
                         "report_context": report_context,
                         "request_context": {"role": "requirements", "text": task},
-                        "contexts": contexts, "statements": factual_review_statements(statements),
+                        "contexts": review_contexts, "statements": review_statements,
+                        **({'source_fact_references': source_references} if source_references['sources'] else {}),
                         "receipts": review_input["receipts"], "execution_records": execution.records,
-                        "source_semantics": catalog.source_semantics(),
+                        "source_semantics": transport.encode_source_semantics(catalog.source_semantics()),
                     }
                     factual_response = fact_call(_FACT_REVIEW, json.dumps(factual_review_input, ensure_ascii=False,
                                                                           separators=(",", ":")))
                     check_active()
                     factual_review = _json_value(factual_response)
                     assessments, row_errors = assessments_with_availability(
-                        factual_review, [row['id'] for row in statements])
+                        transport.decode_factual_review(factual_review), [row['id'] for row in statements])
+                    original_assessments = {row['id']: row for row in factual_review['assessments']}
+                    for row in assessments:
+                        if 'raw_assessment' in row:
+                            row['raw_assessment'] = original_assessments[row['id']]
                     factual_review['assessments'] = assessments
                     factual_assessment_errors.update(row_errors)
                     # A blanket approval cannot hide an unresolved dimension.
@@ -789,7 +804,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             **assessment, 'time_evidence': [ref for ref in assessment['time_evidence'] if ref in available]}
                         timing = check_statement_time(statement, timing_assessment, context, report_context)
                         missing_witness = (timing['reason'] == 'observation_unavailable'
-                                           and assessment['checks']['time'] == 'entailed')
+                                           and assessment['checks']['time'] in {'entailed', 'not_applicable'})
                         if unknown_refs or missing_witness:
                             # Keep other independently assessed assertions usable.
                             # Never promote an invalid reference to a fact or count

@@ -112,6 +112,7 @@ def test_live_turn_compacts_after_tools_without_replaying_order_or_losing_histor
         context_window = 131072
         response_token_limit = 32768
         calls = 0
+        publication_calls = 0
 
         def measure_input_tokens(self, messages, **kwargs):
             expanded = self.calls >= 4 and not latest_persisted_summary(messages)
@@ -126,6 +127,20 @@ def test_live_turn_compacts_after_tools_without_replaying_order_or_losing_histor
 
         def stream_complete(self, messages, **kwargs):
             assert not _maintenance_mode.get()
+            try:
+                payload = json.loads(messages[-1].content)
+            except (ValueError, TypeError):
+                payload = {}
+            if isinstance(payload, dict) and 'schema' in payload:
+                self.publication_calls += 1
+                return ChatCompletion(content=json.dumps({'schema_version': 1, 'items': [
+                    {'id': 'outcome', 'type': 'paragraph', 'section': 'execution',
+                     'parts': ['本轮成交回执为exec-once。'], 'refs': []}]}))
+            if isinstance(payload, dict) and 'inferences' in payload:
+                self.publication_calls += 1
+                return ChatCompletion(content=json.dumps({'reviews': [
+                    {'id': row['id'], 'supported': True, 'reason': 'explicit owned execution fixture'}
+                    for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}}))
             self.calls += 1
             if self.calls == 1:
                 return ChatCompletion(
@@ -190,6 +205,7 @@ def test_live_turn_compacts_after_tools_without_replaying_order_or_losing_histor
         "买入000001一百股，只执行一次，然后查询市场四次", session_id="scheduler-live-compaction"
     )
     assert "exec-once" in reply.summary and client.calls == 6 and len(summaries) == 1
+    assert client.publication_calls == 2 and reply.verification['report'] == 'complete'
     assert seen.count("place_paper_trade") == 1 and seen.count("get_market_pulse") == 4
     session = agent.session_store.load("scheduler-live-compaction")
     assert sum(m.role == "user" for m in session.messages) == 1

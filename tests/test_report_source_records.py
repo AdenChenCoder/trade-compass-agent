@@ -8,7 +8,7 @@ import pytest
 from report_contract_helpers import report_facts
 from trade_compass_agent.runtime.report_contract import Calculation, EvidenceCatalog, calculate
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
-from trade_compass_agent.runtime.report_transport import review_receipts, source_record_context
+from trade_compass_agent.runtime.report_transport import review_receipts, source_record_context, composition_source_records, source_reference_view
 
 
 @pytest.mark.parametrize('scene,count', [('empty', 0), ('failed', 0), ('quoted', 0), ('one', 1), ('many', 2)])
@@ -320,6 +320,83 @@ def test_run_read_snapshot_cannot_waive_an_adjacent_market_observation_date():
     assert [row['ref'] for row in result['evidence']] == ['price']
 
 
+def test_writing_metadata_view_preserves_limits_positions_empty_states_and_all_values():
+    from copy import deepcopy
+    receipts = [
+        ('get_bars', json.dumps({'symbol': '002415', 'timeframe': '1d', '_meta': {
+            'source': 'frozen-real', 'warnings': ['仅覆盖所给历史日期'], 'volume_unit': 'shares'},
+            'vendor_count': 7, 'bars': [
+                {'timestamp': '2025-01-01', 'close': 22, 'volume': 100},
+                {'timestamp': '2025-01-02', 'close': 23, 'volume': 120}]})),
+        ('compute_ma', json.dumps({'symbol': '002415', 'ma': {'MA5': 22, 'MA10': 23}})),
+        ('builtin.check_exit_signals', json.dumps({'data': {'alerts': []}})),
+        ('get_fundamentals', json.dumps({'symbol': '002415', 'pb': 0.8, 'error': 'unavailable'})),
+    ]
+    catalog = EvidenceCatalog.build(receipts, run_scope='lossless-metadata')
+    before = deepcopy(catalog.receipts)
+    views = composition_source_records(catalog)
+    assert views[0]['data']['bars'] == [{'timestamp': '2025-01-01'}, {'timestamp': '2025-01-02'}]
+    assert views[0]['data']['vendor_count'] == 7
+    assert views[0]['data']['_meta'] == json.loads(receipts[0][1])['_meta']
+    assert views[0]['selection']['omitted_numeric_values'] == 4
+    assert [v['data'] for v in views[1:]] == [json.loads(raw) for _, raw in receipts[1:]]
+    # Independently reconstruct every source value from its original canonical
+    # pointer and type. No selector can remove an unindexed field or list item.
+    for view, receipt in zip(views, catalog.receipts, strict=True):
+        restored = deepcopy(view['data'])
+        original = json.loads(receipt['result'])
+        for fact in catalog.facts.values():
+            if fact.receipt_id != receipt['id'] or not fact.pointer:
+                continue
+            keys = [s.replace('~1', '/').replace('~0', '~') for s in fact.pointer.split('/')[1:]]
+            old, new = original, restored
+            for key in keys[:-1]:
+                old = old[int(key)] if isinstance(old, list) else old[key]
+                new = new[int(key)] if isinstance(new, list) else new[key]
+            if isinstance(new, dict) and keys[-1] not in new:
+                value = old[keys[-1]]
+                assert type(value) in (int, float) and str(value) == fact.value
+                new[keys[-1]] = value
+        assert restored == original
+    assert catalog.receipts == before
+
+
+def test_source_reference_view_retains_exact_canonical_addresses_and_dates():
+    from copy import deepcopy
+    from dataclasses import asdict
+    receipts = [*source_receipts(), ('compute_ma', json.dumps({'symbol': '002415', 'timestamp': '2025-01-02',
+        'ma': {'MA5': 22, 'MA10': 23, 'MA20': 21}}))]
+    catalog = EvidenceCatalog.build(receipts, run_scope='address-view')
+    facts = [{**asdict(f), 'observed_date': f.observation_date('Asia/Shanghai'),
+              'display_value_with_unit': f.display_value_with_unit} for f in catalog.facts.values()]
+    selected = {next(f['id'] for f in facts if f['metric'] == 'MA5')}
+    contexts = {'p0': {'evidence': facts, 'calculations': []}}
+    before = deepcopy(contexts)
+    view, references = source_reference_view(contexts, selected)
+    kept = {f['id']: f for f in view['p0']['evidence']}
+    assert selected <= kept.keys()
+    assert all(f['id'] in kept for f in facts if f['kind'] in {'quotation', 'classification'})
+    addressed = {}
+    originals = {r['id']: json.loads(r['result']) for r in catalog.receipts}
+    for source in references['sources']:
+        for observation in source['observations']:
+            for row in observation['rows']:
+                ref = dict(zip(references['columns'], row, strict=True))
+                fact = next(f for f in facts if f['id'] == ref['id'])
+                assert source['receipt_id'] == fact['receipt_id']
+                assert ref == {key: fact[key] for key in references['columns']}
+                assert (observation['observed_at'], observation['observed_date']) == (fact['observed_at'], fact['observed_date'])
+                raw = originals[source['receipt_id']]
+                for segment in ref['pointer'].split('/')[1:]:
+                    key = segment.replace('~1', '/').replace('~0', '~')
+                    raw = raw[int(key)] if isinstance(raw, list) else raw[key]
+                assert str(raw) == fact['value']
+                addressed[ref['id']] = ref
+    assert kept.keys().isdisjoint(addressed)
+    assert kept.keys() | addressed.keys() == {f['id'] for f in facts}
+    assert contexts == before
+
+
 @pytest.mark.parametrize('body', [
     '300406当前日线RSI处于中性区间。',
     '就当前日线RSI而言，300406既不过热，也不过冷。',
@@ -354,6 +431,15 @@ def test_unselected_indicator_remains_addressable_without_changing_body_or_origi
         seen.append(payload)
         facts = [f for ctx in payload['contexts'].values() for f in ctx['evidence']]
         rsi = next((f for f in facts if f['metric'] == 'current_rsi'), None)
+        references = payload.get('source_fact_references', {})
+        for source in references.get('sources', []):
+            receipt = next(r for r in payload['receipts'] if r['id'] == source['receipt_id'])
+            raw = json.loads(receipt['result'])
+            for observation in source['observations']:
+                for values in observation['rows']:
+                    ref = dict(zip(references['columns'], values, strict=True))
+                    if ref['pointer'] == '/current_rsi':
+                        rsi = {**ref, 'metric': 'current_rsi', 'entity': raw['symbol'], 'value': str(raw['current_rsi'])}
         # A real assessor must decide identity and support independently. An
         # optimistic date verdict is deliberately checked by the runtime.
         checks = dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed')
@@ -377,7 +463,7 @@ def test_unselected_indicator_remains_addressable_without_changing_body_or_origi
     original = result.artifact['document']['items'][0]
     assert original['parts'] == [{'type': 'text', 'text': body}]
     assert len(original['refs']) == 1  # Original writer bindings stay immutable.
-    rsi = next(f for ctx in seen[0]['contexts'].values() for f in ctx['evidence'] if f['metric'] == 'current_rsi')
+    rsi = next(f for f in result.artifact['facts'] if f['metric'] == 'current_rsi')
     assert rsi['observed_at'] == stamp and rsi['value'] == str(value)
     assert not result.artifact.get('factual_assessment_errors')
     if accepted:
@@ -392,3 +478,42 @@ def test_unselected_indicator_remains_addressable_without_changing_body_or_origi
     assert saved['reader_body'] == result.artifact['reader_body']
     assert saved['reviewed_source_refs'] == result.artifact['reviewed_source_refs']
     assert [(r['tool'], r['result']) for r in saved['receipts']] == receipts
+
+
+@pytest.mark.parametrize('stamp,fresh', [('2025-01-02', True), ('2025-01-01', False)])
+@pytest.mark.parametrize('witness', [True, False])
+@pytest.mark.parametrize('reported_time', ['entailed', 'not_applicable'])
+def test_positive_current_qualitative_observation_needs_its_own_date_witness(
+        stamp, fresh, witness, reported_time):
+    body = '300406当前日线RSI处于中性区间。'
+    rows = [('compute_rsi', json.dumps({'symbol': '300406', 'timestamp': stamp, 'current_rsi': 57.22}))]
+    def writer(system, user):
+        p = json.loads(user)
+        if 'schema' not in p:
+            return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []}})
+        return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
+            'section': 'assessment', 'parts': [body], 'refs': []}]})
+    def assessor(system, user):
+        p = json.loads(user)
+        if 'paragraphs' in p:
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [{
+                'through': row['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'judgment',
+                'observation_dates': ['task_now'], 'classifications': []}]} for row in p['paragraphs']]})
+        refs = [row[0] for source in p['source_fact_references']['sources']
+                for observation in source['observations'] for row in observation['rows']
+                if row[1] == '/current_rsi'] if witness else []
+        checks = dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed')
+        checks.update(time=reported_time, quantity='not_applicable')
+        return json.dumps({'assessments': [{'id': s['id'], 'commitments': {
+            'participant_activity': False, 'causal_relation': False}, 'time_evidence': refs,
+            'comparison': 'optimistic date/applicability double', 'support_basis': 'reasoned',
+            'checks': checks, 'verdict': 'entailed'} for s in p['statements']]})
+    result = publish_report(task='判断300406当前日线RSI是否处于中性区间。', draft='', tool_results=rows,
+        run_scope='qualitative-current-date', call=writer, fact_review_call=assessor,
+        max_calls=2, reference_date='2025-01-02')
+    assert (result.verification['status'] == 'complete') is (fresh and witness)
+    assert result.artifact['review_valid'] is witness
+    if not witness:
+        assert next(iter(result.artifact['factual_assessment_errors'].values()))['code'] == 'temporal_witness_missing'
+    elif not fresh:
+        assert next(iter(result.artifact['temporal_checks'].values()))['reason'] == 'observation_not_at_asserted_date'

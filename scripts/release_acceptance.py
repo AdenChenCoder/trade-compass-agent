@@ -37,6 +37,7 @@ SUITES = (
     "test_native_budgets.py",
     "test_lmstudio_execution.py",
     "test_native_context_counter.py",
+    "test_in_turn_compaction.py",
 )
 
 

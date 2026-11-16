@@ -1,7 +1,7 @@
 """Lossless, request-local encoding of an owned evidence catalogue.
 
-Short references never become persistent identities. All validation, rendering
-and artifacts continue to use the original, run-scoped fact IDs.
+Short references never become persistent identities. Validation and rendering
+use original run-scoped IDs; saved wire views retain their explicit alias map.
 """
 from __future__ import annotations
 
@@ -86,6 +86,67 @@ def source_record_context(catalog, contexts, receipts, display_timezone):
     return {**contexts, name: {'evidence': records, 'calculations': []}}
 
 
+def composition_source_records(catalog):
+    """Keep source qualifications without repeating catalogue numbers.
+
+    This labelled writing view omits only exact numeric leaves already in the
+    owned catalogue. It retains strings, units, limitations, unindexed numbers,
+    list positions and genuine empty states. Review and storage retain originals.
+    """
+    known = {}
+    for fact in catalog.facts.values():
+        known.setdefault(fact.receipt_id, {})[fact.pointer] = fact.value
+
+    def metadata(value, path, facts):
+        if isinstance(value, dict):
+            result, removed = {}, 0
+            for key, item in value.items():
+                pointer = path+'/'+key.replace('~', '~0').replace('/', '~1')
+                if type(item) in (int, float) and facts.get(pointer) == str(item):
+                    removed += 1
+                    continue
+                result[key], count = metadata(item, pointer, facts)
+                removed += count
+            # Never manufacture an empty record from an originally nonempty one.
+            return (result, removed) if result or not value else (value, 0)
+        if isinstance(value, list):
+            rows = [metadata(item, path+'/'+str(index), facts) for index, item in enumerate(value)]
+            return [item for item, _ in rows], sum(count for _, count in rows)
+        return value, 0
+
+    records = []
+    for receipt in catalog.receipts:
+        data, count = metadata(json.loads(receipt['result']), '', known.get(receipt['id'], {}))
+        row = {'receipt_id': receipt['id'], 'tool': receipt['tool'], 'data': data}
+        if count:
+            row['selection'] = {'kind': 'metadata_with_catalogue_values_omitted', 'omitted_numeric_values': count}
+        records.append(row)
+    return records
+
+
+def source_reference_view(contexts, selected_ids):
+    """Address unselected numbers through original receipts without copying them.
+
+    Runtime checks retain the complete canonical contexts. The assessor gets
+    every original receipt and the exact ID/pointer/date linkage; selected
+    facts, quotations and derived categorical facts retain their full shape.
+    """
+    sources, result = {}, {}
+    for name, context in contexts.items():
+        evidence = []
+        for fact in context['evidence']:
+            if fact['id'] in selected_ids or fact['kind'] in {'quotation', 'classification'}:
+                evidence.append(fact)
+            else:
+                dates = (fact['observed_at'], fact['observed_date'])
+                sources.setdefault(fact['receipt_id'], {}).setdefault(dates, []).append([fact['id'], fact['pointer']])
+        result[name] = {**context, 'evidence': evidence}
+    references = {'columns': ['id', 'pointer'], 'sources': [{'receipt_id': key,
+        'observations': [{'observed_at': stamp, 'observed_date': day, 'rows': rows}
+                         for (stamp, day), rows in dates.items()]} for key, dates in sources.items()]}
+    return result, references
+
+
 class ReportTransport:
     def __init__(self, catalog: EvidenceCatalog):
         self.references = {f"e{i}": key for i, key in enumerate(catalog.facts)}
@@ -152,6 +213,41 @@ class ReportTransport:
         """Repair prompts use exactly the same aliases as initial composition."""
         value = self._map(document, self.aliases)
         return self._reader_parts(value, compact=True)
+
+    def encode_factual_review(self, contexts, statements, references):
+        """Encode only reference slots; original values and receipts stay literal."""
+        contexts, statements, references = deepcopy((contexts, statements, references))
+        for context in contexts.values():
+            for fact in context['evidence']:
+                fact['id'] = self.aliases.get(fact['id'], fact['id'])
+            for calculation in context['calculations']:
+                calculation['refs'] = [self.aliases.get(ref, ref) for ref in calculation.get('refs', [])]
+        for statement in statements:
+            for key in ('bound_fact_refs', 'time_fact_refs'):
+                statement[key] = [self.aliases.get(ref, ref) for ref in statement.get(key, [])]
+        for source in references['sources']:
+            for observation in source['observations']:
+                for row in observation['rows']:
+                    row[0] = self.aliases.get(row[0], row[0])
+        return contexts, statements, references
+
+    def encode_source_semantics(self, records):
+        """Use the same request-local namespace without rewriting source identity."""
+        records = deepcopy(records)
+        for record in records:
+            if not set(record['fact_refs']) <= self.aliases.keys():
+                raise ValueError('source method reference outside owned catalogue')
+            record['fact_refs'] = [self.aliases[ref] for ref in record['fact_refs']]
+        return records
+
+    def decode_factual_review(self, review):
+        review = deepcopy(review)
+        if isinstance(review, dict) and isinstance(review.get('assessments'), list):
+            for row in review['assessments']:
+                if isinstance(row, dict) and isinstance(row.get('time_evidence'), list):
+                    row['time_evidence'] = [self.references.get(ref, ref) if isinstance(ref, str) else ref
+                                            for ref in row['time_evidence']]
+        return review
 
     def repair_evidence(self, document, findings):
         """Give unresolved items readable source context without guessing refs.

@@ -25,8 +25,14 @@ in the linked regression tests, not in expanding prose exception lists.
   or rescale an unqualified ratio as a percentage. Reference
   existence alone does not establish meaning, and prose keyword/regex rules are
   not a substitute for this review.
-  Composition also receives the original structured tool records: a numeric
-  catalogue must not discard deterministic classifications or source limitations.
+  Composition receives source context alongside the typed catalogue: deterministic
+  classifications and source limitations must not disappear. A labelled writing
+  view may omit exact numeric fields already represented in that catalogue,
+  retaining unindexed values, strings, units, list positions and genuine empty
+  states. Such omissions cannot establish absent data. Independent review and
+  saved artifacts retain the full original records. Report context checks use
+  the available native token counter and this request's existing response cap,
+  including stricter parent caps, without changing the loaded model window.
   Computed moving-average alignment is also a typed categorical fact, retaining
   the original receipt, observation time and indicator scope. Its reader display
   uses the business category; the raw source value and historical records remain
@@ -152,6 +158,15 @@ in the linked regression tests, not in expanding prose exception lists.
   and original dates in review context. Approved review observations remain
   navigable in reader source notes; original text, bindings and receipts stay
   unchanged. Unavailable or rejected assertions cannot add approved sources.
+  The assessor may receive unselected numerical observations as canonical
+  ID/receipt/JSON-pointer/date rows alongside the full original receipts,
+  rather than a second copy of every number and its metadata. Runtime checks
+  retain the complete typed contexts. Selected values, quotations and derived
+  categorical facts remain explicit; addresses cannot establish support.
+  Review wire references may use the same request-local aliases as composition.
+  Decode only reference slots before validation; source values, reader text,
+  receipts and canonical persisted facts retain their original IDs and values.
+  Preserve raw review responses and the alias map for diagnostics.
   Numeric bindings remain tied to their original context and mandatory even
   if the assessor omits them. The runtime compares those
   source dates in the task's reference timezone with the task date and can withhold a statement despite an

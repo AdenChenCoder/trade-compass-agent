@@ -68,6 +68,40 @@ def market_receipts():
                   "volume": 1000+i} for i in range(40)]})) for symbol in ["000001", "000002", "000003", "000004", "000005", "000006", "000007", "000008"]]
 
 
+def test_review_aliases_touch_only_reference_slots_and_preserve_invalid_metadata():
+    from copy import deepcopy
+    from trade_compass_agent.runtime.report_assessments import assessments_with_availability
+    catalog = EvidenceCatalog.build(market_receipts()[:1], run_scope='review-aliases')
+    transport = ReportTransport(catalog)
+    fact = next(f for f in catalog.facts.values() if f.metric == 'close')
+    context = {'p0': {'evidence': [{**asdict(fact), 'value': fact.id}],
+                     'calculations': [{'id': 'calculation', 'refs': [fact.id], 'result': fact.id}]}}
+    statements = [{'id': 'c0', 'text': fact.id, 'bound_fact_refs': [fact.id], 'time_fact_refs': [fact.id]}]
+    references = {'columns': ['id', 'pointer'], 'sources': [{'receipt_id': fact.receipt_id,
+        'observations': [{'observed_at': fact.observed_at, 'observed_date': '2026-10-01',
+                          'rows': [[fact.id, fact.pointer]]}]}]}
+    before = deepcopy((context, statements, references))
+    encoded, spans, refs = transport.encode_factual_review(context, statements, references)
+    alias = transport.aliases[fact.id]
+    assert encoded['p0']['evidence'][0]['id'] == alias
+    assert encoded['p0']['evidence'][0]['value'] == fact.id
+    assert encoded['p0']['evidence'][0]['receipt_id'] == fact.receipt_id
+    assert encoded['p0']['calculations'] == [{'id': 'calculation', 'refs': [alias], 'result': fact.id}]
+    assert spans == [{'id': 'c0', 'text': fact.id, 'bound_fact_refs': [alias], 'time_fact_refs': [alias]}]
+    assert refs['sources'][0]['observations'][0]['rows'] == [[alias, fact.pointer]]
+    assert (context, statements, references) == before
+    raw = {'assessments': [{'id': 'c0', 'comparison': 'strict protocol fixture',
+        'verdict': 'entailed', 'time_evidence': [alias, fact.id],
+        'checks': dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed')}]}
+    decoded = transport.decode_factual_review(raw)
+    assert decoded['assessments'][0]['time_evidence'] == [fact.id, fact.id]
+    _, errors = assessments_with_availability(decoded, ['c0'])
+    assert errors['c0']['fields'] == ['time_evidence']  # No silent deduplication.
+    raw['assessments'][0]['time_evidence'] = ['e999999', True]
+    raw['assessments'][0]['checks']['support'] = 'reasoned'
+    assert transport.decode_factual_review(raw) == raw  # No JSON/enum repair.
+
+
 @pytest.mark.parametrize('compact', [False, True])
 def test_compact_and_legacy_writer_parts_have_the_same_reviewed_persisted_body(tmp_path, compact):
     receipts = [('get_bars', json.dumps({'symbol': '600928', 'bars': [
@@ -292,7 +326,14 @@ def test_full_large_composition_includes_original_tool_context_with_response_roo
             return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': ''}
                 for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
         assert estimate_tokens(user) < 131072 - 16384
-        assert [row['data'] for row in payload['source_records']] == [json.loads(raw) for _, raw in receipts]
+        for source, (_, raw) in zip(payload['source_records'], receipts, strict=True):
+            original = json.loads(raw)
+            assert source['data'] == {**original, 'bars': [{'timestamp': b['timestamp']} for b in original['bars']]}
+            assert source['selection'] == {'kind': 'metadata_with_catalogue_values_omitted', 'omitted_numeric_values': 200}
+            facts = [f for f in report_facts(payload) if f['subject'] == original['symbol']]
+            for metric in ('open', 'high', 'low', 'close', 'volume'):
+                assert [(f['observed_at'], f['value']) for f in facts if f['metric'] == metric] == [
+                    (bar['timestamp'], str(bar[metric])) for bar in original['bars']]
         seen.append(payload)
         fact = next(f for f in report_facts(payload) if f['subject'] == '000008' and f['metric'] == 'close')
         return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
@@ -302,6 +343,7 @@ def test_full_large_composition_includes_original_tool_context_with_response_roo
         run_scope='large-source-context', call=writer)
     assert seen and result.verification['status'] == 'complete'
     assert '000008所给首日收盘价为10.5元/股。' in result.artifact['reader_body']
+    assert [r['result'] for r in result.artifact['receipts']] == [raw for _, raw in receipts]
 
 
 @pytest.mark.parametrize("invalid", [
@@ -447,3 +489,25 @@ def test_fact_rendering_example_matches_consumer_dates_and_missing_time(observed
     assert (observed if observed else "时点未提供") in examples[0]["rendered"]
     assert "fact_rendering_example" not in result.text
     assert "fact_rendering_example" not in ReportTransport(EvidenceCatalog.build([], run_scope="empty")).table
+
+
+def test_source_method_references_share_review_namespace_without_rewriting_source_data():
+    catalog = EvidenceCatalog.build([('get_chip_distribution', json.dumps({
+        'symbol': '002415', 'date': '2025-01-02', 'cost_90_high': 23}))], run_scope='method-wire')
+    transport = ReportTransport(catalog)
+    original = catalog.source_semantics()
+    source = original[0]
+    ref = source['fact_refs'][0]
+    source['literal'] = ref
+    encoded = transport.encode_source_semantics(original)
+    assert encoded[0]['fact_refs'] == [transport.aliases[ref]]
+    assert encoded[0]['literal'] == ref
+    for key in ['receipt_id', 'entity', 'observed_at', 'timeframe', 'constraints']:
+        assert encoded[0][key] == source[key]
+    assert original[0]['fact_refs'] == [ref]
+    decoded = transport.decode_factual_review({'assessments': [{'time_evidence': encoded[0]['fact_refs']}]})
+    assert decoded['assessments'][0]['time_evidence'] == source['fact_refs']
+    encoded[0]['constraints'].clear()
+    assert original[0]['constraints']
+    with pytest.raises(ValueError, match='outside owned catalogue'):
+        transport.encode_source_semantics([{'fact_refs': ['foreign-method-fact']}])

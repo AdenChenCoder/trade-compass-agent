@@ -276,3 +276,15 @@ def test_multimodal_compaction_never_counts_image_encoding_as_text(monkeypatch):
     assert client.measure_input_tokens([ChatMessage(role="user", content=[
         {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * 100000}},
     ])]) is None
+
+
+def test_request_response_reserve_keeps_nested_parent_limit():
+    from trade_compass_agent.llm.providers import llm_response_contract, llm_response_token_limit
+    assert llm_response_token_limit(32768) == 32768
+    with llm_response_contract(max_tokens=4096):
+        with llm_response_contract(max_tokens=16384):
+            assert llm_response_token_limit(32768) == 4096
+    with llm_response_contract(max_tokens=16384):
+        assert llm_response_token_limit(32768) == 16384
+        assert llm_response_token_limit(8192) == 8192
+    assert llm_response_token_limit(32768) == 32768

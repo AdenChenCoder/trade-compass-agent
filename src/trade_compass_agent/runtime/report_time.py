@@ -29,10 +29,12 @@ def check_statement_time(statement, assessment, context, report_context):
     if statement['time_scope'] != 'reference_date':
         return result
     if (statement['assertion_kind'] in {'judgment', 'discourse'}
+            and 'task_now' not in statement.get('observation_dates', [])
             and assessment['checks']['quantity'] == 'not_applicable'
             and not statement['bound_fact_refs'] and not assessment['time_evidence']):
         # A present opinion is not a new dated measurement. Bound or asserted
-        # quantities still require their own observation-time proof.
+        # quantities and explicit empirical calendar anchors still require their
+        # own observation-time proof, including qualitative measurements.
         result['reason'] = 'non_observational_judgment'
         return result
     facts = {fact['id']: fact for fact in context['evidence']}
