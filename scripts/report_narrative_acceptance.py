@@ -109,6 +109,8 @@ SCOPE_CASES = {
         _rule_receipts({'alerts': ['条件A触发', '条件B触发']}), _rule_task),
     'profile_property_in_plan_missing': (_chip_plan, False, _chip_bars, '根据所给日期的资料给出后续观察位，并说明依据。'),
     'profile_property_in_plan_supported': (_chip_plan, True, _profile, '根据所给日期的资料给出后续观察位，并说明依据。'),
+    'profile_property_in_plan_estimated': (_chip_plan, True, [*_chip_bars, *_chip_estimate],
+        '根据所给日期的资料给出后续观察位，并说明依据。'),
     'estimated_pressure_plan': ('002415在2025-01-02的筹码算法估算中，90%成本区间上沿为23元/股；'
         '据此可把23元附近作为后续压力观察位，但这不是逐价成交量的实测结论。', True, _chip_estimate,
         '说明所给日期的筹码成本估算、可据此提出的观察位及其局限。'),

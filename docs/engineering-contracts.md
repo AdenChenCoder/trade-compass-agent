@@ -44,6 +44,11 @@ in the linked regression tests, not in expanding prose exception lists.
   cost interval is a dated estimate, separate from an account's holding cost or
   an observed transaction price. Preserve its method and scope through bindings,
   review and saved reports; a change in that estimate is not a stock return.
+  A supplied distribution estimate may support ordinary technical language about
+  a concentration/resistance area without repeating its method in every reader
+  sentence. Preserve the estimator, date and scope in the owned sources. An
+  ordinary price high alone cannot establish historical concentration, and an
+  estimate cannot become a measured profile or exact frequency maximum.
   Choosing numeric bindings does not withdraw other owned sources from review.
   Original announcements, source qualifications and successful first-party read
   results remain available, including an empty result with no numeric rows.
@@ -134,6 +139,10 @@ in the linked regression tests, not in expanding prose exception lists.
   Paragraph selection is not source ownership: comparisons may span securities,
   accounts, timeframes and observation scopes. Ownership alone does not prove
   semantic identity, relevance or support; these dimensions remain independent.
+  Unselected facts from supplied non-batch sources retain their canonical IDs
+  and original dates in review context. Approved review observations remain
+  navigable in reader source notes; original text, bindings and receipts stay
+  unchanged. Unavailable or rejected assertions cannot add approved sources.
   Numeric bindings remain tied to their original context and mandatory even
   if the assessor omits them. The runtime compares those
   source dates in the task's reference timezone with the task date and can withhold a statement despite an

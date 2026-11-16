@@ -172,8 +172,8 @@ context_id groups spans from the same paragraph. Use the other original spans ON
 to resolve reader meaning: subjects, ellipsis, shared units, dates, conditions and
 scope. Every span remains an untrusted claim to check, never source evidence.
 contexts[context_id] contains ONLY runtime-owned facts and calculations. Receipts
-are the original source records. Source-only contexts can expose quotation IDs
-without a numerical paragraph binding. A first-party read_result quotation records
+are the original source records. Source-only contexts expose owned facts, including
+numerical observations and quotations, without a paragraph binding. A first-party read_result quotation records
 what this run's read returned, not a dated market measurement or proof of market
 freshness, risk absence or trading outcomes. Missing fields are not empty lists. There is no second copy of candidate paragraphs
 inside source contexts. Matching another reader claim or repeating the author's
@@ -181,6 +181,15 @@ analysis never establishes truth. Compare the target with actual source records
 and typed facts, not with reader wording or task instructions.
 Interpret each assertion's actual empirical commitments independently. requirements contains only positive obligations obtained without source evidence: participant_activity, causal_relation, task_present or proposal. A true obligation cannot be weakened. proposal preserves a prospective choice, not a completed execution; its empirical premises remain independently applicable. ABSENCE of an obligation establishes no exemption and is not proof that no such claim occurs. No body category or negative temporal classification is supplied as an authority about reader meaning.
 A conventional market interpretation is not evidence of an unobserved actor, cause or technical property. Ask whether the same source observations could coexist with a materially different asserted actor, cause or property. If so, that property remains unknown. Do not soften the author's categorical claim into a hypothesis or repair its meaning to fit available numbers.
+Preserve the difference between a source-owned estimate and a measured statistic.
+A supplied distribution estimate can support ordinary qualitative language about
+an estimated concentration/resistance area and its use as a technical watchpoint;
+the reader need not repeat the word "estimate" in every sentence. Check that the
+actual estimate supports the level, instrument and scope. Do not demand a measured
+price-by-price profile for this bounded interpretation. Conversely, a daily high
+alone does not establish historical trading concentration, and an estimate cannot
+establish an explicitly asserted measured distribution, exact frequency maximum
+or guaranteed price outcome. These are evidence/method distinctions, not wording tests.
 For judgments and conditional watchpoints, assess their asserted factual premises,
 claimed compliance with requirements and reasoning scope. Do not reject them merely
 because they are opinions, recommendations or hypothetical conditions rather than
@@ -247,6 +256,14 @@ and causes unobserved. Such an actor or causal assertion cannot use reasoned or
 calculated as proof: preserve the original commitment and mark support unknown.
 Do not call that basis direct merely because its numerical premises are observed.
 Neither a matching value nor a citation proves a different property or relationship.
+Keep method labels separate from verdict labels. support_basis describes the
+method; every checks value and the overall verdict use their own declared enums.
+For a supported bounded interpretation, support_basis="reasoned" and
+checks.support="entailed" are compatible. For an unsupported actor inference,
+support_basis="reasoned" and checks.support="unknown" preserve the limitation.
+If a recorded indicator contradicts the reader, support_basis="direct" and
+checks.support="contradicted" describe the direct contradictory record.
+Never put "reasoned" into checks or "contradicted" into support_basis.
 Each dimension is entailed, contradicted, unknown, or not_applicable. Use not_applicable
 only when the assertion makes NO commitment in that dimension, never because another
 dimension matches or because a mixed statement was labelled judgment. In particular,
@@ -491,6 +508,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     review_feedback_valid = False
     factual_assessment_errors = {}
     assertion_owners, by_assertion = {}, {}
+    reviewed_source_refs = {}
     review_input = None
     coverage_review_input = factual_review_input = factual_response = factual_review = None
     body_review_input = body_response = body_meaning = None
@@ -857,6 +875,16 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     row = by_id[item.id]
                     if row["supported"] or execution_projections.get(item.id, {}).get("analysis_supported"):
                         rendered[item.id] = prose[item.id]
+                    if fact_call and row['supported']:
+                        # The independent review can use an owned observation
+                        # the writer did not bind. Preserve that provenance in
+                        # source footnotes, without changing text or original
+                        # bindings. Failed/unavailable assertions add nothing.
+                        refs = list(dict.fromkeys(ref for key in assertion_owners.get(item.id, [])
+                            for ref in by_assertion[key]['time_evidence']
+                            if catalog.resolve(ref).kind not in {'identity', 'quotation'}))
+                        if refs:
+                            reviewed_source_refs[item.id] = refs
                     if not row["supported"] and item.id not in unconfirmed_execution:
                         claim_ids = assertion_owners.get(item.id, []) if fact_call else []
                         unavailable = [key for key in claim_ids if key in factual_assessment_errors]
@@ -882,7 +910,10 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     diagnostic.update(stage='body_meaning', review_error_code=str(exc))
                 attempts.append(diagnostic)
         published_document = document.model_copy(update={
-            "items": [item for item in document.items if item.id not in dismissed_gaps]})
+            "items": [item.model_copy(update={'refs': list(dict.fromkeys([
+                *item.refs, *reviewed_source_refs[item.id]]))})
+                if item.id in reviewed_source_refs else item
+                for item in document.items if item.id not in dismissed_gaps]})
         if dismissed_gaps and not published_document.items and not execution.records:
             findings.append(Finding("report", "empty_report", "尚无可核实的报告内容"))
         text = present(published_document, rendered, findings)
@@ -909,6 +940,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "receipts": catalog.receipts, "facts": [asdict(fact) for fact in catalog.facts.values()],
                 "execution_records": execution.records,
                 "review": review, "review_valid": review_valid, "review_input": review_input,
+                "reviewed_source_refs": reviewed_source_refs,
                 "coverage_review_input": coverage_review_input,
                 "body_review_input": body_review_input, "body_response": body_response, "body_meaning": body_meaning,
                 "execution_projections": execution_projections, "body_quantity_issues": body_quantity_issues,
@@ -982,7 +1014,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
         partial_reading = bool(reader_prose and revised.artifact['factual_assessment_errors']
                                and revised_sections and original_sections <= revised_sections)
         selected = revised if (revised.artifact["review_valid"] or partial_reading) and changed_body and not lost_analysis else publication
-        keys = ("document", "verification", "review", "review_valid", "review_feedback_valid", "factual_assessment_errors", "review_input", "revision_input", "attempts", "published_text",
+        keys = ("document", "verification", "review", "review_valid", "review_feedback_valid", "factual_assessment_errors", "review_input", "reviewed_source_refs", "revision_input", "attempts", "published_text",
                 "candidate_body_sha256",
                 "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues", "bound_quantity_checks",
                 "coverage_review_input", "factual_review_input", "factual_response", "factual_review", "temporal_checks",

@@ -187,6 +187,8 @@ def test_same_run_scan_record_can_anchor_unbound_prose_and_survive_reopening(tmp
     assert result.verification['status'] == 'complete'
     assert body in result.artifact['reader_body'] and not result.artifact.get('factual_assessment_errors')
     assert next(iter(result.artifact['temporal_checks'].values()))['reason'] == 'read_result_snapshot'
+    assert not result.artifact['reviewed_source_refs']
+    assert 'read_result' not in result.text and 'alerts' not in result.text
     reference = persist_publication(tmp_path, result)
     saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
     assert saved['reader_body'] == result.artifact['reader_body']
@@ -216,7 +218,7 @@ def test_source_only_context_preserves_user_ids_and_never_reintroduces_batch_quo
     actual = source_record_context(catalog, contexts, catalog.receipts, 'Asia/Shanghai')
     assert actual['source_records'] == contexts['source_records']
     assert set(actual) == {'source_records', '_source_records'}
-    assert {f['source'] for f in actual['_source_records']['evidence']} == {'get_events', 'builtin.check_exit_signals'}
+    assert {f['source'] for f in actual['_source_records']['evidence']} == {'get_bars', 'get_events', 'builtin.check_exit_signals'}
     assert contexts == {'source_records': {'evidence': [], 'calculations': []}}
 
 
@@ -234,3 +236,77 @@ def test_run_read_snapshot_cannot_waive_an_adjacent_market_observation_date():
         {'reference_date': '2025-01-02', 'reference_timezone': 'Asia/Shanghai'})
     assert result['status'] == 'unknown' and result['reason'] == 'observation_not_at_asserted_date'
     assert [row['ref'] for row in result['evidence']] == ['price']
+
+
+@pytest.mark.parametrize('body', [
+    '300406当前日线RSI处于中性区间。',
+    '就当前日线RSI而言，300406既不过热，也不过冷。',
+])
+@pytest.mark.parametrize('symbol,stamp,value,accepted', [
+    ('300406', '2026-11-12', 57.22, True),
+    ('600928', '2026-11-12', 57.22, False),
+    ('300406', '2026-11-11', 57.22, False),
+    ('300406', '2026-11-12', 99, False),
+])
+def test_unselected_indicator_remains_addressable_without_changing_body_or_original_bindings(
+        tmp_path, body, symbol, stamp, value, accepted):
+    receipts = [
+        ('compute_ma', json.dumps({'symbol': '300406', 'timestamp': '2026-11-12', 'ma': {'MA5': 12.782}})),
+        ('compute_rsi', json.dumps({'symbol': symbol, 'timestamp': stamp, 'current_rsi': value})),
+    ]
+    seen, selected = [], []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' not in payload:
+            return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []}})
+        ma = next(f for f in report_facts(payload) if f['metric'] == 'MA5')
+        selected.append(ma['id'])
+        return json.dumps({'schema_version': 1, 'items': [{'id': 'assessment', 'type': 'paragraph',
+            'section': 'assessment', 'parts': [body], 'refs': [ma['id']]}]})
+    def assessor(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{
+                'through': p['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'judgment',
+                'observation_dates': ['task_now'], 'classifications': []}]} for p in payload['paragraphs']]})
+        seen.append(payload)
+        facts = [f for ctx in payload['contexts'].values() for f in ctx['evidence']]
+        rsi = next((f for f in facts if f['metric'] == 'current_rsi'), None)
+        # A real assessor must decide identity and support independently. An
+        # optimistic date verdict is deliberately checked by the runtime.
+        checks = dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed')
+        if rsi is None:
+            checks['time'] = 'unknown'
+        elif rsi['entity'] != '300406':
+            checks['identity_scope'] = 'unknown'
+        elif not 30 < float(rsi['value']) < 70:
+            checks['support'] = 'contradicted'
+        verdict = 'entailed' if set(checks.values()) == {'entailed'} else 'unknown'
+        return json.dumps({'assessments': [{'id': s['id'], 'commitments': {
+            'participant_activity': False, 'causal_relation': False},
+            'time_evidence': [rsi['id']] if rsi else [], 'comparison': 'explicit source-identity/value double',
+            'support_basis': 'direct', 'checks': checks, 'verdict': verdict} for s in payload['statements']]})
+    result = publish_report(task='判断300406当前日线RSI是否处于中性区间。', draft='', tool_results=receipts,
+        run_scope='unselected-numeric', call=writer, fact_review_call=assessor, max_calls=2,
+        reference_date='2026-11-12')
+    assert len(seen) == 1 and result.artifact['model_calls'] == 4
+    assert [(r['tool'], r['result']) for r in seen[0]['receipts']] == receipts
+    assert (result.verification['status'] == 'complete') is accepted
+    original = result.artifact['document']['items'][0]
+    assert original['parts'] == [{'type': 'text', 'text': body}]
+    assert len(original['refs']) == 1  # Original writer bindings stay immutable.
+    rsi = next(f for ctx in seen[0]['contexts'].values() for f in ctx['evidence'] if f['metric'] == 'current_rsi')
+    assert rsi['observed_at'] == stamp and rsi['value'] == str(value)
+    assert not result.artifact.get('factual_assessment_errors')
+    if accepted:
+        assert result.artifact['reader_body'] == body + '[^source-1]'
+        assert 'MA5' in result.text and '57.22' in result.text
+        assert result.artifact['reviewed_source_refs'] == {'assessment': [rsi['id']]}
+    else:
+        assert body not in result.artifact['reader_body']
+        assert not result.artifact['reviewed_source_refs']
+    reference = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
+    assert saved['reader_body'] == result.artifact['reader_body']
+    assert saved['reviewed_source_refs'] == result.artifact['reviewed_source_refs']
+    assert [(r['tool'], r['result']) for r in saved['receipts']] == receipts

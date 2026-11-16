@@ -41,6 +41,10 @@ def test_profile_controls_change_evidence_without_changing_the_reader_claim():
     assert missing[0] == supplied[0] and missing[3] == supplied[3]
     assert missing[1] is False and supplied[1] is True
     assert supplied[2][:-1] == missing[2] and supplied[2][-1][0] == 'fetch_url'
+    estimated = cases['profile_property_in_plan_estimated']
+    assert estimated[0] == missing[0] and estimated[3] == missing[3] and estimated[1] is True
+    assert estimated[2][0] == missing[2][0] and estimated[2][1][0] == 'get_chip_distribution'
+    assert json.loads(estimated[2][1][1])['cost_90_high'] == 23
     negative = cases['estimate_as_measured_profile']
     positive = cases['estimated_pressure_plan']
     assert negative[2] == positive[2] and not negative[1] and positive[1]

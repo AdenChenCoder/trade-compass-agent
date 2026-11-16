@@ -66,13 +66,18 @@ def review_receipts(catalog, facts):
 
 
 def source_record_context(catalog, contexts, receipts, display_timezone):
-    """Expose owned quotation IDs independently of numerical paragraph selection."""
+    """Keep owned source facts addressable independently of paragraph selection.
+
+    Raw receipt visibility alone cannot supply a canonical temporal witness.
+    Preserve original numeric facts as well as quotations, without duplicating
+    existing bindings or widening the separately selected batch-bar view.
+    """
     known = {fact['id'] for context in contexts.values() for fact in context['evidence']}
     sources = {receipt['id'] for receipt in receipts if receipt['tool'] != 'batch_get_bars'}
     records = [{**asdict(fact), 'display_value_with_unit': fact.display_value_with_unit,
                 'observed_date': fact.observation_date(display_timezone)}
-               for fact in catalog.facts.values() if fact.kind == 'quotation'
-               and fact.receipt_id in sources and fact.id not in known]
+               for fact in catalog.facts.values()
+               if fact.receipt_id in sources and fact.id not in known]
     if not records:
         return contexts
     name = 'source_records'
