@@ -1496,6 +1496,80 @@ def test_scheduled_api_uses_configured_factual_role_and_never_replays_business_t
     assert all(row["report_context"] == artifact["report_context"] for row in checks)
 
 
+@pytest.mark.parametrize('measured,cap,configured,accepted', [
+    (110000, 16384, 0, True), (115000, 16384, 0, False),
+    (125000, 4096, 0, True), (128000, 4096, 0, False),
+    (None, 16384, 0, False), (110000, 16384, 50000, False),
+])
+def test_scheduled_report_uses_native_count_and_actual_response_reserve(
+        tmp_path, monkeypatch, measured, cap, configured, accepted):
+    from fastapi.testclient import TestClient
+    from trade_compass_agent.config import AgentConfig, CompressionConfig
+    from trade_compass_agent.llm.providers import ChatCompletion, ToolCall, llm_response_contract
+    from trade_compass_agent.llm.lmstudio_context import ContextMeasurement
+    from trade_compass_agent.ops.prompt_jobs import PromptJobExecutor, PromptJobStore
+    from trade_compass_agent.ops.run_store import SqliteRunStore
+    from trade_compass_agent.runtime.compression.budget import TokenBudget
+    from trade_compass_agent.web.app import create_app
+    requests, queries = [], []
+    original_estimate = TokenBudget.estimate
+    def payload(messages):
+        try:
+            value = json.loads(messages[-1].content)
+            return value if isinstance(value, dict) else {}
+        except (ValueError, TypeError):
+            return {}
+    def estimate(self, messages, **kwargs):
+        value = payload(messages)
+        return 166273 if 'schema' in value or 'inferences' in value else original_estimate(self, messages, **kwargs)
+    class Writer:
+        name, model = 'lmstudio-explicit-double', 'unit-model'
+        context_window, response_token_limit = 131072, 32768
+        def measure_input_tokens(self, messages, **kwargs):
+            value = payload(messages)
+            if 'schema' in value or 'inferences' in value:
+                return None if measured is None else ContextMeasurement(measured, self.context_window, [])
+            return ContextMeasurement(100, self.context_window, [])
+        def stream_complete(self, messages, **kwargs):
+            value = payload(messages)
+            if 'schema' in value:
+                requests.append('compose')
+                close = next(f for f in report_facts(value) if f['metric'] == 'close')
+                return ChatCompletion(content=json.dumps({'schema_version': 1, 'items': [
+                    {'id': 'close', 'type': 'fact', 'section': 'market', 'ref': close['id']}]}))
+            if 'inferences' in value:
+                requests.append('review')
+                return ChatCompletion(content='{"reviews":[],"coverage":{"complete":true,"missing":[]}}')
+            if not any(m.role == 'tool' for m in messages):
+                return ChatCompletion(content='', tool_calls=[ToolCall('bars', 'get_bars', '{"symbol":"002415"}')])
+            return ChatCompletion(content='已取得所给收盘记录。')
+        complete = stream_complete
+    def query(_registry, name, _arguments):
+        assert name == 'get_bars'
+        queries.append(name)
+        return RECEIPTS[0][1]
+    config = AppConfig(data_dir=tmp_path/'data', memory_dir=tmp_path/'memory', data_provider='sample',
+        agent=AgentConfig(learning_enabled=False, llm_session_titles=False),
+        context_compression=CompressionConfig(context_budget=configured))
+    monkeypatch.setattr(TokenBudget, 'estimate', estimate)
+    monkeypatch.setattr('trade_compass_agent.runtime.loop.create_chat_client', lambda _: Writer())
+    monkeypatch.setattr('trade_compass_agent.runtime.tools.registry.ToolRegistry.execute', query)
+    monkeypatch.setattr('trade_compass_agent.ops.delivery.DeliveryRouter.deliver', lambda *_: None)
+    monkeypatch.setattr('trade_compass_agent.web.api.load_app_config', lambda: config)
+    monkeypatch.setattr('trade_compass_agent.web.agent_api.load_app_config', lambda: config)
+    jobs = PromptJobStore(config.data_dir/'scheduler.db')
+    job = jobs.create(name='收盘记录', prompt='读取一次002415的收盘资料并报告。', schedule='daily 12:00', delivery_channels=())
+    runs = SqliteRunStore(config.data_dir/'scheduler.db')
+    with llm_response_contract(max_tokens=cap):
+        PromptJobExecutor(config, runs, tool_whitelist={'get_bars'}).execute(job)
+    run = runs.recent_runs(job_id='custom:'+job.id)[0]
+    detail = TestClient(create_app()).get('/api/jobs/runs/'+run.id).json()
+    assert queries == ['get_bars']
+    assert detail['status'] == ('completed' if accepted else 'degraded')
+    assert requests == (['compose', 'review'] if accepted else [])
+    assert ('22元/股' in detail['analysis']) is accepted
+
+
 @pytest.mark.parametrize("ambiguous", [True, False])
 def test_body_quantity_meaning_cannot_be_repaired_by_evidence_approval(tmp_path, ambiguous):
     text = "价格变动比例为4.55。" if ambiguous else "这里的变动比例以百分数计，为4.55。"

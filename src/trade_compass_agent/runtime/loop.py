@@ -657,7 +657,16 @@ class AgentLoop:
         def read_only_report_call(system, user):
             _check_cancelled()
             review_messages = [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
-            if _budget.estimate(review_messages) > _budget.context_budget:
+            report_budget, measured = _budget, None
+            if str(getattr(client, 'name', '')).startswith('lmstudio'):
+                from trade_compass_agent.llm.providers import llm_response_token_limit
+                report_budget = TokenBudget(self.config, context_window=window,
+                    output_reserve=llm_response_token_limit(reserve))
+                counter = getattr(client, 'measure_input_tokens', None)
+                if callable(counter):
+                    measured = counter(review_messages, tools=None)
+            tokens = measured.input_tokens if measured is not None else report_budget.estimate(review_messages)
+            if tokens > report_budget.context_budget:
                 from trade_compass_agent.runtime.exceptions import LLMContextBudgetError
                 raise LLMContextBudgetError("报告核验所需依据超出本轮上下文预算")
             if isinstance(client, NativeAgentClient):

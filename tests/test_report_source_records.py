@@ -6,7 +6,7 @@ import pytest
 from report_contract_helpers import report_facts
 from trade_compass_agent.runtime.report_contract import Calculation, EvidenceCatalog, calculate
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
-from trade_compass_agent.runtime.report_transport import review_receipts, source_record_context
+from trade_compass_agent.runtime.report_transport import review_receipts, source_record_context, composition_source_records
 
 
 def source_receipts(alerts=()):
@@ -236,6 +236,47 @@ def test_run_read_snapshot_cannot_waive_an_adjacent_market_observation_date():
         {'reference_date': '2025-01-02', 'reference_timezone': 'Asia/Shanghai'})
     assert result['status'] == 'unknown' and result['reason'] == 'observation_not_at_asserted_date'
     assert [row['ref'] for row in result['evidence']] == ['price']
+
+
+def test_writing_metadata_view_preserves_limits_positions_empty_states_and_all_values():
+    from copy import deepcopy
+    receipts = [
+        ('get_bars', json.dumps({'symbol': '002415', 'timeframe': '1d', '_meta': {
+            'source': 'frozen-real', 'warnings': ['仅覆盖所给历史日期'], 'volume_unit': 'shares'},
+            'vendor_count': 7, 'bars': [
+                {'timestamp': '2025-01-01', 'close': 22, 'volume': 100},
+                {'timestamp': '2025-01-02', 'close': 23, 'volume': 120}]})),
+        ('compute_ma', json.dumps({'symbol': '002415', 'ma': {'MA5': 22, 'MA10': 23}})),
+        ('builtin.check_exit_signals', json.dumps({'data': {'alerts': []}})),
+        ('get_fundamentals', json.dumps({'symbol': '002415', 'pb': 0.8, 'error': 'unavailable'})),
+    ]
+    catalog = EvidenceCatalog.build(receipts, run_scope='lossless-metadata')
+    before = deepcopy(catalog.receipts)
+    views = composition_source_records(catalog)
+    assert views[0]['data']['bars'] == [{'timestamp': '2025-01-01'}, {'timestamp': '2025-01-02'}]
+    assert views[0]['data']['vendor_count'] == 7
+    assert views[0]['data']['_meta'] == json.loads(receipts[0][1])['_meta']
+    assert views[0]['selection']['omitted_numeric_values'] == 4
+    assert [v['data'] for v in views[1:]] == [json.loads(raw) for _, raw in receipts[1:]]
+    # Independently reconstruct every source value from its original canonical
+    # pointer and type. No selector can remove an unindexed field or list item.
+    for view, receipt in zip(views, catalog.receipts, strict=True):
+        restored = deepcopy(view['data'])
+        original = json.loads(receipt['result'])
+        for fact in catalog.facts.values():
+            if fact.receipt_id != receipt['id'] or not fact.pointer:
+                continue
+            keys = [s.replace('~1', '/').replace('~0', '~') for s in fact.pointer.split('/')[1:]]
+            old, new = original, restored
+            for key in keys[:-1]:
+                old = old[int(key)] if isinstance(old, list) else old[key]
+                new = new[int(key)] if isinstance(new, list) else new[key]
+            if isinstance(new, dict) and keys[-1] not in new:
+                value = old[keys[-1]]
+                assert type(value) in (int, float) and str(value) == fact.value
+                new[keys[-1]] = value
+        assert restored == original
+    assert catalog.receipts == before
 
 
 @pytest.mark.parametrize('body', [

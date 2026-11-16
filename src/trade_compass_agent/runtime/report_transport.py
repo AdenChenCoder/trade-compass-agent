@@ -86,6 +86,44 @@ def source_record_context(catalog, contexts, receipts, display_timezone):
     return {**contexts, name: {'evidence': records, 'calculations': []}}
 
 
+def composition_source_records(catalog):
+    """Keep source qualifications without repeating catalogue numbers.
+
+    This labelled writing view omits only exact numeric leaves already in the
+    owned catalogue. It retains strings, units, limitations, unindexed numbers,
+    list positions and genuine empty states. Review and storage retain originals.
+    """
+    known = {}
+    for fact in catalog.facts.values():
+        known.setdefault(fact.receipt_id, {})[fact.pointer] = fact.value
+
+    def metadata(value, path, facts):
+        if isinstance(value, dict):
+            result, removed = {}, 0
+            for key, item in value.items():
+                pointer = path+'/'+key.replace('~', '~0').replace('/', '~1')
+                if type(item) in (int, float) and facts.get(pointer) == str(item):
+                    removed += 1
+                    continue
+                result[key], count = metadata(item, pointer, facts)
+                removed += count
+            # Never manufacture an empty record from an originally nonempty one.
+            return (result, removed) if result or not value else (value, 0)
+        if isinstance(value, list):
+            rows = [metadata(item, path+'/'+str(index), facts) for index, item in enumerate(value)]
+            return [item for item, _ in rows], sum(count for _, count in rows)
+        return value, 0
+
+    records = []
+    for receipt in catalog.receipts:
+        data, count = metadata(json.loads(receipt['result']), '', known.get(receipt['id'], {}))
+        row = {'receipt_id': receipt['id'], 'tool': receipt['tool'], 'data': data}
+        if count:
+            row['selection'] = {'kind': 'metadata_with_catalogue_values_omitted', 'omitted_numeric_values': count}
+        records.append(row)
+    return records
+
+
 class ReportTransport:
     def __init__(self, catalog: EvidenceCatalog):
         self.references = {f"e{i}": key for i, key in enumerate(catalog.facts)}

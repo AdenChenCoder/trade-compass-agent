@@ -25,8 +25,14 @@ in the linked regression tests, not in expanding prose exception lists.
   or rescale an unqualified ratio as a percentage. Reference
   existence alone does not establish meaning, and prose keyword/regex rules are
   not a substitute for this review.
-  Composition also receives the original structured tool records: a numeric
-  catalogue must not discard deterministic classifications or source limitations.
+  Composition receives source context alongside the typed catalogue: deterministic
+  classifications and source limitations must not disappear. A labelled writing
+  view may omit exact numeric fields already represented in that catalogue,
+  retaining unindexed values, strings, units, list positions and genuine empty
+  states. Such omissions cannot establish absent data. Independent review and
+  saved artifacts retain the full original records. Report context checks use
+  the available native token counter and this request's existing response cap,
+  including stricter parent caps, without changing the loaded model window.
   Computed moving-average alignment is also a typed categorical fact, retaining
   the original receipt, observation time and indicator scope. Its reader display
   uses the business category; the raw source value and historical records remain

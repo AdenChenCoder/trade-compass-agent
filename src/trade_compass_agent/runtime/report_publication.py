@@ -23,7 +23,7 @@ from trade_compass_agent.runtime.report_body import (
     BODY_MEANING, BodyMeaningError, reader_source_units, validate_body_meaning, runtime_bound_quantity_issue, factual_assertions, factual_review_statements,
 )
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
-from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts, source_record_context
+from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts, source_record_context, composition_source_records
 from trade_compass_agent.runtime.report_time import check_statement_time, temporal_evidence_context
 from trade_compass_agent.runtime.report_support import check_support_basis
 from trade_compass_agent.runtime.report_assessments import assessments_with_availability
@@ -91,6 +91,7 @@ _COMPOSE = (
     "每个事实行保留其原始日期；未知日期仍是null，不能拿别的日期补齐。"
     "数值有来源不代表其当日归属已确认：观测日期未知的数据若与任务有关，正文须保留时点限制，不得与任务当日行情合并成确定的当日观察。"
     "source_records保留原始工具结果中的非数值信息和来源限制，不是新的事实id目录。"
+    "selection标记的来源视图省略了事实目录已有的数值；视图缺少该字段不代表原始来源缺失，不得据此断言没有数据。"
     "数值对照不能替代其中已有的分类、状态或口径；只有facts中的id可以用于事实引用。"
     "fact_rendering_example展示来源明细，不是正文格式；正文的日期、数值和单位由各自的parts指定。"
     "报告条目的id不能使用事实目录的id。"
@@ -497,8 +498,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
         # deterministic classifications and source limitations must not vanish
         # before writing. The immutable original receipt stays in the artifact;
         # this parsed view supplies context, never a second binding namespace.
-        payload['source_records'] = [{'receipt_id': row['id'], 'tool': row['tool'],
-                                      'data': json.loads(row['result'])} for row in catalog.receipts]
+        payload['source_records'] = composition_source_records(catalog)
         # Paragraph order belongs to the writer. Repeating every alias in an
         # interleaving index adds no evidence: each literal row already carries
         # its identity, value and observation date in its contextual group.

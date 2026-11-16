@@ -114,6 +114,12 @@ def llm_maintenance_mode(*, max_tokens: int = 4096, response_schema: dict[str, A
         _maintenance_mode.reset(token)
 
 
+def llm_response_token_limit(default: int) -> int:
+    """Resolve this request's existing response contract, including parent caps."""
+    limit = _response_output_limit.get()
+    return min(default, limit) if default > 0 and limit is not None else (limit or default)
+
+
 def _remaining_request_time() -> float | None:
     cancelled = _request_cancelled.get()
     if cancelled and cancelled():

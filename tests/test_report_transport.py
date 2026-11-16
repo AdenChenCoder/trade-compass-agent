@@ -292,7 +292,14 @@ def test_full_large_composition_includes_original_tool_context_with_response_roo
             return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': ''}
                 for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
         assert estimate_tokens(user) < 131072 - 16384
-        assert [row['data'] for row in payload['source_records']] == [json.loads(raw) for _, raw in receipts]
+        for source, (_, raw) in zip(payload['source_records'], receipts, strict=True):
+            original = json.loads(raw)
+            assert source['data'] == {**original, 'bars': [{'timestamp': b['timestamp']} for b in original['bars']]}
+            assert source['selection'] == {'kind': 'metadata_with_catalogue_values_omitted', 'omitted_numeric_values': 200}
+            facts = [f for f in report_facts(payload) if f['subject'] == original['symbol']]
+            for metric in ('open', 'high', 'low', 'close', 'volume'):
+                assert [(f['observed_at'], f['value']) for f in facts if f['metric'] == metric] == [
+                    (bar['timestamp'], str(bar[metric])) for bar in original['bars']]
         seen.append(payload)
         fact = next(f for f in report_facts(payload) if f['subject'] == '000008' and f['metric'] == 'close')
         return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
@@ -302,6 +309,7 @@ def test_full_large_composition_includes_original_tool_context_with_response_roo
         run_scope='large-source-context', call=writer)
     assert seen and result.verification['status'] == 'complete'
     assert '000008所给首日收盘价为10.5元/股。' in result.artifact['reader_body']
+    assert [r['result'] for r in result.artifact['receipts']] == [raw for _, raw in receipts]
 
 
 @pytest.mark.parametrize("invalid", [
