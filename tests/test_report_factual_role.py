@@ -1770,6 +1770,57 @@ def test_bound_gap_review_keeps_local_factual_and_coverage_roles_independent(gen
     assert report.artifact["factual_model_calls"] == report.artifact["body_review_model_calls"] == 1
 
 
+@pytest.mark.parametrize('local_review', [True, False])
+@pytest.mark.parametrize('requires_revenue', [True, False])
+@pytest.mark.parametrize('gap_first', [True, False])
+def test_gap_removal_cannot_complete_a_different_reader_answer(
+        tmp_path, local_review, requires_revenue, gap_first):
+    """The coverage verdict must survive the proposed deletion, not only its input."""
+    gap_text = ('没有年度收入资料，暂不能比较。' if gap_first else
+                '缺少2024年与2025年全年营收数据，无法进行年度营收对比分析。')
+    task = ('报告收盘价变化；比较年度收入，无资料时说明不能比较。' if requires_revenue else
+            '只报告所给收盘价的变化，不做财务比较。')
+    requests = []
+
+    def writer(system, user):
+        payload = json.loads(user)
+        requests.append(payload)
+        if 'schema' in payload:
+            document = compose(payload)
+            gap = {'id': 'gap', 'type': 'gap', 'section': 'gaps', 'text': gap_text}
+            document['items'].insert(0, gap) if gap_first else document['items'].append(gap)
+            return json.dumps(document)
+        # Explicitly simulate the observed contradictory decisions: a coverage
+        # check requires the fallback answer, while gap review calls it unrelated.
+        complete = not requires_revenue or gap_text in payload['report']
+        return json.dumps({
+            'reviews': [{'id': row['id'], 'supported': True, 'reason': '收盘价与来源一致。'}
+                        for row in payload['inferences']],
+            'coverage': {'complete': complete, 'missing': [] if complete else ['尚未说明无法比较年度收入。'],
+                         'repairable': False},
+            'gap_reviews': [{'id': 'gap', 'status': 'outside_task', 'refs': [],
+                             'reason': '缺口说明被误当作任务之外的执行要求。'}],
+        })
+
+    def checker(system, user):
+        payload = json.loads(user)
+        return json.dumps(body_reply(payload) if 'paragraphs' in payload else assess(payload))
+
+    report = publish_report(task=task, draft='', tool_results=RECEIPTS, run_scope='final-gap-body',
+                            call=writer, fact_review_call=checker if local_review else None, max_calls=2)
+    assert len(requests) == 2
+    assert '22元/股升至23元/股' in report.text
+    assert (report.verification['status'] == 'complete') is not requires_revenue
+    assert (gap_text in report.text) is requires_revenue
+    assert any(f['code'] == 'declared_gap' for f in report.verification['findings']) is requires_revenue
+    assert report.artifact['model_calls'] == (4 if local_review else 2)
+    reference = persist_publication(tmp_path, report)
+    saved = json.loads((tmp_path / 'report_artifacts' / (reference['artifact_id'] + '.json')).read_text())
+    assert saved['published_text'] == report.text
+    assert saved['verification'] == report.verification
+    assert saved['document']['items'][0 if gap_first else -1]['text'] == gap_text
+
+
 @pytest.mark.parametrize('fault', METADATA_FAULTS)
 def test_bad_assessment_row_retains_other_verified_prose_without_annotation_retry(tmp_path, fault):
     counts = {'compose': 0, 'body': 0, 'fact': 0}
