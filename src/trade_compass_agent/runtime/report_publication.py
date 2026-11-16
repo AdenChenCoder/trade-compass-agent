@@ -306,7 +306,7 @@ reader's display calendar. Different calendar labels can describe the same insta
 Date-only observations retain their supplied date; do not invent an instant for them.
 requirements.task_present, when true, requires present-date comparison and cannot
 be weakened. Its absence does not establish historical scope; independently inspect the actual prose for present-time commitments. For every assessment return time_evidence, an array
-of exact fact IDs already supplied in contexts which support its observation time.
+of exact fact IDs supplied in contexts OR source_fact_references which support its observation time.
 Facts may be selected in any paragraph of this run: comparisons can legitimately
 span securities, accounts, periods and observation scopes. Paragraph selection
 does not create source ownership, and owned provenance does not prove semantic
