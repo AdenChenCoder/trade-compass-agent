@@ -158,6 +158,10 @@ in the linked regression tests, not in expanding prose exception lists.
   rather than a second copy of every number and its metadata. Runtime checks
   retain the complete typed contexts. Selected values, quotations and derived
   categorical facts remain explicit; addresses cannot establish support.
+  Review wire references may use the same request-local aliases as composition.
+  Decode only reference slots before validation; source values, reader text,
+  receipts and canonical persisted facts retain their original IDs and values.
+  Preserve raw review responses and the alias map for diagnostics.
   Numeric bindings remain tied to their original context and mandatory even
   if the assessor omits them. The runtime compares those
   source dates in the task's reference timezone with the task date and can withhold a statement despite an

@@ -293,21 +293,23 @@ def test_source_reference_view_retains_exact_canonical_addresses_and_dates():
     view, references = source_reference_view(contexts, selected)
     kept = {f['id']: f for f in view['p0']['evidence']}
     assert selected <= kept.keys()
-    assert all(f['id'] in kept for f in facts if f['kind'] in {'identity', 'quotation', 'classification'})
+    assert all(f['id'] in kept for f in facts if f['kind'] in {'quotation', 'classification'})
     addressed = {}
     originals = {r['id']: json.loads(r['result']) for r in catalog.receipts}
     for source in references['sources']:
-        for row in source['rows']:
-            ref = dict(zip(references['columns'], row, strict=True))
-            fact = next(f for f in facts if f['id'] == ref['id'])
-            assert source['receipt_id'] == fact['receipt_id']
-            assert ref == {key: fact[key] for key in references['columns']}
-            raw = originals[source['receipt_id']]
-            for segment in ref['pointer'].split('/')[1:]:
-                key = segment.replace('~1', '/').replace('~0', '~')
-                raw = raw[int(key)] if isinstance(raw, list) else raw[key]
-            assert str(raw) == fact['value']
-            addressed[ref['id']] = ref
+        for observation in source['observations']:
+            for row in observation['rows']:
+                ref = dict(zip(references['columns'], row, strict=True))
+                fact = next(f for f in facts if f['id'] == ref['id'])
+                assert source['receipt_id'] == fact['receipt_id']
+                assert ref == {key: fact[key] for key in references['columns']}
+                assert (observation['observed_at'], observation['observed_date']) == (fact['observed_at'], fact['observed_date'])
+                raw = originals[source['receipt_id']]
+                for segment in ref['pointer'].split('/')[1:]:
+                    key = segment.replace('~1', '/').replace('~0', '~')
+                    raw = raw[int(key)] if isinstance(raw, list) else raw[key]
+                assert str(raw) == fact['value']
+                addressed[ref['id']] = ref
     assert kept.keys().isdisjoint(addressed)
     assert kept.keys() | addressed.keys() == {f['id'] for f in facts}
     assert contexts == before
@@ -351,10 +353,11 @@ def test_unselected_indicator_remains_addressable_without_changing_body_or_origi
         for source in references.get('sources', []):
             receipt = next(r for r in payload['receipts'] if r['id'] == source['receipt_id'])
             raw = json.loads(receipt['result'])
-            for values in source['rows']:
-                ref = dict(zip(references['columns'], values, strict=True))
-                if ref['pointer'] == '/current_rsi':
-                    rsi = {**ref, 'metric': 'current_rsi', 'entity': raw['symbol'], 'value': str(raw['current_rsi'])}
+            for observation in source['observations']:
+                for values in observation['rows']:
+                    ref = dict(zip(references['columns'], values, strict=True))
+                    if ref['pointer'] == '/current_rsi':
+                        rsi = {**ref, 'metric': 'current_rsi', 'entity': raw['symbol'], 'value': str(raw['current_rsi'])}
         # A real assessor must decide identity and support independently. An
         # optimistic date verdict is deliberately checked by the runtime.
         checks = dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed')

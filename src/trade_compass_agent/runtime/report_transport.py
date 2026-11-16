@@ -1,7 +1,7 @@
 """Lossless, request-local encoding of an owned evidence catalogue.
 
-Short references never become persistent identities. All validation, rendering
-and artifacts continue to use the original, run-scoped fact IDs.
+Short references never become persistent identities. Validation and rendering
+use original run-scoped IDs; saved wire views retain their explicit alias map.
 """
 from __future__ import annotations
 
@@ -135,14 +135,15 @@ def source_reference_view(contexts, selected_ids):
     for name, context in contexts.items():
         evidence = []
         for fact in context['evidence']:
-            if fact['id'] in selected_ids or fact['kind'] in {'identity', 'quotation', 'classification'}:
+            if fact['id'] in selected_ids or fact['kind'] in {'quotation', 'classification'}:
                 evidence.append(fact)
             else:
-                sources.setdefault(fact['receipt_id'], []).append([
-                    fact['id'], fact['pointer'], fact['observed_at'], fact['observed_date']])
+                dates = (fact['observed_at'], fact['observed_date'])
+                sources.setdefault(fact['receipt_id'], {}).setdefault(dates, []).append([fact['id'], fact['pointer']])
         result[name] = {**context, 'evidence': evidence}
-    references = {'columns': ['id', 'pointer', 'observed_at', 'observed_date'],
-        'sources': [{'receipt_id': key, 'rows': rows} for key, rows in sources.items()]}
+    references = {'columns': ['id', 'pointer'], 'sources': [{'receipt_id': key,
+        'observations': [{'observed_at': stamp, 'observed_date': day, 'rows': rows}
+                         for (stamp, day), rows in dates.items()]} for key, dates in sources.items()]}
     return result, references
 
 
@@ -212,6 +213,32 @@ class ReportTransport:
         """Repair prompts use exactly the same aliases as initial composition."""
         value = self._map(document, self.aliases)
         return self._reader_parts(value, compact=True)
+
+    def encode_factual_review(self, contexts, statements, references):
+        """Encode only reference slots; original values and receipts stay literal."""
+        contexts, statements, references = deepcopy((contexts, statements, references))
+        for context in contexts.values():
+            for fact in context['evidence']:
+                fact['id'] = self.aliases.get(fact['id'], fact['id'])
+            for calculation in context['calculations']:
+                calculation['refs'] = [self.aliases.get(ref, ref) for ref in calculation.get('refs', [])]
+        for statement in statements:
+            for key in ('bound_fact_refs', 'time_fact_refs'):
+                statement[key] = [self.aliases.get(ref, ref) for ref in statement.get(key, [])]
+        for source in references['sources']:
+            for observation in source['observations']:
+                for row in observation['rows']:
+                    row[0] = self.aliases.get(row[0], row[0])
+        return contexts, statements, references
+
+    def decode_factual_review(self, review):
+        review = deepcopy(review)
+        if isinstance(review, dict) and isinstance(review.get('assessments'), list):
+            for row in review['assessments']:
+                if isinstance(row, dict) and isinstance(row.get('time_evidence'), list):
+                    row['time_evidence'] = [self.references.get(ref, ref) if isinstance(ref, str) else ref
+                                            for ref in row['time_evidence']]
+        return review
 
     def repair_evidence(self, document, findings):
         """Give unresolved items readable source context without guessing refs.

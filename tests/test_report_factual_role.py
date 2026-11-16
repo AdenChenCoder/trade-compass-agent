@@ -1053,7 +1053,7 @@ def publish(fact_reply, *, max_calls=2, coverage_missing=False, check_active=lam
         if "paragraphs" in payload:
             return json.dumps(body_reply(payload))
         factual.append(payload)
-        assert set(payload) == {"statements", "contexts", "receipts", "execution_records", "report_context", "request_context"}
+        assert set(payload) == {"statements", "contexts", "receipts", "execution_records", "report_context", "request_context", "source_fact_references"}
         assert payload["request_context"] == {"role": "requirements", "text": "task instruction marker"}
         assert payload["receipts"][0]["result"] == RECEIPTS[0][1]
         assert "untrusted draft marker" not in user

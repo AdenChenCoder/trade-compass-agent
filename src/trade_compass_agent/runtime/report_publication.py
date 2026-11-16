@@ -180,12 +180,12 @@ freshness, risk absence or trading outcomes. Missing fields are not empty lists.
 inside source contexts. Matching another reader claim or repeating the author's
 analysis never establishes truth. Compare the target with actual source records
 and typed facts, not with reader wording or task instructions.
-source_fact_references addresses numerical observations not bound by the writer.
-Its columns describe each row; receipt_id identifies an original receipt and pointer
-is its exact JSON pointer. Check the value, unit, identity and scope in that original
-record, retaining the supplied original timestamp and display-calendar observed_date.
-The row's id is a canonical runtime-owned fact ID usable in time_evidence; receipt_id
-is not a fact ID. These addresses establish ownership, never semantic support.
+source_fact_references addresses observations not bound by the writer. Each source's
+receipt_id identifies an original receipt. Its observations group rows by unchanged
+observed_at timestamp and display-calendar observed_date; columns describe each row.
+pointer is the exact JSON pointer. Check value, unit, identity and scope in that
+original record. Fact IDs use request-local aliases usable in time_evidence; a
+receipt_id is not a fact ID. These addresses establish ownership, never support.
 Interpret each assertion's actual empirical commitments independently. requirements contains only positive obligations obtained without source evidence: participant_activity, causal_relation, task_present or proposal. A true obligation cannot be weakened. proposal preserves a prospective choice, not a completed execution; its empirical premises remain independently applicable. ABSENCE of an obligation establishes no exemption and is not proof that no such claim occurs. No body category or negative temporal classification is supplied as an authority about reader meaning.
 A conventional market interpretation is not evidence of an unobserved actor or
 cause. If the observations could coexist with materially different actors or
@@ -763,10 +763,12 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     contexts = source_record_context(catalog, contexts, review_input['receipts'],
                                                      report_context['display_timezone'])
                     review_contexts, source_references = source_reference_view(contexts, selected_ids)
+                    review_contexts, review_statements, source_references = transport.encode_factual_review(
+                        review_contexts, factual_review_statements(statements), source_references)
                     factual_review_input = {
                         "report_context": report_context,
                         "request_context": {"role": "requirements", "text": task},
-                        "contexts": review_contexts, "statements": factual_review_statements(statements),
+                        "contexts": review_contexts, "statements": review_statements,
                         **({'source_fact_references': source_references} if source_references['sources'] else {}),
                         "receipts": review_input["receipts"], "execution_records": execution.records,
                     }
@@ -775,7 +777,11 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     check_active()
                     factual_review = _json_value(factual_response)
                     assessments, row_errors = assessments_with_availability(
-                        factual_review, [row['id'] for row in statements])
+                        transport.decode_factual_review(factual_review), [row['id'] for row in statements])
+                    original_assessments = {row['id']: row for row in factual_review['assessments']}
+                    for row in assessments:
+                        if 'raw_assessment' in row:
+                            row['raw_assessment'] = original_assessments[row['id']]
                     factual_review['assessments'] = assessments
                     factual_assessment_errors.update(row_errors)
                     # A blanket approval cannot hide an unresolved dimension.

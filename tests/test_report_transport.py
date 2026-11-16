@@ -68,6 +68,40 @@ def market_receipts():
                   "volume": 1000+i} for i in range(40)]})) for symbol in ["000001", "000002", "000003", "000004", "000005", "000006", "000007", "000008"]]
 
 
+def test_review_aliases_touch_only_reference_slots_and_preserve_invalid_metadata():
+    from copy import deepcopy
+    from trade_compass_agent.runtime.report_assessments import assessments_with_availability
+    catalog = EvidenceCatalog.build(market_receipts()[:1], run_scope='review-aliases')
+    transport = ReportTransport(catalog)
+    fact = next(f for f in catalog.facts.values() if f.metric == 'close')
+    context = {'p0': {'evidence': [{**asdict(fact), 'value': fact.id}],
+                     'calculations': [{'id': 'calculation', 'refs': [fact.id], 'result': fact.id}]}}
+    statements = [{'id': 'c0', 'text': fact.id, 'bound_fact_refs': [fact.id], 'time_fact_refs': [fact.id]}]
+    references = {'columns': ['id', 'pointer'], 'sources': [{'receipt_id': fact.receipt_id,
+        'observations': [{'observed_at': fact.observed_at, 'observed_date': '2026-10-01',
+                          'rows': [[fact.id, fact.pointer]]}]}]}
+    before = deepcopy((context, statements, references))
+    encoded, spans, refs = transport.encode_factual_review(context, statements, references)
+    alias = transport.aliases[fact.id]
+    assert encoded['p0']['evidence'][0]['id'] == alias
+    assert encoded['p0']['evidence'][0]['value'] == fact.id
+    assert encoded['p0']['evidence'][0]['receipt_id'] == fact.receipt_id
+    assert encoded['p0']['calculations'] == [{'id': 'calculation', 'refs': [alias], 'result': fact.id}]
+    assert spans == [{'id': 'c0', 'text': fact.id, 'bound_fact_refs': [alias], 'time_fact_refs': [alias]}]
+    assert refs['sources'][0]['observations'][0]['rows'] == [[alias, fact.pointer]]
+    assert (context, statements, references) == before
+    raw = {'assessments': [{'id': 'c0', 'comparison': 'strict protocol fixture',
+        'verdict': 'entailed', 'time_evidence': [alias, fact.id],
+        'checks': dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed')}]}
+    decoded = transport.decode_factual_review(raw)
+    assert decoded['assessments'][0]['time_evidence'] == [fact.id, fact.id]
+    _, errors = assessments_with_availability(decoded, ['c0'])
+    assert errors['c0']['fields'] == ['time_evidence']  # No silent deduplication.
+    raw['assessments'][0]['time_evidence'] = ['e999999', True]
+    raw['assessments'][0]['checks']['support'] = 'reasoned'
+    assert transport.decode_factual_review(raw) == raw  # No JSON/enum repair.
+
+
 @pytest.mark.parametrize('compact', [False, True])
 def test_compact_and_legacy_writer_parts_have_the_same_reviewed_persisted_body(tmp_path, compact):
     receipts = [('get_bars', json.dumps({'symbol': '600928', 'bars': [
