@@ -49,6 +49,10 @@ in the linked regression tests, not in expanding prose exception lists.
   sentence. Preserve the estimator, date and scope in the owned sources. An
   ordinary price high alone cannot establish historical concentration, and an
   estimate cannot become a measured profile or exact frequency maximum.
+  Apply measurement requirements to asserted measurements, not to bounded
+  estimate-backed research interpretations. A general analytical lookback is
+  not an additional calendar-date commitment; specific observation dates and
+  relative calendar references retain their original temporal obligations.
   Choosing numeric bindings does not withdraw other owned sources from review.
   Original announcements, source qualifications and successful first-party read
   results remain available, including an empty result with no numeric rows.

@@ -180,21 +180,31 @@ inside source contexts. Matching another reader claim or repeating the author's
 analysis never establishes truth. Compare the target with actual source records
 and typed facts, not with reader wording or task instructions.
 Interpret each assertion's actual empirical commitments independently. requirements contains only positive obligations obtained without source evidence: participant_activity, causal_relation, task_present or proposal. A true obligation cannot be weakened. proposal preserves a prospective choice, not a completed execution; its empirical premises remain independently applicable. ABSENCE of an obligation establishes no exemption and is not proof that no such claim occurs. No body category or negative temporal classification is supplied as an authority about reader meaning.
-A conventional market interpretation is not evidence of an unobserved actor, cause or technical property. Ask whether the same source observations could coexist with a materially different asserted actor, cause or property. If so, that property remains unknown. Do not soften the author's categorical claim into a hypothesis or repair its meaning to fit available numbers.
-Preserve the difference between a source-owned estimate and a measured statistic.
-A supplied distribution estimate can support ordinary qualitative language about
-an estimated concentration/resistance area and its use as a technical watchpoint;
-the reader need not repeat the word "estimate" in every sentence. Check that the
-actual estimate supports the level, instrument and scope. Do not demand a measured
-price-by-price profile for this bounded interpretation. Conversely, a daily high
-alone does not establish historical trading concentration, and an estimate cannot
-establish an explicitly asserted measured distribution, exact frequency maximum
-or guaranteed price outcome. These are evidence/method distinctions, not wording tests.
+A conventional market interpretation is not evidence of an unobserved actor or
+cause. If the observations could coexist with materially different actors or
+causes, those asserted facts remain unknown. Preserve those commitments rather
+than softening them into a hypothesis.
+Distinguish technical research interpretations from empirical measurements. A
+source-owned distribution estimate supports bounded qualitative interpretation
+of the historical cost/concentration structure and associated support/resistance
+watchpoints. Such an interpretation has support_basis="reasoned" and can have
+checks.support="entailed" even though the underlying estimate is imperfect and
+not a measured volume profile. Ordinary technical language need not repeat the
+estimator or an uncertainty qualifier in each sentence. Do not reinterpret that
+omission alone as a claim of direct measurement. Verify the actual estimator,
+instrument, level, date and scope against the owned source. A daily high alone
+does not establish concentration structure. An explicitly asserted measured
+distribution, exact frequency maximum, observed participant action or guaranteed
+outcome needs its own corresponding evidence; an estimate cannot establish it.
+Evaluate the method and scope actually asserted, not whether the prose repeats
+a fixed qualification or whether an estimate uniquely proves physical reality.
 For judgments and conditional watchpoints, assess their asserted factual premises,
 claimed compliance with requirements and reasoning scope. Do not reject them merely
 because they are opinions, recommendations or hypothetical conditions rather than
 measurements. A proposed threshold need not already be a historically observed
-support/resistance level; a claim that it IS an established historical level does.
+support/resistance level. An asserted measured historical level needs a measured
+source; an estimate-backed interpretation of historical structure follows the
+separate research-interpretation contract above.
 An analytical conclusion about whether a holding rationale remains persuasive is
 not a factual report of the investor's private beliefs or a completed strategy change.
 Evaluate that conclusion through its stated premises and inferential strength, using
