@@ -59,11 +59,21 @@ in the linked regression tests, not in expanding prose exception lists.
   estimate-backed research interpretations. A general analytical lookback is
   not an additional calendar-date commitment; specific observation dates and
   relative calendar references retain their original temporal obligations.
+  A sole explicit observation date equal to the task's reference date retains
+  the same runtime date check as `task_now`, including inside an opinion.
+  This equivalence must not collapse historical or multiple-date comparisons
+  into the task's present; those retain their existing semantic scope.
   Method-admissibility records bind to actual owned source observations and keep
   their fact IDs, instrument and original date. They are business interpretation
   contracts, not additional observations or approval decisions. A quoted source
   may establish its own method through its original text; absence of a typed
   method record does not establish absence of that method in a quoted source.
+  Relative total-activity observations retain their owned instrument and date;
+  they do not establish a participant partition, including unnamed groups or
+  trading categories, buy/sell-side quantities, realized causation or a future
+  outcome. That limit applies to those aggregate observations alone. Other
+  supplied classification records or original documents remain eligible to
+  support the actual participant claim through independent source review.
   Blind body interpretation retains an asserted distribution property's necessary
   source family, including empirical premises inside a plan. Later review cannot
   replace it with a generic price watchpoint. Runtime checks the owned instrument
@@ -205,6 +215,12 @@ in the linked regression tests, not in expanding prose exception lists.
   limits remain unchanged. Both reviewers receive the same owned source contexts,
   observation pointers and method records in one reference namespace; paragraph
   bindings cannot withdraw other supplied evidence from independent review.
+  Source review uses one shared, deduplicated run-source context. A writer's
+  paragraph selection is not the boundary of support for a conclusion; the
+  review must be able to use another paragraph's owned evidence. Preserve exact
+  source identities, values, dates, units, scope, calculations and unexpanded
+  receipt pointers. Sharing that view cannot establish support or permit a
+  different instrument or observation date to replace the asserted one.
   Preserve method-referenced facts in full through source-view compaction, even
   when no paragraph binds them: a pointer alone omits the typed value, unit and
   estimator scope needed to apply that method's admissibility contract.

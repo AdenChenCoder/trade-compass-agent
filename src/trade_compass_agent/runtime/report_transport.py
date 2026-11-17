@@ -147,6 +147,25 @@ def source_reference_view(contexts, selected_ids):
     return result, references
 
 
+def shared_source_context(contexts):
+    """Expose the run's owned review sources once, without paragraph selection.
+
+    Paragraph bindings describe the writer's choice, not the limits of factual
+    support. Preserve exact facts/calculations and reject conflicting identities.
+    Unexpanded observations still use the separate original-receipt pointers.
+    """
+    shared = {}
+    for field in ('evidence', 'calculations'):
+        rows = {}
+        for context in contexts.values():
+            for row in context[field]:
+                if row['id'] in rows and rows[row['id']] != row:
+                    raise ValueError('conflicting owned source identity')
+                rows.setdefault(row['id'], row)
+        shared[field] = list(rows.values())
+    return {'run_sources': shared}
+
+
 class ReportTransport:
     def __init__(self, catalog: EvidenceCatalog):
         self.references = {f"e{i}": key for i, key in enumerate(catalog.facts)}

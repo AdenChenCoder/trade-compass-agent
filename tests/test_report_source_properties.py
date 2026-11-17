@@ -57,7 +57,8 @@ def test_source_property_is_checked_at_published_and_persisted_consumer(tmp_path
             refs = [f['id'] for context in payload['source_contexts'].values()
                 for f in context['evidence'] if f['kind'] == 'quotation']
         elif scene == 'price_ref':
-            refs = [f['id'] for f in target['evidence'] if f['metric'] == 'high']
+            refs = [f['id'] for f in payload['source_contexts'][target['context_id']]['evidence']
+                    if f['metric'] == 'high']
         elif scene == 'foreign_ref':
             refs = ['not-owned']
         return json.dumps({'reviews': [{'id': 'c0', 'supported': True, 'reason': '显式价格与来源一致。'},

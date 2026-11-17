@@ -511,3 +511,27 @@ def test_source_method_references_share_review_namespace_without_rewriting_sourc
     assert original[0]['constraints']
     with pytest.raises(ValueError, match='outside owned catalogue'):
         transport.encode_source_semantics([{'fact_refs': ['foreign-method-fact']}])
+
+
+def test_shared_source_view_retains_all_owned_rows_without_paragraph_preference():
+    from copy import deepcopy
+    from trade_compass_agent.runtime.report_transport import shared_source_context
+    # Equal values remain different observations; unknown dates and quoted
+    # method scope must survive alongside the other paragraph's evidence.
+    a = {'id': 'first', 'entity': '002415', 'value': '23', 'observed_at': None, 'unit': '元/股'}
+    b = {**a, 'id': 'second', 'entity': '600928', 'observed_at': '2025-01-02'}
+    quote = {'id': 'document', 'entity': '002415', 'value': '来源原文', 'scope': 'estimated'}
+    calculation = {'id': 'delta', 'refs': ['first', 'second'], 'value': '0'}
+    contexts = {'p0': {'evidence': [a], 'calculations': []},
+                'p1': {'evidence': [b, a], 'calculations': [calculation]},
+                'source_records': {'evidence': [quote], 'calculations': [calculation]}}
+    original = deepcopy(contexts)
+    shared, = shared_source_context(contexts).values()
+    assert shared == {'evidence': [a, b, quote], 'calculations': [calculation]}
+    assert contexts == original
+    for field, changed in [('evidence', {**a, 'observed_at': '2025-01-02'}),
+                           ('calculations', {**calculation, 'value': '1'})]:
+        conflicting = deepcopy(contexts)
+        conflicting['source_records'][field].append(changed)
+        with pytest.raises(ValueError, match='conflicting owned source identity'):
+            shared_source_context(conflicting)

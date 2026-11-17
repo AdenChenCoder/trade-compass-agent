@@ -23,9 +23,9 @@ from trade_compass_agent.runtime.report_body import (
     BODY_MEANING, BodyMeaningError, reader_source_units, validate_body_meaning, runtime_bound_quantity_issue, factual_assertions, factual_review_statements, decode_body_value,
 )
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
-from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts, source_record_context, composition_source_records, source_reference_view
+from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts, source_record_context, composition_source_records, source_reference_view, shared_source_context
 from trade_compass_agent.runtime.report_time import (
-    check_statement_time, temporal_evidence_context, unavailable_bound_observation_dates,
+    check_statement_time, is_current_observation, temporal_evidence_context, unavailable_bound_observation_dates,
 )
 from trade_compass_agent.runtime.report_support import check_support_basis
 from trade_compass_agent.runtime.report_assessments import assessments_with_availability, approved_source_review_ids
@@ -197,7 +197,10 @@ _SOURCE_REVIEW = (
     "核对完整主张，不能先把带有具体性质的主张缩成较宽的概念，再用一个正确数字支持这个较宽概念。"
     "数值吻合或可用于一般分析，不自动证明原文给它的统计性质和来源含义；分析或建议中的事实前提同样保留。"
     "reason须说明原文的这些性质由什么来源支持或尚未建立，不能仅列出数值匹配和泛称技术研判。"
-    "匿名总量或价格统计可支持限定范围的技术解读，不能据此确认或排除特定参与者行为，也不能自行证明实际因果。"
+    "总量活动的强弱不同于成交参与者的分类构成；对未具名群体或统计类别的归属、行为、存在或排除同样是实际断言，"
+    "不能因称作技术解读就当作总量指标。匿名总量或价格统计可支持限定范围的量价解读，"
+    "不能凭自身确认或排除任何参与者类别，也不能自行证明实际因果。"
+    "分别为原文各项承诺寻找实际来源；一项聚合指标不能证明参与者构成，不表示其他已提供的分类资料也不能支持它。"
     "合理的限定分析与未来观察安排不需要唯一的量化证明；其中实际声称的事实前提仍需依据。"
     "source_semantics是业务解释契约，不是市场观察；估算与实测的实际方法和范围仍依原始来源核验。"
     "source_requirements保留正文先前声称的统计性质，不能改解释为一般价位而省略；逐项检查其真实方法、对象、日期及价位。"
@@ -205,6 +208,8 @@ _SOURCE_REVIEW = (
     "依据在文档原文中时必须用其content/text/snippet/excerpt引文id，不用标题、普通价格或receipt id；没有相应原文用[]。"
     "程序提供的同对象估算记录可支持普通分布研判，不能替代正文明确要求的实测；引用存在也不自动证明内容支持。"
     "source_contexts和source_fact_references与事实核验使用同一完整来源视图及引用命名空间。"
+    "每项inferences的context_id指向共享的本轮source_contexts；其中的evidence和calculations适用于所有待核对句子，"
+    "不按作者为某段选取的引用缩小范围。逐项根据真实对象、指标和日期取证，不能把其他句子的文字当作依据。"
     "后者的id、pointer及观察日期定位receipts中的原始值；其他段落未绑定的来源仍可用。"
     "先核对这些实际来源；局部选取未包含某项依据，不代表本轮没有提供该依据。"
     "reviews必须逐一覆盖inferences实际id；coverage独立核对完整正文，不能用覆盖齐全代替事实支持。"
@@ -830,6 +835,11 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 if fact_call and factual_items:
                     contexts, statements, assertion_owners = factual_assertions(
                         [row for row in review_input['inferences'] if row['id'] not in forced_reviews], body_meaning)
+                    # Bind the reader's positive calendar anchor before every
+                    # consumer, including witness repair. Raw BODY annotations
+                    # and the explicit ISO date remain unchanged in the artifact.
+                    statements = [{**row, 'time_scope': 'reference_date'}
+                        if is_current_observation(row, report_context) else row for row in statements]
                     selected_ids = {fact['id'] for context in contexts.values() for fact in context['evidence']}
                     contexts = source_record_context(catalog, contexts, review_input['receipts'],
                                                      report_context['display_timezone'])
@@ -945,12 +955,12 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         coverage_review_input['inferences'] = [{
                             'id': statement['id'], 'text': statement['text'],
                             'segments': [{'origin': 'author', 'text': statement['text']}],
-                            **review_contexts[statement['context_id']],
+                            'context_id': 'run_sources',
                             **({'source_requirements': distribution_requirements(statement)}
                                if distribution_requirements(statement) else {}),
                         } for statement in statements if statement['id'] in source_review_ids]
                         coverage_review_input['receipts'] = review_input['receipts']
-                        coverage_review_input['source_contexts'] = review_contexts
+                        coverage_review_input['source_contexts'] = shared_source_context(review_contexts)
                         coverage_review_input['source_fact_references'] = source_references
                         coverage_review_input['source_semantics'] = factual_review_input['source_semantics']
                     annotation_candidates = annotation_conflicts(statements, assessments, factual_assessment_errors)

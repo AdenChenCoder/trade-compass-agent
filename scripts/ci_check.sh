@@ -54,6 +54,8 @@ fi
   tests/test_report_source_review.py \
   tests/test_report_source_labels.py \
   tests/test_report_reader_calendar.py \
+  tests/test_report_current_calendar.py \
+  src/trade_compass_agent/runtime/report_time.py \
   tests/test_report_source_properties.py \
   src/trade_compass_agent/runtime/report_source_properties.py \
   src/trade_compass_agent/runtime/report_annotation_repair.py \

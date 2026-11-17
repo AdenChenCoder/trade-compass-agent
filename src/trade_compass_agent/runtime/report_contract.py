@@ -504,7 +504,7 @@ class EvidenceCatalog:
                 continue
             key = (fact.receipt_id, fact.entity, fact.observed_at, fact.timeframe)
             groups.setdefault(key, []).append(fact.id)
-        return [{
+        records = [{
             'status': 'runtime_business_contract_not_source_evidence',
             'source_method': 'chip_cost_distribution',
             'required_owned_fact_scope': {'estimate': 'chip_cost_distribution'},
@@ -517,6 +517,26 @@ class EvidenceCatalog:
             'receipt_id': receipt, 'entity': entity, 'observed_at': stamp,
             'timeframe': timeframe, 'fact_refs': refs,
         } for (receipt, entity, stamp, timeframe), refs in groups.items()]
+        activity = {}
+        for fact in self.facts.values():
+            if fact.source == 'compute_volume_ratio' and fact.metric in {'volume_ratio', 'turnover_pct'}:
+                key = (fact.receipt_id, fact.entity, fact.observed_at, fact.timeframe)
+                activity.setdefault(key, []).append(fact.id)
+        records.extend({
+            'status': 'runtime_business_contract_not_source_evidence',
+            'source_method': 'relative_total_trading_activity',
+            'permitted_inference': ['relative_total_trading_intensity',
+                                   'bounded_price_volume_interpretation_with_owned_price_observations'],
+            'not_established': ['trader_group_composition_or_absence', 'measured_buy_sell_side_volumes',
+                                'realized_causation', 'future_price_outcome'],
+            'constraints': ['actual_owned_aggregate_observations_only',
+                '参与者划分包括未具名群体或交易统计类别；其归属、存在或排除与总量强弱不是同一指标。',
+                '所给聚合强弱不能证实交易分类构成；常规技术用语也不能补出缺失的分组统计。',
+                '其他真实的分组来源仍可独立支持相关结论；本契约不否定那些来源。'],
+            'receipt_id': receipt, 'entity': entity, 'observed_at': stamp,
+            'timeframe': timeframe, 'fact_refs': refs,
+        } for (receipt, entity, stamp, timeframe), refs in activity.items())
+        return records
 
     def model_table(self):
         columns = ["id", "subject", "account", "metric", "label", "value", "unit", "observed_at", "kind", "source", "scope"]
