@@ -67,10 +67,9 @@ def test_source_property_is_checked_at_published_and_persisted_consumer(tmp_path
         calls.append('body' if 'paragraphs' in payload else 'fact')
         if 'paragraphs' in payload:
             return json.dumps({'quantity_issues': [], 'paragraphs': [
-                {'id': row['id'], 'parts': [{'through': row['source_units'][-1]['id'], 'operation_code': 1 if row['id'] == 'target' else 0,
+                {'id': row['id'], 'parts': [{'distribution_basis': requirement if row['id'] == 'target' else 'none', 'through': row['source_units'][-1]['id'], 'operation_code': 1 if row['id'] == 'target' else 0,
                     'claim_kind': 'judgment' if row['id'] == 'target' else 'observation',
-                    'observation_dates': ['2025-01-02'], 'classifications': [
-                        {'property': 'distribution_basis', 'value': requirement}] if row['id'] == 'target' else []}]}
+                    'observation_dates': ['2025-01-02'], 'classifications': []}]}
                 for row in payload['paragraphs']]})
         result = assess(payload)
         result['assessments'][1]['support_basis'] = basis
@@ -101,3 +100,34 @@ def test_distribution_requirement_does_not_take_moving_average_fields(value):
     for wrong in ({'value': 'unknown'}, {'scope': 'all_mentioned'}, {'operator': 'eq'}, {'periods': []}):
         with pytest.raises(BodyMeaningError):
             _observation_commitments({**good, 'classifications': [{**good['classifications'][0], **wrong}]})
+
+
+@pytest.mark.parametrize('answer', ['missing', None, True, 0, [], '', 'none|estimated_or_measured'])
+def test_missing_or_invalid_source_answer_is_unavailable_not_implicitly_none(answer):
+    from test_report_classifications import BULLISH, publication
+    result, _, calls = publication(values=BULLISH, omit_source=answer == 'missing',
+        wire_change={} if answer == 'missing' else {'distribution_basis': answer})
+    assert result.verification['status'] == 'incomplete' and not result.artifact['review_valid']
+    assert result.artifact['factual_model_calls'] == 0 and len(calls) == 1
+    assert '多头排列' not in result.artifact['reader_body']
+    assert any(f['code'] == 'review_unavailable' for f in result.verification['findings'])
+
+
+def test_old_saved_body_wire_remains_decodable_but_cannot_approve_new_publication():
+    from trade_compass_agent.runtime.report_body import BodyMeaningError, validate_body_meaning
+    old = {'quantity_issues': [], 'paragraphs': [{'id': 'saved', 'parts': [
+        {'text': '旧报告仍可读取。', 'kind': 'other', 'assertion_kind': 'discourse',
+         'time_scope': 'other', 'outcome': 'none', 'extent': 'none'}]}]}
+    paragraphs = {'saved': '旧报告仍可读取。'}
+    meaning, issues = validate_body_meaning(old, paragraphs)
+    assert meaning['saved'][0]['text'] == paragraphs['saved'] and not issues
+    with pytest.raises(BodyMeaningError, match='source_property_declaration_missing'):
+        validate_body_meaning(old, paragraphs, require_source_declarations=True)
+
+
+def test_conflicting_source_answers_cannot_fall_back_to_one_convenient_shape():
+    from test_report_classifications import BULLISH, publication
+    result, _, _ = publication(values=BULLISH, wire_change={'classifications': [
+        {'property': 'distribution_basis', 'value': 'estimated_or_measured'}]})
+    assert result.verification['status'] == 'incomplete' and not result.artifact['review_valid']
+    assert result.artifact['factual_model_calls'] == 0

@@ -113,7 +113,7 @@ def test_current_estimate_uses_its_source_date_despite_an_optimistic_model(monke
     def assessor(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'distribution_basis': 'none',
                 'through': p['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
                 'observation_dates': ['task_now'], 'classifications': []}]} for p in payload['paragraphs']]})
         return json.dumps({'assessments': [{'id': s['id'], 'commitments': {

@@ -57,12 +57,12 @@ def test_publisher_preserves_correct_observation_when_neighbor_is_repaired(tmp_p
                 units = reader_source_units(paragraph['text'])
                 first = len(bodies) == 1
                 observation = paragraph['text'].startswith(price)
-                parts = [{'through': units[0 if first else -1]['id'], 'operation_code': 0,
+                parts = [{'distribution_basis': 'none', 'through': units[0 if first else -1]['id'], 'operation_code': 0,
                     'claim_kind': 'observation' if observation else 'judgment',
                     'observation_dates': ['2025-01-02'] if observation else [], 'classifications': []}]
                 if observation and len(units) > 1:
                     parts[0]['through'] = units[0]['id']
-                    parts.append({'through': units[-1]['id'], 'operation_code': 0,
+                    parts.append({'distribution_basis': 'none', 'through': units[-1]['id'], 'operation_code': 0,
                         'claim_kind': 'actor_activity' if first or repair_status == 'unsupported' else 'judgment',
                         'observation_dates': [], 'classifications': []})
                 elif repair_status == 'unsupported' and not observation:

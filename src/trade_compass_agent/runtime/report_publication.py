@@ -768,7 +768,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                                                                       separators=(",", ":")))
                     check_active()
                     body_meaning, body_quantity_issues = validate_body_meaning(
-                        decode_body_value(body_response, _json_value), prose)
+                        decode_body_value(body_response, _json_value), prose, require_source_declarations=True)
                     for row in review_input["inferences"]:
                         issues = body_quantity_issues.get(row["id"], [])
                         owned = [issue for issue in issues if runtime_bound_quantity_issue(issue, row["segments"])]

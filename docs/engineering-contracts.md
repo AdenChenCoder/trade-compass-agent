@@ -73,6 +73,11 @@ in the linked regression tests, not in expanding prose exception lists.
   title, an ordinary price or an unrelated read receipt. Source admissibility is
   necessary, not semantic approval: dates, levels, method and conclusion still
   require the independent factual and source reviews.
+  Each newly reviewed reader span explicitly declares whether it asserts such a
+  distribution structure; a missing answer is unavailable interpretation, not
+  an implicit negative. Qualitative technical judgments can carry an empirical
+  distribution premise without claiming a measured statistic. Old saved body
+  responses remain decodable but cannot stand in for this complete new review.
   Choosing numeric bindings does not withdraw other owned sources from review.
   Original announcements, source qualifications and successful first-party read
   results remain available, including an empty result with no numeric rows.

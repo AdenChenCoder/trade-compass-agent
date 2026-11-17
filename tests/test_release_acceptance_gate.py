@@ -206,7 +206,7 @@ def test_narrative_cli_finishes_after_real_source_selector_protocol(tmp_path, mo
         payload = json.loads(user)
         if 'paragraphs' in payload:
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [{
-                'through': row['source_units'][-1]['id'], 'kind': 'other', 'assertion_kind': 'observation',
+                'distribution_basis': 'none', 'through': row['source_units'][-1]['id'], 'kind': 'other', 'assertion_kind': 'observation',
                 'time_scope': 'other', 'outcome': 'none', 'extent': 'none'}]} for row in payload['paragraphs']]})
         return json.dumps({'assessments': [{'id': row['id'], 'comparison': 'Explicit model double.',
             'support_basis': 'direct',

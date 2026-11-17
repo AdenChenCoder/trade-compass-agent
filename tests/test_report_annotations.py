@@ -85,7 +85,7 @@ def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obliga
         calls.append('body' if 'paragraphs' in payload else 'fact')
         if 'paragraphs' in payload:
             return json.dumps({'quantity_issues': [], 'paragraphs': [
-                {'id': p['id'], 'parts': [{'through': p['source_units'][-1]['id'], 'operation_code': 0,
+                {'id': p['id'], 'parts': [{'distribution_basis': 'none', 'through': p['source_units'][-1]['id'], 'operation_code': 0,
                     'claim_kind': 'observation' if p['id'] == 'good' else 'judgment', 'classifications': [],
                     'observation_dates': ['task_now'] if p['id'] == 'target' and scene in {
                         'opinion', 'qualitative_observation', 'bound_stale_value'} else []}]}

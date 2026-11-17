@@ -25,10 +25,11 @@ such a horizon. A specific relative calendar reference still needs an anchor:
 resolve it from the reader's established dates or runtime calendar, and preserve
 unresolved when that required anchor is absent. This distinction never removes
 the actual date of an adjacent price, valuation or completed operation.
-classifications records categorical properties and necessary source-method requirements the reader actually asserts, without deciding truth. Each entry uses exactly ONE of these shapes:
-{"property":"distribution_basis","value":"estimated_or_measured|estimated|measured"} records an asserted empirical price/cost distribution property, including a factual premise inside a plan or technical interpretation. Ordinary historical concentration language allows estimated_or_measured; a claim specifically about an estimator requires estimated; a claim of an actually measured price-volume distribution requires measured. Preserve this requirement even beside correct prices or proposed support/resistance levels: a price's role alone cannot replace its asserted distribution property. A generic price watchpoint, a hypothetical future condition, or a statement that the distribution is unknown does not assert an observed distribution and adds no requirement. A categorical assertion of absence in an observed distribution still needs its distribution source. This entry has only property and value; it does not take operator, scope or periods.
-{"property":"moving_average_order","value":"bullish_alignment|bearish_alignment|mixed","operator":"eq|ne","scope":"all_mentioned|explicit_subset","periods":[]} records asserted moving-average ordering. operator is eq for an asserted category and ne for its denial; preserve negation, rather than changing it into an opposite category. Record an asserted ordering/alignment of moving averages; preserve the author's claimed category even if you doubt it. all_mentioned concerns the stated moving-average system and uses periods=[]; periods is meaningful only for explicit_subset and contains at least two distinct positive integers explicitly selected by the prose. A separately mentioned moving average does not narrow a whole-system alignment claim to that period. Do not invent period numbers from price values, infer an ordering from merely being above a moving average, or strengthen a bounded trend opinion into an assertion about every moving average. Other empirical commitments retain claim_kind and still need factual assessment. Use [] when neither property is asserted.
+classifications records asserted moving-average categories, without deciding truth. Each entry is {"property":"moving_average_order","value":"bullish_alignment|bearish_alignment|mixed","operator":"eq|ne","scope":"all_mentioned|explicit_subset","periods":[]} records asserted moving-average ordering. operator is eq for an asserted category and ne for its denial; preserve negation, rather than changing it into an opposite category. Record an asserted ordering/alignment of moving averages; preserve the author's claimed category even if you doubt it. all_mentioned concerns the stated moving-average system and uses periods=[]; periods is meaningful only for explicit_subset and contains at least two distinct positive integers explicitly selected by the prose. A separately mentioned moving average does not narrow a whole-system alignment claim to that period. Do not invent period numbers from price values, infer an ordering from merely being above a moving average, or strengthen a bounded trend opinion into an assertion about every moving average. Other empirical commitments retain claim_kind and still need factual assessment. Use [] when no moving-average ordering is asserted.
 Register an ordering that is a NECESSARY condition of a stronger asserted moving-average state, including when that assertion is embedded beside values, comparisons or analysis. Do not omit a claimed category because the surrounding numbers appear inconsistent with it: extraction preserves the reader's commitment, not its truth. Mere price position or a bounded trend opinion does not imply an ordering of the whole system; preserve that distinction and the actual scope.
+distribution_basis 是每个片段都必须回答的独立含义问题，在决定它是否属于计划或研判之前作答。只能选一个字符串：none | estimated_or_measured | estimated | measured。
+它问的是：原文是否把某个价位与已存在或以往的成交/筹码分布结构联系起来？对聚集或分散的位置、成本分布的边界、某处分布结构的存在或缺失所作的定性判断，都保留这种来源要求；不要求原文出现统计数字、实测或方法说明。即使这是技术研判或未来行动的依据，也不能把这个既有结构前提改成一般价位作用。这里仅登记原文赋予价位的含义，不判断它是否真实或能否推导。
+一般分布结构用 estimated_or_measured；明确声称来自估算方法用 estimated；明确声称是逐价成交实测用 measured。none 只用于完全没有上述既存分布结构承诺的片段：纯价格观察位、只是假设未来形成某种分布、或明确说明不能确认分布。否定某种既存分布也需要相应来源；表达无法确认则不等于否定其存在。
 operation_code is ONE integer selecting a complete operation meaning. It concerns an actor's state-changing order or memory operation, not price/return/valuation/holding/balance observations. Market movements are code 0 even when current. These labels classify meaning, not whether the claim is true:
 0: No assertion about a business operation, and no proposal or unconfirmed operation.
 1: A proposed action, recommendation, conditional watchpoint or authored choice/decision; it does not itself assert execution. This is usually a judgment; retain separately asserted empirical premises.
@@ -43,8 +44,8 @@ operation_code is ONE integer selecting a complete operation meaning. It concern
 10: Categorical non-execution is asserted for a whole HISTORICAL run.
 A decision to continue holding or refrain from buying is code 1, not confirmation that an order did or did not occur. Split an additional completed-operation assertion where a source-unit boundary permits. A rejected attempt does not mean no actions occurred anywhere in the run. Do not soften categorical outcomes into uncertainty or turn absent records into non-execution.
 Resolve the proposition the author commits to, preserving negation, conditions and embedding. Mentioning an operation as the subject of a reporting rule does not assert its occurrence or non-occurrence. Reporting an outcome, proposing an action and performing it are different meanings. A past price observation is not a historical order. Never use a business-operation label as claim_kind; select one of its six categories independently.
-Return only JSON: {"quantity_issues":[{"id":"paragraph id","text":"exact problematic quantity span","reason":"missing unit or numerical scale"}],"paragraphs":[{"id":"input paragraph id","parts":[{"through":"exact source unit id","observation_dates":[],"operation_code":0,"claim_kind":"observation","classifications":[]}]}]}.
-Include every paragraph exactly once and every original source unit in contiguous order. operation_code must be an integer from 0 through 10, claim_kind one of its six categories, observation_dates an array of the permitted date anchors, and classifications the categorical assertions array. Do not supply invented labels, copied reader text, evidence hints or extra fields.
+Return only JSON: {"quantity_issues":[{"id":"paragraph id","text":"exact problematic quantity span","reason":"missing unit or numerical scale"}],"paragraphs":[{"id":"input paragraph id","parts":[{"through":"exact source unit id","distribution_basis":"none|estimated_or_measured|estimated|measured","observation_dates":[],"operation_code":0,"claim_kind":"observation","classifications":[]}]}]}.
+Include every paragraph exactly once and every original source unit in contiguous order. Each part must include distribution_basis with one permitted string; omitting it is incomplete interpretation. operation_code must be an integer from 0 through 10, claim_kind one of its six categories, observation_dates an array of the permitted date anchors, and classifications the categorical assertions array. Do not supply invented labels, copied reader text, evidence hints or extra fields.
 Independently inspect whether the reader body itself establishes the meaning of each stated quantity: its dimensional unit and, for ratios/rates, its numerical scale. Do not calculate an implied intended number from other values, use outside conventions to supply a missing percentage sign, or repair what the author probably intended. A dimensional quantity needs a unit established in its assertion or an explicit shared convention in these paragraphs. A bare ratio/rate numeral without an explicit fraction, ratio scale or percent convention is ambiguous. Intrinsically dimensionless multiples such as valuation ratios do not require a currency or percent unit. Securities identifiers, dates, counts and qualitative directions are not missing-unit quantities.
 quantity_issues lists ONLY quantity meaning not established by the body. Copy an exact existing text span with its paragraph id for each issue. Use [] when all quantities are clear. This is NOT evidence review: an unambiguously stated factual error must not be marked as a quantity clarity issue. All paragraphs form one reader context; an explicitly shared unit/scale remains valid across clauses and paragraphs. Do not require repeated units or a fixed phrase. Do not infer a missing convention from evidence, calculated answers, or numerical plausibility."""
 
@@ -170,7 +171,32 @@ def reader_source_units(text):
     return [{'id': f'u{index}', 'text': part} for index, part in enumerate(pieces)]
 
 
-def validate_body_meaning(value, paragraphs):
+def _declared_source_part(part, required):
+    if not isinstance(part, dict):
+        raise BodyMeaningError('invalid_body_wire_part')
+    declared = 'distribution_basis' in part
+    if required and not declared:
+        raise BodyMeaningError('source_property_declaration_missing')
+    basis = part.get('distribution_basis')
+    if declared and (not isinstance(basis, str)
+                     or basis not in {'none', 'estimated_or_measured', 'estimated', 'measured'}):
+        raise BodyMeaningError('source_property_declaration_invalid')
+    result = _canonical_part({key: value for key, value in part.items() if key != 'distribution_basis'})
+    claims = result.get('classifications', [])
+    if declared:
+        if not isinstance(claims, list) or any(not isinstance(claim, dict) for claim in claims):
+            raise BodyMeaningError('invalid_observation_commitment')
+        if any(claim.get('property') == 'distribution_basis' for claim in claims):
+            raise BodyMeaningError('source_property_declaration_conflict')
+    if declared and basis != 'none':
+        if not {'classifications', 'observation_dates'} <= result.keys():
+            raise BodyMeaningError('source_property_declaration_invalid')
+        result['classifications'] = [*result['classifications'],
+                                    {'property': 'distribution_basis', 'value': basis}]
+    return result
+
+
+def validate_body_meaning(value, paragraphs, *, require_source_declarations=False):
     """Exact text reconstruction checks coverage, not the truth of prose.
 
     Semantic categories come from the body-only local model. No phrase list,
@@ -192,7 +218,10 @@ def validate_body_meaning(value, paragraphs):
         # text already survives in the ordered source selections.
         parts = [{key: value for key, value in part.items() if key != 'referents'}
                  if isinstance(part, dict) else part for part in row['parts']]
-        parts = [_canonical_part(part) for part in parts]
+        # New publication needs an explicit answer per part. Absence is not a
+        # negative answer. Old saved responses remain decodable without making
+        # them eligible as a completed new publication review.
+        parts = [_declared_source_part(part, require_source_declarations) for part in parts]
         if any(isinstance(part, dict) and 'through' in part for part in parts):
             units = reader_source_units(paragraphs[row['id']])
             positions = {unit['id']: index for index, unit in enumerate(units)}
