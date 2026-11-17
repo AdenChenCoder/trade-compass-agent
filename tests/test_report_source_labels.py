@@ -55,5 +55,13 @@ def test_same_empirical_claim_keeps_source_obligations_when_basis_label_changes(
     assert stages == ['writer', 'body', 'fact', 'coverage']
     assert report.artifact['model_calls'] == 4
     assert report.artifact['receipts'][0]['result'] == raw
+    method, = source_inputs[0]['source_semantics']
+    assert method['source_method'] == 'relative_total_trading_activity'
+    assert method['entity'] == '300406' and method['observed_at'] == '2026-11-12'
+    facts = {f['id']: f for context in source_inputs[0]['source_contexts'].values()
+             for f in context['evidence']}
+    fact, = (facts[ref] for ref in method['fact_refs'])
+    assert fact['source'] == 'compute_volume_ratio' and fact['metric'] == 'volume_ratio'
+    assert fact['value'] == '0.594' and fact['observed_at'] == '2026-11-12'
     if not supported:
         assert any(any(row['id'] == 'c1' for row in payload['inferences']) for payload in source_inputs)

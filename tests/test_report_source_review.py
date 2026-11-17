@@ -122,7 +122,11 @@ def test_independent_review_keeps_unbound_owned_sources_and_their_reference_name
                 'section': 'plan', 'parts': ['600928上方', [high, 'value_with_unit'],
                     '为前期成交密集区压力。'], 'refs': []}]})
         first = fact_inputs[-1]
-        assert payload['source_contexts'] == first['contexts']
+        def source_rows(contexts, field):
+            return {row['id']: row for context in contexts.values() for row in context[field]}
+        for field in ('evidence', 'calculations'):
+            assert source_rows(payload['source_contexts'], field) == source_rows(first['contexts'], field)
+        assert all(row['context_id'] in payload['source_contexts'] for row in payload['inferences'])
         assert payload['source_fact_references'] == first['source_fact_references']
         assert payload['source_semantics'] == first['source_semantics']
         assert payload['receipts'] == first['receipts']
@@ -221,7 +225,7 @@ def test_empirical_claim_needs_independent_source_support_regardless_of_first_ba
         if rows:
             audit_inputs.append(payload)
             assert {row['id'] for row in rows} == ({'c0', 'c1'} if first_supported and scene != 'stale' else {'c0'})
-            assert rows[0]['evidence'] and payload['receipts']
+            assert payload['source_contexts'][rows[0]['context_id']]['evidence'] and payload['receipts']
         return json.dumps({'reviews': [{'id': row['id'], 'supported': row['id'] == 'c0' or second_supported,
             'reason': '匿名总量资料不能证明具体参与者或实际因果。' if not second_supported else '所述范围与原始资料相符。'}
             for row in rows], 'coverage': {'complete': True, 'missing': []}})
