@@ -26,7 +26,7 @@ def _parts_between(segments, start, stop):
     return parts
 
 
-def assertion_edit_plan(document, catalog, statements, owners, failed):
+def assertion_edit_plan(document, catalog, statements, owners, failed, *, optional_unchanged=None):
     """Address failed assertions only when the original bindings remain atomic.
 
     Categories and verdicts come from completed upstream review. Text addressing
@@ -55,7 +55,8 @@ def assertion_edit_plan(document, catalog, statements, owners, failed):
                 span = {'id': key, 'start': cursor, 'stop': stop, 'text': original}
                 spans.append(span)
                 if key in failed:
-                    edits.append({'id': key, 'paragraph_id': item.id, 'text': original})
+                    edits.append({'id': key, 'paragraph_id': item.id, 'text': original,
+                                  'change_required': key not in (optional_unchanged or set())})
                 cursor = stop
             paragraphs.append({'id': item.id, 'spans': spans})
     except (ValueError, KeyError):
@@ -94,6 +95,11 @@ def apply_assertion_edits(value, revision, transport, catalog):
     unchanged adjacent observations. Every resulting paragraph is reviewed anew.
     """
     plan = revision['assertion_edits']
+    # A complete list is an unambiguous bounded-edit wire form. It adds no
+    # new gap text; existing/protected gaps remain in the previous document.
+    # Every identity, binding, extent and real-change check below still applies.
+    if isinstance(value, list):
+        value = {'schema_version': 1, 'edits': value, 'gaps': []}
     if (not isinstance(value, dict) or set(value) != {'schema_version', 'edits', 'gaps'}
             or type(value['schema_version']) is not int or value['schema_version'] != 1
             or not isinstance(value['edits'], list) or not isinstance(value['gaps'], list)
@@ -112,7 +118,8 @@ def apply_assertion_edits(value, revision, transport, catalog):
     previous = ReportDocument.model_validate(transport.decode_document(revision['previous_document']))
     plans = {row['id']: row['spans'] for row in plan['paragraphs']}
     reserved = {item.id for item in previous.items} | set(catalog.facts) | set(transport.references)
-    serial, items = 0, []
+    serial, items, changed = 0, [], False
+    required = {row['id'] for row in plan['edits'] if row.get('change_required', True)}
     for item in previous.items:
         if item.id not in plans:
             items.append(item.model_dump())
@@ -130,6 +137,7 @@ def apply_assertion_edits(value, revision, transport, catalog):
                 if not patch['parts']:
                     if patch['refs'] != []:
                         raise ValueError('empty semantic edit has references')
+                    changed = True
                     continue
                 candidate = {'schema_version': 1, 'items': [{
                     'id': 'replacement', 'type': 'paragraph', 'section': item.section,
@@ -139,9 +147,15 @@ def apply_assertion_edits(value, revision, transport, catalog):
                     raise ValueError('invalid semantic edit parts')
                 replacement = decoded.items[0]
                 if paragraph_text(replacement, previous, catalog) == span['text']:
-                    raise ValueError('semantic edit did not change its failed assertion')
-                parts = [part.model_dump() for part in replacement.parts]
-                refs = list(dict.fromkeys([*refs, *replacement.refs]))
+                    if span['id'] in required:
+                        raise ValueError('semantic edit did not change its failed assertion')
+                    # Retaining an optional opinion is not a new binding or a
+                    # repaired claim. Preserve the original runs and provenance;
+                    # genuine neighboring corrections change its reader context.
+                else:
+                    changed = True
+                    parts = [part.model_dump() for part in replacement.parts]
+                    refs = list(dict.fromkeys([*refs, *replacement.refs]))
             while True:
                 identifier = f'revision-span-{serial}'
                 serial += 1
@@ -150,6 +164,8 @@ def apply_assertion_edits(value, revision, transport, catalog):
                     break
             items.append({'id': identifier, 'type': 'paragraph', 'section': item.section,
                           'parts': parts, 'refs': refs})
+    if not changed:
+        raise ValueError('semantic edits did not change the reader body')
     for row in value['gaps']:
         gap = Gap.model_validate(row)
         if gap.section != 'gaps' or gap.id in reserved:

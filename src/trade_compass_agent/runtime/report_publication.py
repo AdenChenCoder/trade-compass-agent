@@ -20,7 +20,7 @@ from trade_compass_agent.runtime.report_contract import (
 )
 from trade_compass_agent.runtime.report_execution import execution_evidence
 from trade_compass_agent.runtime.report_body import (
-    BODY_MEANING, BodyMeaningError, reader_source_units, validate_body_meaning, runtime_bound_quantity_issue, factual_assertions, factual_review_statements,
+    BODY_MEANING, BodyMeaningError, reader_source_units, validate_body_meaning, runtime_bound_quantity_issue, factual_assertions, factual_review_statements, decode_body_value,
 )
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
 from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts, source_record_context, composition_source_records, source_reference_view
@@ -33,6 +33,7 @@ from trade_compass_agent.runtime.report_annotation_repair import (
     ANNOTATION_REPAIR, annotation_conflicts, resolved_annotations,
 )
 from trade_compass_agent.runtime.report_classifications import check_classifications
+from trade_compass_agent.runtime.report_source_properties import check_source_properties, distribution_requirements
 from trade_compass_agent.runtime.report_revision import (
     assertion_edit_plan, assertion_edit_schema, apply_assertion_edits,
 )
@@ -189,10 +190,18 @@ _GAP_COVERAGE = (
 )
 _SOURCE_REVIEW = (
     "本次inferences是需要独立核对来源的原文事实性陈述，id可以是单个原文片段，不能因其他模型已核对过而默认正确。"
-    "逐字还原其全部对象、关系、参与者身份/行为及因果承诺，再与原始依据比较；不要只认可旁边正确的数字。"
+    "每行先写reason，最后给supported：先还原原文对数值和关系声称的完整性质、方法、范围及限定，"
+    "包括对象、统计含义、参与者身份/行为及因果承诺，再逐项与原始依据比较。"
+    "核对完整主张，不能先把带有具体性质的主张缩成较宽的概念，再用一个正确数字支持这个较宽概念。"
+    "数值吻合或可用于一般分析，不自动证明原文给它的统计性质和来源含义；分析或建议中的事实前提同样保留。"
+    "reason须说明原文的这些性质由什么来源支持或尚未建立，不能仅列出数值匹配和泛称技术研判。"
     "匿名总量或价格统计可支持限定范围的技术解读，不能据此确认或排除特定参与者行为，也不能自行证明实际因果。"
     "合理的限定分析与未来观察安排不需要唯一的量化证明；其中实际声称的事实前提仍需依据。"
     "source_semantics是业务解释契约，不是市场观察；估算与实测的实际方法和范围仍依原始来源核验。"
+    "source_requirements保留正文先前声称的统计性质，不能改解释为一般价位而省略；逐项检查其真实方法、对象、日期及价位。"
+    "有source_requirements的行还可返回evidence_refs，列出直接支持这些性质和方法的原始fact id。"
+    "依据在文档原文中时必须用其content/text/snippet/excerpt引文id，不用标题、普通价格或receipt id；没有相应原文用[]。"
+    "程序提供的同对象估算记录可支持普通分布研判，不能替代正文明确要求的实测；引用存在也不自动证明内容支持。"
     "source_contexts和source_fact_references与事实核验使用同一完整来源视图及引用命名空间。"
     "后者的id、pointer及观察日期定位receipts中的原始值；其他段落未绑定的来源仍可用。"
     "先核对这些实际来源；局部选取未包含某项依据，不代表本轮没有提供该依据。"
@@ -205,6 +214,8 @@ _ASSERTION_EDIT = (
     "只为edits中的每个id返回一次替换parts和refs，不返回整篇报告，不新增其他编辑id。"
     "每个edits.text只是要替换的原文片段；paragraphs.spans是只读上下文，不是需要重写的段落。"
     "替换内容只承担该片段的含义，不能复制相邻片段、整段或整篇；它们会由程序原样拼回。"
+    "change_required=false的非事实性意见片段可原样保留；其他片段必须真正纠正，整轮不能全部原样返回。"
+    "表达业务结果和必要限制，不在正文叙述工具、内部字段或核验过程。"
     "parts按阅读顺序使用自然文字字符串及[事实id,字段]数组。数值使用value_with_unit，日期使用date；"
     "value_with_unit已有完整单位，文字不再补单位。对象、指标、日期和来源范围必须与实际事实相符。"
     "原文中其他文字、顺序和数值引用由程序保留；程序会把修改范围分成独立段落，避免一处未完成掩盖相邻内容。"
@@ -404,11 +415,12 @@ _REPAIR = (
 )
 
 
-def _json_value(raw):
+def _json_value(raw, *, object_pairs_hook=None):
     """Decode one JSON value, optionally carried in one Markdown code fence.
 
     This is transport framing only: never extract claims from prose or repair
-    JSON field values. Extra prose, trailing values and duplicate keys fail.
+    JSON field values. Extra prose and trailing values fail. Duplicate keys fail
+    by default; the body collection decoder explicitly retains all pairs.
     """
     lines = raw.strip().splitlines()
     if len(lines) >= 3 and lines[0] in {"```", "```json"} and lines[-1] == "```":
@@ -420,7 +432,7 @@ def _json_value(raw):
                 raise ValueError("duplicate JSON field")
             result[key] = value
         return result
-    return json.loads(raw, object_pairs_hook=unique)
+    return json.loads(raw, object_pairs_hook=object_pairs_hook or unique)
 
 
 def _dismissed_gaps(review, gaps, verified_ids):
@@ -599,7 +611,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     coverage_review_input = factual_review_input = factual_response = factual_review = None
     body_review_input = body_response = body_meaning = None
     execution_projections, body_quantity_issues, bound_quantity_checks, temporal_checks = {}, {}, {}, {}
-    support_basis_checks, classification_checks = {}, {}
+    support_basis_checks, classification_checks, source_property_checks = {}, {}, {}
     annotation_candidates, annotation_resolutions = {}, []
     source_review_ids, independent_source_reviews = set(), {}
     fact_verified_before_coverage = set()
@@ -755,7 +767,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     body_response = body_call(BODY_MEANING, json.dumps(body_review_input, ensure_ascii=False,
                                                                       separators=(",", ":")))
                     check_active()
-                    body_meaning, body_quantity_issues = validate_body_meaning(_json_value(body_response), prose)
+                    body_meaning, body_quantity_issues = validate_body_meaning(
+                        decode_body_value(body_response, _json_value), prose, require_source_declarations=True)
                     for row in review_input["inferences"]:
                         issues = body_quantity_issues.get(row["id"], [])
                         owned = [issue for issue in issues if runtime_bound_quantity_issue(issue, row["segments"])]
@@ -817,6 +830,11 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     selected_ids = {fact['id'] for context in contexts.values() for fact in context['evidence']}
                     contexts = source_record_context(catalog, contexts, review_input['receipts'],
                                                      report_context['display_timezone'])
+                    source_methods = catalog.source_semantics()
+                    # A method contract is not its evidence. Retain the actual
+                    # typed values, observation dates and method scope that it
+                    # references, including facts the writer did not bind.
+                    selected_ids.update(ref for method in source_methods for ref in method['fact_refs'])
                     review_contexts, source_references = source_reference_view(contexts, selected_ids)
                     review_contexts, review_statements, source_references = transport.encode_factual_review(
                         review_contexts, factual_review_statements(statements), source_references)
@@ -826,7 +844,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         "contexts": review_contexts, "statements": review_statements,
                         **({'source_fact_references': source_references} if source_references['sources'] else {}),
                         "receipts": review_input["receipts"], "execution_records": execution.records,
-                        "source_semantics": transport.encode_source_semantics(catalog.source_semantics()),
+                        "source_semantics": transport.encode_source_semantics(source_methods),
                     }
                     factual_response = fact_call(_FACT_REVIEW, json.dumps(factual_review_input, ensure_ascii=False,
                                                                           separators=(",", ":")))
@@ -925,6 +943,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             'id': statement['id'], 'text': statement['text'],
                             'segments': [{'origin': 'author', 'text': statement['text']}],
                             **review_contexts[statement['context_id']],
+                            **({'source_requirements': distribution_requirements(statement)}
+                               if distribution_requirements(statement) else {}),
                         } for statement in statements if statement['id'] in source_review_ids]
                         coverage_review_input['receipts'] = review_input['receipts']
                         coverage_review_input['source_contexts'] = review_contexts
@@ -979,10 +999,16 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 if (set(review) - ({'annotation_resolutions'} if annotation_candidates else set()) not in ({"reviews", "coverage"}, {"reviews", "coverage", "gap_reviews"}) or not isinstance(rows, list)
                         or len(rows) != len(reviewed_ids)
                         or {row["id"] for row in rows} != reviewed_ids
-                        or any(set(row) != {"id", "supported", "reason"}
+                        or any((set(row) != {"id", "supported", "reason"}
+                                and not (fact_call and row['id'] in source_review_ids
+                                    and set(row) == {"id", "supported", "reason", "evidence_refs"}))
                                or type(row["supported"]) is not bool
                                or not isinstance(row["reason"], str)
                                or len(row["reason"]) > 500
+                               or ('evidence_refs' in row and (not isinstance(row['evidence_refs'], list)
+                                   or len(row['evidence_refs']) > 100
+                                   or any(not isinstance(ref, str) for ref in row['evidence_refs'])
+                                   or len(row['evidence_refs']) != len(set(row['evidence_refs']))))
                                or (not row["supported"] and not row["reason"].strip()) for row in rows)
                         or not {'complete', 'missing'} <= set(coverage)
                         or set(coverage) - {'complete', 'missing', 'repairable', 'gap_answer_ids'}
@@ -994,6 +1020,9 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     raise ValueError("invalid inference review")
                 if fact_call and factual_items:
                     independent_source_reviews = {row['id']: row for row in rows}
+                    for row in independent_source_reviews.values():
+                        if 'evidence_refs' in row:
+                            row['evidence_refs'] = [transport.references.get(ref, ref) for ref in row['evidence_refs']]
                     if annotation_candidates:
                         try:
                             resolutions = resolved_annotations(review.get('annotation_resolutions', []),
@@ -1030,6 +1059,20 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             assessment['checks']['support'] = 'unknown'
                             assessment['verdict'] = 'unknown'
                             assessment['comparison'] += ' 独立来源核对：' + source_review['reason']
+                        statement = statements_by_id[assessment['id']]
+                        properties = check_source_properties(statement, contexts[statement['context_id']],
+                                                             catalog, source_review)
+                        source_property_checks[assessment['id']] = properties
+                        if properties['status'] in {'unknown', 'unavailable'}:
+                            if assessment['checks']['support'] != 'contradicted':
+                                assessment['checks']['support'] = 'unknown'
+                            if assessment['verdict'] != 'contradicted':
+                                assessment['verdict'] = 'unknown'
+                            assessment['comparison'] += ' 原文所需的分布来源与证券对象尚不能对应。'
+                            if properties['status'] == 'unavailable':
+                                factual_assessment_errors.setdefault(assessment['id'], {
+                                    'stage': 'source_review', 'code': 'source_property_reference_unavailable'})
+                                assessment['validation_status'] = 'unavailable'
                     by_assertion = {row['id']: row for row in assessments}
                     date_gaps = {row['id']: refs for row in assessments
                         if row['id'] not in factual_assessment_errors
@@ -1158,6 +1201,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "factual_review_input": factual_review_input, "factual_response": factual_response,
                 "temporal_checks": temporal_checks,
                 "support_basis_checks": support_basis_checks, "classification_checks": classification_checks,
+                "source_property_checks": source_property_checks,
                 "factual_review": factual_review,
                 "factual_assessment_errors": factual_assessment_errors, "review_feedback_valid": review_feedback_valid,
                 "annotation_candidates": annotation_candidates, "annotation_resolutions": annotation_resolutions,
@@ -1200,7 +1244,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
             failed = {row['assertion_id'] for row in feedback
                       if row['completed'] and row['verdict'] != 'entailed' or row['runtime_findings']}
             edit_plan = assertion_edit_plan(document, catalog, factual_review_input['statements'],
-                                            assertion_owners, failed)
+                assertion_owners, failed, optional_unchanged={row['id'] for row in annotation_resolutions
+                    if annotation_candidates[row['id']] == 'nonempirical_rejection'})
             if edit_plan:
                 revision_input['assertion_edits'] = edit_plan
         revised = _publish_report(task=task, draft=draft, tool_results=tool_results, run_scope=run_scope,
@@ -1239,7 +1284,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "candidate_body_sha256",
                 "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues", "bound_quantity_checks",
                 "coverage_review_input", "factual_review_input", "factual_response", "factual_review", "temporal_checks",
-                "support_basis_checks", "classification_checks", "annotation_candidates", "annotation_resolutions",
+                "support_basis_checks", "classification_checks", "source_property_checks", "annotation_candidates", "annotation_resolutions",
                 "independent_source_reviews", "fact_verified_before_coverage")
         history = [{key: attempt.artifact[key] for key in keys} for attempt in (publication, revised)]
         selected.artifact["revision_attempts"] = history

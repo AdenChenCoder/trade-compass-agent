@@ -64,6 +64,20 @@ in the linked regression tests, not in expanding prose exception lists.
   contracts, not additional observations or approval decisions. A quoted source
   may establish its own method through its original text; absence of a typed
   method record does not establish absence of that method in a quoted source.
+  Blind body interpretation retains an asserted distribution property's necessary
+  source family, including empirical premises inside a plan. Later review cannot
+  replace it with a generic price watchpoint. Runtime checks the owned instrument
+  and method family independently of optimistic verdicts; a measured profile
+  cannot be supplied by a cost estimate. Original method-bearing document text
+  remains eligible through an explicitly nominated content quotation, never a
+  title, an ordinary price or an unrelated read receipt. Source admissibility is
+  necessary, not semantic approval: dates, levels, method and conclusion still
+  require the independent factual and source reviews.
+  Each newly reviewed reader span explicitly declares whether it asserts such a
+  distribution structure; a missing answer is unavailable interpretation, not
+  an implicit negative. Qualitative technical judgments can carry an empirical
+  distribution premise without claiming a measured statistic. Old saved body
+  responses remain decodable but cannot stand in for this complete new review.
   Choosing numeric bindings does not withdraw other owned sources from review.
   Original announcements, source qualifications and successful first-party read
   results remain available, including an empty result with no numeric rows.
@@ -190,6 +204,13 @@ in the linked regression tests, not in expanding prose exception lists.
   limits remain unchanged. Both reviewers receive the same owned source contexts,
   observation pointers and method records in one reference namespace; paragraph
   bindings cannot withdraw other supplied evidence from independent review.
+  Preserve method-referenced facts in full through source-view compaction, even
+  when no paragraph binds them: a pointer alone omits the typed value, unit and
+  estimator scope needed to apply that method's admissibility contract.
+  Compare the complete asserted property, including statistical meaning, method
+  and qualifiers, before approving its values. A supported broader interpretation
+  cannot replace the narrower property the reader actually received; a fact
+  premise inside a proposed analysis retains its source obligations.
   A pure proposed choice with no empirical premises
   may have a non-applicable measurement basis; actual premises, commitments,
   quantities and unresolved support remain independently blocking.
@@ -215,6 +236,24 @@ in the linked regression tests, not in expanding prose exception lists.
   their feedback and read-only context without competing full-draft instructions.
   Keep full previous documents internally for exact reassembly and recovery;
   newly assembled prose still undergoes the complete factual and coverage checks.
+  A reconciled non-empirical opinion may remain verbatim beside genuine edits;
+  retain its original bindings and provenance. Actual factual failures still
+  require a changed assertion, and an entirely unchanged edit batch is rejected.
+  Retained opinions are not counted as repaired claims: their new reader context
+  and the complete assembled report must still pass fresh review.
+  Bounded edit transport accepts its canonical object or a complete edit array;
+  the array adds no new gap text and never removes existing protected gaps. Apply
+  identical ownership, completeness, binding and genuine-change checks to both
+  forms. Other report/assessment envelopes and incomplete JSON remain strict.
+  Body interpretation may group complete paragraph records in repeated root
+  paragraph collections. Concatenate only that collection, then enforce unique
+  owned IDs and complete contiguous source-unit coverage; never choose a last
+  value or discard a group. Repeated scalar/nested members, duplicate/missing IDs
+  and incomplete JSON remain invalid. Other assessment envelopes stay strict.
+  Extract necessary categorical ordering conditions of a stronger asserted
+  indicator state without correcting the author's meaning to fit its numbers.
+  A bounded trend opinion or price position alone does not imply whole-system
+  alignment. Preserve that distinction before source evidence is shown.
 - An explicitly configured `llm.local_report_review_model` separates factual
   entailment from task coverage. It uses only local LM Studio, original receipts,
   typed calculations, current execution records and the final statements. The original

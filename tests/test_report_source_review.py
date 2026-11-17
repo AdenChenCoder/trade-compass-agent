@@ -8,6 +8,62 @@ from test_report_factual_role import assess, body_reply
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
 
 
+@pytest.mark.parametrize('fault', ['valid', 'duplicate_id', 'foreign_id', 'missing',
+                                   'conflicting_part', 'duplicate_quantity_field', 'truncated'])
+@pytest.mark.parametrize('wire', ['selectors', 'legacy_quote'])
+def test_body_collection_groups_preserve_complete_owned_records_without_accepting_conflicts(fault, wire):
+    calls = []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            ref = next(f['id'] for f in report_facts(payload) if f['metric'] == 'close')
+            return json.dumps({'schema_version': 1, 'items': [
+                {'id': name, 'type': 'paragraph', 'section': 'market',
+                 'parts': ['002415在2025-01-02的收盘价为', [ref, 'value_with_unit'], '。'], 'refs': []}
+                for name in ('one', 'two')]})
+        return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': '所给日期价格一致。'}
+            for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
+    def checker(system, user):
+        payload = json.loads(user)
+        calls.append('body' if 'paragraphs' in payload else 'fact')
+        if 'paragraphs' not in payload:
+            return json.dumps(assess(payload))
+        rows = (body_reply(payload)['paragraphs'] if wire == 'legacy_quote' else [
+            {'id': row['id'], 'parts': [{'distribution_basis': 'none', 'through': row['source_units'][-1]['id'], 'operation_code': 0,
+                'claim_kind': 'observation', 'observation_dates': [], 'classifications': []}]}
+            for row in payload['paragraphs']])
+        if fault == 'duplicate_id':
+            rows[1]['id'] = rows[0]['id']
+        elif fault == 'foreign_id':
+            rows[1]['id'] = 'foreign'
+        elif fault == 'missing':
+            rows.pop()
+        fields = ['"quantity_issues":[]', *['"paragraphs":'+json.dumps([row]) for row in rows]]
+        if fault == 'duplicate_quantity_field':
+            fields.append('"quantity_issues":[]')
+        raw = '{'+','.join(fields)+'}'
+        if fault == 'conflicting_part':
+            key = 'claim_kind' if 'claim_kind' in rows[0]['parts'][0] else 'assertion_kind'
+            member = json.dumps(key)+': "observation"'
+            assert member in raw
+            raw = raw.replace(member, member+','+json.dumps(key)+':"actor_activity"', 1)
+        elif fault == 'truncated':
+            raw = raw[:-1]
+        return raw
+    report = publish_report(task='核对两条所给记录的日期和收盘价。', draft='',
+        tool_results=[('get_bars', json.dumps({'symbol': '002415', 'timeframe': '1d',
+            'bars': [{'timestamp': '2025-01-02', 'close': 23}]}))],
+        run_scope='body-grouped-wire', call=writer, fact_review_call=checker,
+        reference_date='2025-01-02', max_calls=2)
+    assert calls.count('body') == 1 and calls.count('fact') == (1 if fault == 'valid' else 0)
+    assert (report.verification['status'] == 'complete') is (fault == 'valid')
+    assert ('23元/股' in report.artifact['reader_body']) is (fault == 'valid')
+    if fault == 'valid':
+        from trade_compass_agent.runtime.report_publication import _json_value
+        with pytest.raises(ValueError):
+            _json_value(report.artifact['body_response'])  # Other envelopes remain strict.
+
+
 @pytest.mark.parametrize('estimated', [True, False])
 def test_independent_review_keeps_unbound_owned_sources_and_their_reference_namespace(estimated):
     receipts = [('get_bars', json.dumps({'symbol': '600928', 'timeframe': '1d',
@@ -32,6 +88,9 @@ def test_independent_review_keeps_unbound_owned_sources_and_their_reference_name
         assert payload['receipts'] == first['receipts']
         assert 'assessments' not in payload
         available = {f['id'] for c in payload['source_contexts'].values() for f in c['evidence']}
+        # Method policy references need their actual typed values and scope,
+        # not only an address into a separate raw receipt.
+        assert all(set(source['fact_refs']) <= available for source in payload['source_semantics'])
         available.update(row[0] for source in payload['source_fact_references']['sources']
                          for observation in source['observations'] for row in observation['rows'])
         assert all(set(source['fact_refs']) <= available for source in payload['source_semantics'])
@@ -72,7 +131,7 @@ def test_repairing_rejected_nonempirical_time_metadata_cannot_clear_the_first_re
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'target', 'parts': [{
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'target', 'parts': [{'distribution_basis': 'none',
                 'through': payload['paragraphs'][0]['source_units'][-1]['id'], 'operation_code': operation,
                 'claim_kind': 'judgment', 'observation_dates': ['task_now'], 'classifications': []}]}]})
         result = assess(payload)
@@ -231,7 +290,7 @@ def test_nonempirical_choice_does_not_need_measurement_basis_but_preserves_actua
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'plan', 'parts': [{
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'plan', 'parts': [{'distribution_basis': 'none',
                 'through': payload['paragraphs'][0]['source_units'][-1]['id'], 'operation_code': operation,
                 'claim_kind': kind, 'observation_dates': anchors, 'classifications': []}]}]})
         result = assess(payload)
@@ -284,7 +343,7 @@ def test_missing_temporal_link_can_be_repaired_but_current_scope_and_source_date
         payload = json.loads(user)
         if 'paragraphs' in payload:
             return json.dumps({'quantity_issues': [], 'paragraphs': [
-                {'id': paragraph['id'], 'parts': [{'through': paragraph['source_units'][-1]['id'],
+                {'id': paragraph['id'], 'parts': [{'distribution_basis': 'none', 'through': paragraph['source_units'][-1]['id'],
                     'operation_code': 0, 'claim_kind': kind if paragraph['id'] == 'current' else 'observation',
                     'observation_dates': ['task_now'] if paragraph['id'] == 'current' else [], 'classifications': []}]}
                 for paragraph in payload['paragraphs']]})

@@ -93,7 +93,7 @@ def test_empirical_commitment_cannot_publish_on_analysis_basis(tmp_path, asserti
                 elif row['id'] == 'plan':
                     part.update(assertion_kind='judgment', kind='plan')
                 original = next(p for p in payload['paragraphs'] if p['id'] == row['id'])
-                row['parts'] = [{'through': original['source_units'][-1]['id'],
+                row['parts'] = [{'distribution_basis': 'none', 'through': original['source_units'][-1]['id'],
                     'operation_code': 1 if row['id'] == 'plan' else 0,
                     'claim_kind': part['assertion_kind'], 'as_of_task_now': False}]
             return json.dumps(result)
@@ -803,9 +803,9 @@ def test_execution_projection_preserves_the_following_bound_observation_date(as_
         if 'paragraphs' in payload:
             text = payload['paragraphs'][0]['text']
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'answer', 'parts': [
-                {'text': prefix, 'kind': 'current_outcome', 'assertion_kind': 'actor_activity',
+                {'distribution_basis': 'none', 'text': prefix, 'kind': 'current_outcome', 'assertion_kind': 'actor_activity',
                  'time_scope': 'other', 'referents': {}, 'outcome': 'performed', 'extent': 'operation'},
-                {'text': text[len(prefix):], 'kind': 'other', 'assertion_kind': 'observation',
+                {'distribution_basis': 'none', 'text': text[len(prefix):], 'kind': 'other', 'assertion_kind': 'observation',
                  'time_scope': 'reference_date', 'referents': {}, 'outcome': 'none', 'extent': 'none'}]}]})
         return json.dumps(assess(payload))
     result = publish_report(task='说明本轮结果和市净率。', draft='', tool_results=receipts,
@@ -895,7 +895,7 @@ def test_each_assertion_must_be_reviewed_before_the_complete_paragraph_is_publis
         payload = json.loads(user)
         if 'paragraphs' in payload:
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'c0', 'parts': [
-                {'text': text, 'kind': 'other', 'assertion_kind': category, 'time_scope': 'other', 'referents': {}, 'outcome': 'none', 'extent': 'none'}
+                {'distribution_basis': 'none', 'text': text, 'kind': 'other', 'assertion_kind': category, 'time_scope': 'other', 'referents': {}, 'outcome': 'none', 'extent': 'none'}
                 for text, category in [(prefix, 'observation'), (conclusion, 'judgment' if legitimate else 'actor_activity')]]}]})
         seen.append(payload)
         assert [row['text'] for row in payload['statements']] == [prefix, conclusion]
@@ -966,7 +966,7 @@ def test_percent_reader_precision_preserves_source_values_and_real_nonzero_chang
 
 def body_reply(payload):
     assert set(payload) == {"paragraphs", "report_context"}
-    return {"quantity_issues": [], "paragraphs": [{"id": row["id"], "parts": [{"text": row["text"], "kind": "other", "assertion_kind": "observation", "time_scope": "other", "referents": {},
+    return {"quantity_issues": [], "paragraphs": [{"id": row["id"], "parts": [{'distribution_basis': 'none', "text": row["text"], "kind": "other", "assertion_kind": "observation", "time_scope": "other", "referents": {},
         "outcome": "none", "extent": "none"}]} for row in payload["paragraphs"]]}
 
 
@@ -980,7 +980,7 @@ def test_mixed_body_wire_axes_cannot_publish_a_valid_price(change):
         payload = json.loads(user)
         assert 'paragraphs' in payload  # Invalid BODY must never reach FACT.
         row = payload['paragraphs'][0]
-        part = {'through': row['source_units'][-1]['id'], 'operation_code': 0,
+        part = {'distribution_basis': 'none', 'through': row['source_units'][-1]['id'], 'operation_code': 0,
                 'claim_kind': 'observation', 'as_of_task_now': False, **change}
         return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [part]}]})
     def writer(system, user):
@@ -1018,7 +1018,7 @@ def test_source_unit_selection_preserves_all_reader_text_without_model_copying(t
             part.pop('referents')
             part['through'] = row['source_units'][-1]['id']
             if wire_format == 'compact_axes':
-                part = {'through': part['through'], 'operation_code': 0,
+                part = {'distribution_basis': 'none', 'through': part['through'], 'operation_code': 0,
                     'claim_kind': 'observation', 'as_of_task_now': False}
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [part]}]})
         assert payload['statements'][0]['text'] == expected
@@ -1086,9 +1086,9 @@ def test_selected_source_units_preserve_bound_dates_after_execution_projection(d
         if 'paragraphs' in payload:
             row = payload['paragraphs'][0]
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [
-                {'through': row['source_units'][0]['id'], 'operation_code': 3,
+                {'distribution_basis': 'none', 'through': row['source_units'][0]['id'], 'operation_code': 3,
                  'claim_kind': 'actor_activity', 'as_of_task_now': False},
-                {'through': row['source_units'][-1]['id'], 'operation_code': 0,
+                {'distribution_basis': 'none', 'through': row['source_units'][-1]['id'], 'operation_code': 0,
                  'claim_kind': 'observation', 'as_of_task_now': True}]}]})
         assert '已买入' not in payload['statements'][0]['text']
         return json.dumps(assess(payload))
@@ -1173,7 +1173,7 @@ def test_rule_context_remains_separate_from_evidence_and_cannot_authorize_execut
         if "paragraphs" in payload:
             assert set(payload) == {"paragraphs", "report_context"}
             return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "decision", "parts": [
-                {"text": text, "kind": meaning, "time_scope": "other", "referents": {}, "assertion_kind": "judgment" if meaning == "plan" else "actor_activity", "outcome": "none" if meaning == "plan" else "not_performed",
+                {'distribution_basis': 'none', "text": text, "kind": meaning, "time_scope": "other", "referents": {}, "assertion_kind": "judgment" if meaning == "plan" else "actor_activity", "outcome": "none" if meaning == "plan" else "not_performed",
                  "extent": "none" if meaning == "plan" else "operation"}]}]})
         observed.append(payload)
         assert payload["request_context"] == {"role": "requirements", "text": task}
@@ -1227,8 +1227,8 @@ def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path,
         if "paragraphs" in payload:
             assert [{key: row[key] for key in ("id", "text")} for row in payload["paragraphs"]] == [{"id": "answer", "text": prefix+claim}]
             return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "answer", "parts": [
-                {"text": prefix, "kind": "other", "assertion_kind": "observation", "time_scope": "other", "referents": {}, "outcome": "none", "extent": "none"},
-                {"text": claim, "kind": "current_outcome", "assertion_kind": "actor_activity", "time_scope": "other", "referents": {}, "outcome": "not_performed" if receipt_status is None else "performed",
+                {'distribution_basis': 'none', "text": prefix, "kind": "other", "assertion_kind": "observation", "time_scope": "other", "referents": {}, "outcome": "none", "extent": "none"},
+                {'distribution_basis': 'none', "text": claim, "kind": "current_outcome", "assertion_kind": "actor_activity", "time_scope": "other", "referents": {}, "outcome": "not_performed" if receipt_status is None else "performed",
                  "extent": "whole_run" if receipt_status is None else "operation"}]}]})
         factual_inputs.append(payload)
         assert payload["statements"][0]["text"] == prefix
@@ -1319,7 +1319,7 @@ def test_execution_only_report_uses_receipt_without_empty_prose_or_source_marker
         return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
     def checker(system, user):
         assert set(json.loads(user)) == {"paragraphs", "report_context"}
-        return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "outcome", "parts": [{"text": claim, "kind": "current_outcome", "assertion_kind": "actor_activity", "time_scope": "other", "referents": {},
+        return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "outcome", "parts": [{'distribution_basis': 'none', "text": claim, "kind": "current_outcome", "assertion_kind": "actor_activity", "time_scope": "other", "referents": {},
             "outcome": "performed", "extent": "operation"}]}]})
     result = publish_report(task="报告成交结果", draft="", tool_results=[("place_paper_trade", json.dumps(receipt))],
                             run_scope="execution-only", call=writer, fact_review_call=checker, max_calls=2)
@@ -2037,7 +2037,7 @@ def test_owned_date_or_indicator_conflict_can_fund_real_revision_despite_bad_ann
             counts['body'] += 1
             p = payload['paragraphs'][0]
             changed = counts['body'] > 1
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'distribution_basis': 'none',
                 'through': p['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
                 'observation_dates': ['2025-01-02'] if scene == 'ma_alignment' else [day] if changed else ['task_now'],
                 'classifications': [{'property': 'moving_average_order',

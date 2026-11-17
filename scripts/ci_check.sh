@@ -51,6 +51,8 @@ fi
   tests/test_report_factual_role.py \
   tests/test_report_annotations.py \
   tests/test_report_source_review.py \
+  tests/test_report_source_properties.py \
+  src/trade_compass_agent/runtime/report_source_properties.py \
   src/trade_compass_agent/runtime/report_annotation_repair.py \
   tests/test_report_revision.py \
   src/trade_compass_agent/runtime/report_revision.py \

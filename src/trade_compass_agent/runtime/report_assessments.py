@@ -19,7 +19,9 @@ def reasoned_empirical_ids(statements, assessments, errors):
     """
     by_id = {row['id']: row for row in statements}
     return {row['id'] for row in assessments if row['id'] not in errors
-        and row['verdict'] == 'entailed' and row.get('support_basis') == 'reasoned'
+        and row['verdict'] == 'entailed'
+        and (row.get('support_basis') == 'reasoned' or any(
+            claim['property'] == 'distribution_basis' for claim in by_id[row['id']].get('classifications', [])))
         and (by_id[row['id']]['assertion_kind'] in {'observation', 'comparison'}
              or by_id[row['id']]['bound_fact_refs'] or by_id[row['id']]['time_fact_refs']
              or by_id[row['id']].get('observation_dates')

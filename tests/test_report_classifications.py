@@ -12,7 +12,7 @@ from trade_compass_agent.runtime.report_publication import publish_report, persi
 def publication(*, values, prose='均线呈多头排列。', operator='eq', periods=(),
                 anchors=('task_now',), reference='2025-01-02', observed='2025-01-02',
                 extra_receipts=(), bad_witness=False, commitments=None, basis='direct', wire_change=None,
-                category_only=False, select_values=None):
+                category_only=False, select_values=None, omit_source=False):
     receipt = {'symbol': '600928', 'timeframe': '1d', '_meta': {'as_of': observed},
                'ma': values, 'trend': moving_average_alignment(values)}
     receipts = [('compute_ma', json.dumps(receipt)), *extra_receipts]
@@ -39,12 +39,14 @@ def publication(*, values, prose='均线呈多头排列。', operator='eq', peri
         if 'paragraphs' in payload:
             assert set(payload) == {'paragraphs', 'report_context'}
             assert payload['report_context']['reference_date'] == reference
-            part = {
+            part = {'distribution_basis': 'none',
                 'through': payload['paragraphs'][0]['source_units'][-1]['id'], 'operation_code': 0,
                 'claim_kind': 'observation', 'observation_dates': list(anchors), 'classifications': [{
                     'property': 'moving_average_order', 'value': 'bullish_alignment', 'operator': operator,
                     'scope': 'explicit_subset' if periods else 'all_mentioned', 'periods': list(periods)}]}
             part.update(wire_change or {})
+            if omit_source:
+                part.pop('distribution_basis')
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'answer', 'parts': [part]}]})
         assert all(not {'time_scope', 'assertion_kind', 'meaning_kind'}.intersection(row)
                    for row in payload['statements'])

@@ -57,12 +57,12 @@ def test_publisher_preserves_correct_observation_when_neighbor_is_repaired(tmp_p
                 units = reader_source_units(paragraph['text'])
                 first = len(bodies) == 1
                 observation = paragraph['text'].startswith(price)
-                parts = [{'through': units[0 if first else -1]['id'], 'operation_code': 0,
+                parts = [{'distribution_basis': 'none', 'through': units[0 if first else -1]['id'], 'operation_code': 0,
                     'claim_kind': 'observation' if observation else 'judgment',
                     'observation_dates': ['2025-01-02'] if observation else [], 'classifications': []}]
                 if observation and len(units) > 1:
                     parts[0]['through'] = units[0]['id']
-                    parts.append({'through': units[-1]['id'], 'operation_code': 0,
+                    parts.append({'distribution_basis': 'none', 'through': units[-1]['id'], 'operation_code': 0,
                         'claim_kind': 'actor_activity' if first or repair_status == 'unsupported' else 'judgment',
                         'observation_dates': [], 'classifications': []})
                 elif repair_status == 'unsupported' and not observation:
@@ -171,3 +171,71 @@ def test_edit_plan_declines_to_split_an_atomic_runtime_value():
     assert assertion_edit_plan(document, catalog, [
         {'id': 'c0', 'text': '原始观察：2'}, {'id': 'c1', 'text': '3元/股。错误结论。'}],
         {'answer': ['c0', 'c1']}, {'c1'}) is None
+
+
+@pytest.mark.parametrize('scene', ['mixed', 'empirical_unchanged', 'all_nonempirical_unchanged', 'unowned_permission'])
+def test_optional_nonempirical_span_can_stay_only_beside_a_real_correction(scene):
+    from trade_compass_agent.runtime.report_revision import apply_assertion_edits, assertion_edit_plan
+    catalog, transport, _, original = _fixture()
+    texts = ['原始观察：23元/股。', '后续以观察为主。', '所给价格证明机构没有卖出。']
+    original.items[0].parts[-1].text = ''.join(texts)[len('原始观察：23元/股'):]
+    optional = {'c1', 'c2'} if scene == 'all_nonempirical_unchanged' else (
+        {'foreign'} if scene == 'unowned_permission' else {'c1'})
+    plan = assertion_edit_plan(original, catalog,
+        [{'id': f'c{i}', 'text': text} for i, text in enumerate(texts)],
+        {'answer': ['c0', 'c1', 'c2']}, {'c1', 'c2'}, optional_unchanged=optional)
+    revision = {'previous_document': transport.encode_document(original.model_dump()), 'assertion_edits': plan}
+    replacement = texts[2] if scene in {'empirical_unchanged', 'all_nonempirical_unchanged'} else '所给价格资料不足以识别交易主体。'
+    response = {'schema_version': 1, 'edits': [
+        {'id': 'c1', 'parts': [texts[1]], 'refs': []},
+        {'id': 'c2', 'parts': [replacement], 'refs': []}], 'gaps': []}
+    if scene != 'mixed':
+        with pytest.raises(ValueError):
+            apply_assertion_edits(response, revision, transport, catalog)
+        return
+    value = apply_assertion_edits(response, revision, transport, catalog)
+    result = ReportDocument.model_validate(value)
+    assert [paragraph_text(item, result, catalog) for item in result.items] == [texts[0], texts[1], replacement]
+    assert result.items[0].parts[1] == original.items[0].parts[1]
+    assert [row['change_required'] for row in plan['edits']] == [False, True]
+
+
+@pytest.mark.parametrize('fault', ['valid', 'missing', 'duplicate', 'foreign', 'extra', 'unchanged', 'bad_binding'])
+def test_complete_edit_array_uses_the_same_identity_binding_and_change_checks(fault):
+    from trade_compass_agent.runtime.report_revision import apply_assertion_edits
+    catalog, transport, revision, original = _fixture()
+    row = {'id': 'c1', 'parts': ['所给资料不足以支持该结论。'], 'refs': []}
+    value = [row]
+    if fault == 'missing':
+        value = []
+    elif fault == 'duplicate':
+        value.append(dict(row))
+    elif fault == 'foreign':
+        row['id'] = 'not-requested'
+    elif fault == 'extra':
+        row['new_paragraph'] = '未授权内容'
+    elif fault == 'unchanged':
+        row['parts'] = ['错误结论。']
+    elif fault == 'bad_binding':
+        row['parts'] = [['foreign', 'value_with_unit']]
+    if fault != 'valid':
+        with pytest.raises((ValueError, KeyError)):
+            apply_assertion_edits(value, revision, transport, catalog)
+        return
+    result = ReportDocument.model_validate(apply_assertion_edits(value, revision, transport, catalog))
+    assert [paragraph_text(item, result, catalog) for item in result.items] == [
+        '原始观察：23元/股。', '所给资料不足以支持该结论。']
+    assert result.items[0].parts[1] == original.items[0].parts[1]
+
+
+def test_edit_array_without_new_gaps_preserves_existing_required_business_gap():
+    from trade_compass_agent.runtime.report_revision import apply_assertion_edits
+    catalog, transport, revision, previous = _fixture()
+    gap = {'id': 'business-gap', 'type': 'gap', 'section': 'gaps', 'text': '缺少该季度营收资料，无法核对增长判断。'}
+    value = previous.model_dump()
+    value['items'].append(gap)
+    revision['previous_document'] = transport.encode_document(value)
+    revision['required_gaps'] = [gap]
+    result = apply_assertion_edits([{'id': 'c1', 'parts': ['现有资料尚不能支持该结论。'], 'refs': []}],
+        revision, transport, catalog)
+    assert next(item for item in result['items'] if item['id'] == 'business-gap') == gap
