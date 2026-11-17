@@ -64,6 +64,15 @@ in the linked regression tests, not in expanding prose exception lists.
   contracts, not additional observations or approval decisions. A quoted source
   may establish its own method through its original text; absence of a typed
   method record does not establish absence of that method in a quoted source.
+  Blind body interpretation retains an asserted distribution property's necessary
+  source family, including empirical premises inside a plan. Later review cannot
+  replace it with a generic price watchpoint. Runtime checks the owned instrument
+  and method family independently of optimistic verdicts; a measured profile
+  cannot be supplied by a cost estimate. Original method-bearing document text
+  remains eligible through an explicitly nominated content quotation, never a
+  title, an ordinary price or an unrelated read receipt. Source admissibility is
+  necessary, not semantic approval: dates, levels, method and conclusion still
+  require the independent factual and source reviews.
   Choosing numeric bindings does not withdraw other owned sources from review.
   Original announcements, source qualifications and successful first-party read
   results remain available, including an empty result with no numeric rows.

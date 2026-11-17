@@ -33,6 +33,7 @@ from trade_compass_agent.runtime.report_annotation_repair import (
     ANNOTATION_REPAIR, annotation_conflicts, resolved_annotations,
 )
 from trade_compass_agent.runtime.report_classifications import check_classifications
+from trade_compass_agent.runtime.report_source_properties import check_source_properties, distribution_requirements
 from trade_compass_agent.runtime.report_revision import (
     assertion_edit_plan, assertion_edit_schema, apply_assertion_edits,
 )
@@ -195,6 +196,10 @@ _SOURCE_REVIEW = (
     "匿名总量或价格统计可支持限定范围的技术解读，不能据此确认或排除特定参与者行为，也不能自行证明实际因果。"
     "合理的限定分析与未来观察安排不需要唯一的量化证明；其中实际声称的事实前提仍需依据。"
     "source_semantics是业务解释契约，不是市场观察；估算与实测的实际方法和范围仍依原始来源核验。"
+    "source_requirements保留正文先前声称的统计性质，不能改解释为一般价位而省略；逐项检查其真实方法、对象、日期及价位。"
+    "有source_requirements的行还可返回evidence_refs，列出直接支持这些性质和方法的原始fact id。"
+    "依据在文档原文中时必须用其content/text/snippet/excerpt引文id，不用标题、普通价格或receipt id；没有相应原文用[]。"
+    "程序提供的同对象估算记录可支持普通分布研判，不能替代正文明确要求的实测；引用存在也不自动证明内容支持。"
     "source_contexts和source_fact_references与事实核验使用同一完整来源视图及引用命名空间。"
     "后者的id、pointer及观察日期定位receipts中的原始值；其他段落未绑定的来源仍可用。"
     "先核对这些实际来源；局部选取未包含某项依据，不代表本轮没有提供该依据。"
@@ -604,7 +609,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
     coverage_review_input = factual_review_input = factual_response = factual_review = None
     body_review_input = body_response = body_meaning = None
     execution_projections, body_quantity_issues, bound_quantity_checks, temporal_checks = {}, {}, {}, {}
-    support_basis_checks, classification_checks = {}, {}
+    support_basis_checks, classification_checks, source_property_checks = {}, {}, {}
     annotation_candidates, annotation_resolutions = {}, []
     source_review_ids, independent_source_reviews = set(), {}
     fact_verified_before_coverage = set()
@@ -936,6 +941,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             'id': statement['id'], 'text': statement['text'],
                             'segments': [{'origin': 'author', 'text': statement['text']}],
                             **review_contexts[statement['context_id']],
+                            **({'source_requirements': distribution_requirements(statement)}
+                               if distribution_requirements(statement) else {}),
                         } for statement in statements if statement['id'] in source_review_ids]
                         coverage_review_input['receipts'] = review_input['receipts']
                         coverage_review_input['source_contexts'] = review_contexts
@@ -990,10 +997,16 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 if (set(review) - ({'annotation_resolutions'} if annotation_candidates else set()) not in ({"reviews", "coverage"}, {"reviews", "coverage", "gap_reviews"}) or not isinstance(rows, list)
                         or len(rows) != len(reviewed_ids)
                         or {row["id"] for row in rows} != reviewed_ids
-                        or any(set(row) != {"id", "supported", "reason"}
+                        or any((set(row) != {"id", "supported", "reason"}
+                                and not (fact_call and row['id'] in source_review_ids
+                                    and set(row) == {"id", "supported", "reason", "evidence_refs"}))
                                or type(row["supported"]) is not bool
                                or not isinstance(row["reason"], str)
                                or len(row["reason"]) > 500
+                               or ('evidence_refs' in row and (not isinstance(row['evidence_refs'], list)
+                                   or len(row['evidence_refs']) > 100
+                                   or any(not isinstance(ref, str) for ref in row['evidence_refs'])
+                                   or len(row['evidence_refs']) != len(set(row['evidence_refs']))))
                                or (not row["supported"] and not row["reason"].strip()) for row in rows)
                         or not {'complete', 'missing'} <= set(coverage)
                         or set(coverage) - {'complete', 'missing', 'repairable', 'gap_answer_ids'}
@@ -1005,6 +1018,9 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     raise ValueError("invalid inference review")
                 if fact_call and factual_items:
                     independent_source_reviews = {row['id']: row for row in rows}
+                    for row in independent_source_reviews.values():
+                        if 'evidence_refs' in row:
+                            row['evidence_refs'] = [transport.references.get(ref, ref) for ref in row['evidence_refs']]
                     if annotation_candidates:
                         try:
                             resolutions = resolved_annotations(review.get('annotation_resolutions', []),
@@ -1041,6 +1057,20 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             assessment['checks']['support'] = 'unknown'
                             assessment['verdict'] = 'unknown'
                             assessment['comparison'] += ' 独立来源核对：' + source_review['reason']
+                        statement = statements_by_id[assessment['id']]
+                        properties = check_source_properties(statement, contexts[statement['context_id']],
+                                                             catalog, source_review)
+                        source_property_checks[assessment['id']] = properties
+                        if properties['status'] in {'unknown', 'unavailable'}:
+                            if assessment['checks']['support'] != 'contradicted':
+                                assessment['checks']['support'] = 'unknown'
+                            if assessment['verdict'] != 'contradicted':
+                                assessment['verdict'] = 'unknown'
+                            assessment['comparison'] += ' 原文所需的分布来源与证券对象尚不能对应。'
+                            if properties['status'] == 'unavailable':
+                                factual_assessment_errors.setdefault(assessment['id'], {
+                                    'stage': 'source_review', 'code': 'source_property_reference_unavailable'})
+                                assessment['validation_status'] = 'unavailable'
                     by_assertion = {row['id']: row for row in assessments}
                     date_gaps = {row['id']: refs for row in assessments
                         if row['id'] not in factual_assessment_errors
@@ -1169,6 +1199,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "factual_review_input": factual_review_input, "factual_response": factual_response,
                 "temporal_checks": temporal_checks,
                 "support_basis_checks": support_basis_checks, "classification_checks": classification_checks,
+                "source_property_checks": source_property_checks,
                 "factual_review": factual_review,
                 "factual_assessment_errors": factual_assessment_errors, "review_feedback_valid": review_feedback_valid,
                 "annotation_candidates": annotation_candidates, "annotation_resolutions": annotation_resolutions,
@@ -1251,7 +1282,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                 "candidate_body_sha256",
                 "body_review_input", "body_response", "body_meaning", "execution_projections", "body_quantity_issues", "bound_quantity_checks",
                 "coverage_review_input", "factual_review_input", "factual_response", "factual_review", "temporal_checks",
-                "support_basis_checks", "classification_checks", "annotation_candidates", "annotation_resolutions",
+                "support_basis_checks", "classification_checks", "source_property_checks", "annotation_candidates", "annotation_resolutions",
                 "independent_source_reviews", "fact_verified_before_coverage")
         history = [{key: attempt.artifact[key] for key in keys} for attempt in (publication, revised)]
         selected.artifact["revision_attempts"] = history

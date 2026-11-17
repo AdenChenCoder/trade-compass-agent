@@ -11,7 +11,8 @@ def _observation_key(fact):
 
 
 def check_classifications(statement, assessment, context):
-    claims = statement.get('classifications', [])
+    claims = [claim for claim in statement.get('classifications', [])
+              if claim['property'] == 'moving_average_order']
     result = {'status': 'not_applicable', 'reason': 'no_categorical_commitment', 'claims': []}
     if not claims:
         return result
