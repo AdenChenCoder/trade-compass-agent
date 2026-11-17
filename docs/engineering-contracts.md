@@ -219,6 +219,11 @@ in the linked regression tests, not in expanding prose exception lists.
   their feedback and read-only context without competing full-draft instructions.
   Keep full previous documents internally for exact reassembly and recovery;
   newly assembled prose still undergoes the complete factual and coverage checks.
+  A reconciled non-empirical opinion may remain verbatim beside genuine edits;
+  retain its original bindings and provenance. Actual factual failures still
+  require a changed assertion, and an entirely unchanged edit batch is rejected.
+  Retained opinions are not counted as repaired claims: their new reader context
+  and the complete assembled report must still pass fresh review.
 - An explicitly configured `llm.local_report_review_model` separates factual
   entailment from task coverage. It uses only local LM Studio, original receipts,
   typed calculations, current execution records and the final statements. The original

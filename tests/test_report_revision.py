@@ -171,3 +171,30 @@ def test_edit_plan_declines_to_split_an_atomic_runtime_value():
     assert assertion_edit_plan(document, catalog, [
         {'id': 'c0', 'text': '原始观察：2'}, {'id': 'c1', 'text': '3元/股。错误结论。'}],
         {'answer': ['c0', 'c1']}, {'c1'}) is None
+
+
+@pytest.mark.parametrize('scene', ['mixed', 'empirical_unchanged', 'all_nonempirical_unchanged', 'unowned_permission'])
+def test_optional_nonempirical_span_can_stay_only_beside_a_real_correction(scene):
+    from trade_compass_agent.runtime.report_revision import apply_assertion_edits, assertion_edit_plan
+    catalog, transport, _, original = _fixture()
+    texts = ['原始观察：23元/股。', '后续以观察为主。', '所给价格证明机构没有卖出。']
+    original.items[0].parts[-1].text = ''.join(texts)[len('原始观察：23元/股'):]
+    optional = {'c1', 'c2'} if scene == 'all_nonempirical_unchanged' else (
+        {'foreign'} if scene == 'unowned_permission' else {'c1'})
+    plan = assertion_edit_plan(original, catalog,
+        [{'id': f'c{i}', 'text': text} for i, text in enumerate(texts)],
+        {'answer': ['c0', 'c1', 'c2']}, {'c1', 'c2'}, optional_unchanged=optional)
+    revision = {'previous_document': transport.encode_document(original.model_dump()), 'assertion_edits': plan}
+    replacement = texts[2] if scene in {'empirical_unchanged', 'all_nonempirical_unchanged'} else '所给价格资料不足以识别交易主体。'
+    response = {'schema_version': 1, 'edits': [
+        {'id': 'c1', 'parts': [texts[1]], 'refs': []},
+        {'id': 'c2', 'parts': [replacement], 'refs': []}], 'gaps': []}
+    if scene != 'mixed':
+        with pytest.raises(ValueError):
+            apply_assertion_edits(response, revision, transport, catalog)
+        return
+    value = apply_assertion_edits(response, revision, transport, catalog)
+    result = ReportDocument.model_validate(value)
+    assert [paragraph_text(item, result, catalog) for item in result.items] == [texts[0], texts[1], replacement]
+    assert result.items[0].parts[1] == original.items[0].parts[1]
+    assert [row['change_required'] for row in plan['edits']] == [False, True]
