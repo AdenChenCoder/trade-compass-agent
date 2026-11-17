@@ -5,7 +5,7 @@ from dataclasses import asdict
 
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import report_facts, source_review_rows
 from trade_compass_agent.runtime.report_contract import Calculation, EvidenceCatalog, calculate
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
 from trade_compass_agent.runtime.report_transport import review_receipts, source_record_context, composition_source_records, source_reference_view
@@ -51,7 +51,7 @@ def test_estimate_contract_preserves_independent_dates_and_persisted_sources(tmp
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []}})
+            return json.dumps({'reviews': source_review_rows(payload), 'coverage': {'complete': True, 'missing': []}})
         high = next(f for f in report_facts(payload) if f['metric'] == 'cost_90_high')
         return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
             'section': 'assessment', 'parts': ['002415当前90%筹码成本上沿为',
@@ -177,7 +177,7 @@ def test_only_numeric_binding_is_not_a_filter_on_review_sources_or_saved_reader(
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []}})
+            return json.dumps({'reviews': source_review_rows(payload), 'coverage': {'complete': True, 'missing': []}})
         close = next(f for f in report_facts(payload) if f['metric'] == 'close')
         return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
             'section': 'assessment', 'parts': [[close['id'], 'subject'], '在', [close['id'], 'date'],
@@ -213,7 +213,7 @@ def test_an_unselected_newer_receipt_cannot_replace_the_bound_observation_date()
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []}})
+            return json.dumps({'reviews': source_review_rows(payload), 'coverage': {'complete': True, 'missing': []}})
         old = next(f for f in report_facts(payload) if f['metric'] == 'pb' and f['observed_at'] == '2025-01-01')
         return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
             'section': 'assessment', 'parts': [[old['id'], 'subject'], '当前市净率为', [old['id'], 'value_with_unit'], '。'], 'refs': []}]})
@@ -246,7 +246,7 @@ def test_same_run_scan_record_can_anchor_unbound_prose_and_survive_reopening(tmp
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []}})
+            return json.dumps({'reviews': source_review_rows(payload), 'coverage': {'complete': True, 'missing': []}})
         # Source ownership does not depend on selecting a numerical binding.
         return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
             'section': 'assessment', 'parts': [body], 'refs': []}]})
@@ -417,7 +417,7 @@ def test_unselected_indicator_remains_addressable_without_changing_body_or_origi
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []}})
+            return json.dumps({'reviews': source_review_rows(payload), 'coverage': {'complete': True, 'missing': []}})
         ma = next(f for f in report_facts(payload) if f['metric'] == 'MA5')
         selected.append(ma['id'])
         return json.dumps({'schema_version': 1, 'items': [{'id': 'assessment', 'type': 'paragraph',

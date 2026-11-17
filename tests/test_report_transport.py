@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import report_facts, source_review_rows
 from trade_compass_agent.runtime.compression.budget import estimate_tokens
 from trade_compass_agent.runtime.report_contract import EvidenceCatalog
 from trade_compass_agent.runtime.report_publication import publish_report
@@ -49,7 +49,7 @@ def test_internal_evidence_format_does_not_receive_reader_only_category_examples
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+            return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
         assert 'display_values' not in system
         assert 'categorical_rendering_example' not in payload
         assert all('display_values' not in group for group in payload['facts'])

@@ -192,9 +192,10 @@ in the linked regression tests, not in expanding prose exception lists.
   favorable subset. Explicit subsets still require at least two distinct periods.
   Verify the canonical whole-system claim against all its owned operands,
   including rejection when a redundant listed subset would have passed.
-  An approved reasoned empirical assertion also receives an independent source
-  check in the existing coverage call. Select by typed empirical commitments and
-  bindings, not prose keywords; the reviewer receives exact statements and owned
+  Every approved model-authored span also receives an independent source
+  check in the existing coverage call. The first review's direct, calculated
+  or reasoned label, nor a non-empirical classification, can exempt prose from
+  that check. The reviewer receives exact statements and owned
   sources without the first verdict as authority. Both source checks must support
   publication. The independent result is a veto only: it cannot clear an earlier
   rejection or a runtime-owned value, identity, date or categorical conflict.
@@ -227,6 +228,13 @@ in the linked regression tests, not in expanding prose exception lists.
   Items awaiting a source veto or metadata repair remain withheld. Retain approved
   provenance and the incomplete report status; a failure of the later call cannot
   turn completed factual work into unavailable review or manufacture task success.
+  A first-pass direct label alone is not completed empirical verification.
+  If its required independent source response is unavailable, keep that prose
+  pending while preserving the original typed observations, execution records
+  and history. Pure non-empirical text does not acquire a source obligation
+  solely from this label: the independent reviewer accepts genuine plans and
+  discourse without inventing empirical requirements, while checking all actual
+  factual premises in their exact text.
   An unbound judgment or plan rejected on support may independently resolve a
   conflicting non-empirical time annotation. Preserve that first support veto
   even if the fresh assessment is optimistic; resolving availability never

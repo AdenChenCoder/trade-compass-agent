@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import report_facts, source_review_rows
 from trade_compass_agent.config import AppConfig, LLMConfig, invalidate_config_cache, load_app_config
 from trade_compass_agent.llm import providers
 from trade_compass_agent.runtime.exceptions import AgentTurnError, TurnInterruptedError
@@ -80,7 +80,7 @@ def test_empirical_commitment_cannot_publish_on_analysis_basis(tmp_path, asserti
                 {'id': 'plan', 'type': 'paragraph', 'section': 'plan', 'parts': [plan], 'refs': refs},
             ])
             return json.dumps(document)
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         calls.append(payload)
@@ -199,7 +199,7 @@ def test_current_observation_compares_in_task_calendar_without_changing_display(
                 'section': 'overview', 'parts': [{'type': 'text', 'text': '002415当前报价为'},
                     {'type': 'value', 'ref': ref, 'field': 'value_with_unit'},
                     {'type': 'text', 'text': '。'}], 'refs': []}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -233,7 +233,7 @@ def test_original_reader_context_resolves_ellipsis_without_copied_hints(legacy_h
                     {'type': 'text', 'text': '以下002415收盘价均以元/股计。'}], 'refs': []},
                 {'id': 'answer', 'section': 'overview', 'type': 'paragraph', 'parts': [
                     {'type': 'text', 'text': '先22，后23。'}], 'refs': refs}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -280,7 +280,7 @@ def test_owned_date_controls_final_publication_even_when_model_approves(tmp_path
                     {'type': 'text', 'text': '600928当前市净率为' if scope == 'reference_date' else '按2025年1月1日数据，600928市净率为'},
                     {'type': 'value', 'ref': pb['id'], 'field': 'value_with_unit'} if bound else {'type': 'text', 'text': '0.8倍'},
                     {'type': 'text', 'text': '。'}], 'refs': [pb['id']]}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -322,7 +322,7 @@ def test_present_research_opinion_is_not_a_new_measurement_but_still_needs_suppo
             return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'section': 'overview',
                 'type': 'paragraph', 'parts': [{'type': 'text', 'text': text}],
                 'refs': [f['id'] for f in report_facts(payload) if f['metric'] == 'close']}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -391,7 +391,7 @@ def test_owned_provenance_is_independent_of_semantic_scope_and_date(tmp_path, ot
                     {'type': 'text', 'text': '另一条已注明日期的观察记录：'},
                     {'type': 'value', 'ref': high, 'field': 'date'},
                     {'type': 'value', 'ref': high, 'field': 'value_with_unit'}], 'refs': []}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -435,7 +435,7 @@ def test_qualitative_current_observation_needs_a_completed_time_witness(tmp_path
         payload = json.loads(user)
         writing.append(payload)
         if 'schema' not in payload:
-            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+            return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
         assert 'revision' not in payload, 'missing review metadata alone cannot retry prose'
         return json.dumps({'schema_version': 1, 'items': [{'id': 'price', 'type': 'paragraph',
             'section': 'overview', 'parts': [{'type': 'text', 'text': text}],
@@ -483,7 +483,7 @@ def test_revision_receives_exact_assertion_and_runtime_dates_and_must_act_on_the
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+            return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
         writing.append(payload)
         fact = next(f for f in report_facts(payload) if f['metric'] == 'pb')
         corrected = 'revision' in payload and uses_feedback
@@ -551,7 +551,7 @@ def test_partial_review_can_repair_a_verified_error_once_without_resampling_anno
                 {'id': 'meaning', 'section': 'overview', 'type': 'paragraph', 'parts': [
                     {'type': 'text', 'text': '这些统计不足以确认交易主体。' if corrected else '这些统计证明非主力出货。'}],
                  'refs': [ref]}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -594,7 +594,7 @@ def test_incomplete_revision_keeps_verified_analysis_without_publishing_unreview
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+            return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
         counts['writer'] += 1
         corrected = 'revision' in payload
         ref = next(f['id'] for f in report_facts(payload) if f['metric'] == 'close')
@@ -663,7 +663,7 @@ def test_newer_fact_in_another_paragraph_cannot_refresh_an_old_bound_pb():
                     {'type': 'text', 'text': '600928当前' + metric + '为'},
                     {'type': 'value', 'ref': next(f['id'] for f in facts if f['metric'] == metric),
                      'field': 'value_with_unit'}], 'refs': []} for metric in ('pb', 'pe_ttm')]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -704,7 +704,7 @@ def test_missing_observation_date_is_a_specific_gap_without_hiding_other_failure
                     {'type': 'value', 'ref': next(f['id'] for f in facts if f['metric'] == metric),
                      'field': 'value_with_unit'}, {'type': 'text', 'text': '。'}], 'refs': []}
                 for metric, text in [('close', '002415今日收盘价为'), ('pb', '600928当前市净率为')]]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
 
     def checker(system, user):
         payload = json.loads(user)
@@ -763,7 +763,7 @@ def test_current_bound_change_keeps_the_original_interval_and_checks_its_end_dat
                     {'type': 'text', 'text': '今天较上一观察日上涨'},
                     {'type': 'value', 'ref': 'change', 'field': 'value_with_unit'},
                     {'type': 'text', 'text': '。'}], 'refs': []}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -797,7 +797,7 @@ def test_execution_projection_preserves_the_following_bound_observation_date(as_
                 'type': 'paragraph', 'parts': [{'type': 'text', 'text': prefix + '600928当前市净率为'},
                     {'type': 'value', 'ref': pb['id'], 'field': 'value_with_unit'},
                     {'type': 'text', 'text': '。'}], 'refs': []}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -890,7 +890,7 @@ def test_each_assertion_must_be_reviewed_before_the_complete_paragraph_is_publis
         if 'schema' in payload:
             return json.dumps({'schema_version': 1, 'items': [{'id': 'c0', 'type': 'paragraph', 'section': 'market',
                 'parts': [{'type': 'text', 'text': prefix + conclusion}], 'refs': [f['id'] for f in report_facts(payload)]}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -943,7 +943,7 @@ def test_percent_reader_precision_preserves_source_values_and_real_nonzero_chang
                 'parts': [{'type': 'text', 'text': '金融行业的涨跌幅为'},
                           {'type': 'value', 'ref': fact['id'], 'field': 'value_with_unit'}, {'type': 'text', 'text': '。'}], 'refs': []}]})
         assert display in payload['report']
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -1007,7 +1007,7 @@ def test_source_unit_selection_preserves_all_reader_text_without_model_copying(t
                 'type': 'paragraph', 'parts': [{'type': 'text', 'text': prefix + '002415在'},
                     {'type': 'value', 'ref': ref, 'field': 'date'}, {'type': 'text', 'text': '的收盘价为'},
                     {'type': 'value', 'ref': ref, 'field': 'value_with_unit'}, {'type': 'text', 'text': '。'}], 'refs': []}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -1080,7 +1080,7 @@ def test_selected_source_units_preserve_bound_dates_after_execution_projection(d
             return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'section': 'overview',
                 'type': 'paragraph', 'parts': [{'type': 'text', 'text': '已买入100股。002415当前收盘价为'},
                     {'type': 'value', 'ref': ref, 'field': 'value_with_unit'}, {'type': 'text', 'text': '。'}], 'refs': []}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -1112,10 +1112,10 @@ def publish(fact_reply, *, max_calls=2, coverage_missing=False, check_active=lam
             if "revision" in payload:
                 doc["items"][0]["parts"][0]["text"] = "002415在所给观察日的收盘价由"
             return json.dumps(doc)
-        assert payload["inferences"] == [] and payload["receipts"] == []
+        assert all(row['id'].startswith('c') for row in payload['inferences'])
         assert "22元/股升至23元/股" in payload["report"]
         missing = coverage_missing and len(primary) == 2
-        return json.dumps({"reviews": [], "coverage": {"complete": not missing,
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {"complete": not missing,
             "missing": ["正文仍需补充任务答案"] if missing else [], "repairable": missing}})
     def checker(system, user):
         payload = json.loads(user)
@@ -1167,7 +1167,7 @@ def test_rule_context_remains_separate_from_evidence_and_cannot_authorize_execut
             refs = [f["id"] for f in report_facts(payload) if f["metric"] == "close"]
             return json.dumps({"schema_version": 1, "items": [{"id": "decision", "type": "paragraph", "section": "plan",
                 "parts": [{"type": "text", "text": text}], "refs": refs}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if "paragraphs" in payload:
@@ -1221,7 +1221,7 @@ def test_only_runtime_receipts_supply_current_outcomes_to_final_reader(tmp_path,
                 "parts": [{"type": "text", "text": prefix+claim}], "refs": refs}]})
         coverage_inputs.append(payload)
         assert claim not in payload["report"]
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if "paragraphs" in payload:
@@ -1316,7 +1316,7 @@ def test_execution_only_report_uses_receipt_without_empty_prose_or_source_marker
             return json.dumps({"schema_version": 1, "items": [{"id": "outcome", "type": "paragraph", "section": "execution",
                 "parts": [{"type": "text", "text": claim}], "refs": [f["id"] for f in report_facts(payload)]}]})
         assert "买入100股" in payload["report"] and claim not in payload["report"]
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         assert set(json.loads(user)) == {"paragraphs", "report_context"}
         return json.dumps({"quantity_issues": [], "paragraphs": [{"id": "outcome", "parts": [{'distribution_basis': 'none', "text": claim, "kind": "current_outcome", "assertion_kind": "actor_activity", "time_scope": "other", "referents": {},
@@ -1508,8 +1508,8 @@ def test_scheduled_api_uses_configured_factual_role_and_never_replays_business_t
             if isinstance(payload, dict) and "schema" in payload:
                 return ChatCompletion(content=json.dumps(compose(payload)))
             if isinstance(payload, dict) and "inferences" in payload:
-                assert payload["inferences"] == []
-                return ChatCompletion(content='{"reviews":[],"coverage":{"complete":true,"missing":[]}}')
+                return ChatCompletion(content=json.dumps({'reviews': source_review_rows(payload),
+                    'coverage': {'complete': True, 'missing': []}}))
             if not any(m.role == "tool" for m in messages):
                 return ChatCompletion(content="", tool_calls=[ToolCall("bars", "get_bars", '{"symbol":"002415"}')])
             return ChatCompletion(content="已读取收盘资料。")
@@ -1653,7 +1653,7 @@ def test_body_quantity_meaning_cannot_be_repaired_by_evidence_approval(tmp_path,
                  "refs": [f["id"] for f in facts]},
                 {"id": "answer", "type": "paragraph", "section": "market",
                  "parts": [{"type": "text", "text": text}], "refs": ["change"]}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         checks.append(payload)
@@ -1729,7 +1729,7 @@ def test_quantity_clarification_revision_is_rechecked_and_bounded(first_text, co
                  "refs": [f["id"] for f in facts]},
                 {"id": "answer", "type": "paragraph", "section": "market",
                  "parts": [{"type": "text", "text": text}], "refs": ["change"]}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if "paragraphs" in payload:
@@ -1769,7 +1769,7 @@ def test_bound_unit_presence_cannot_override_sentence_truth_or_author_quantity(a
                 {"id": "change", "type": "calculation", "section": "market", "operation": "change_pct",
                  "refs": [f["id"] for f in facts]},
                 {"id": "answer", "type": "paragraph", "section": "market", "parts": parts, "refs": []}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
     factual = []
     def checker(system, user):
         payload = json.loads(user)
@@ -1819,9 +1819,9 @@ def test_bound_gap_review_keeps_local_factual_and_coverage_roles_independent(gen
             doc["items"].append({"id": "gap", "type": "gap", "section": "market",
                                  "text": "缺少营收资料。" if genuine_gap else "缺少收盘价资料。"})
             return json.dumps(doc)
-        assert payload["inferences"] == [] and payload["receipts"] == []
+        assert all(row['id'].startswith('c') for row in payload['inferences'])
         assert len(payload["verified_items"]) == 2
-        return json.dumps({"reviews": [], "coverage": {"complete": True, "missing": [],
+        return json.dumps({"reviews": source_review_rows(payload), "coverage": {"complete": True, "missing": [],
             "gap_answer_ids": ['gap'] if genuine_gap else []},
             "gap_reviews": [{"id": "gap", "status": "required" if genuine_gap else "already_present",
                 "refs": [] if genuine_gap else [payload["verified_items"][0]["id"]],
@@ -1940,7 +1940,7 @@ def test_invalid_gap_answer_dependencies_preserve_verified_analysis(dependencies
         coverage = {'complete': True, 'missing': []}
         if dependencies != 'omitted':
             coverage['gap_answer_ids'] = dependencies
-        return json.dumps({'reviews': [], 'coverage': coverage,
+        return json.dumps({'reviews': source_review_rows(payload), 'coverage': coverage,
             'gap_reviews': [{'id': 'gap', 'status': 'outside_task', 'refs': [], 'reason': '错误的移除建议。'}]})
 
     def checker(system, user):
@@ -1966,7 +1966,7 @@ def test_bad_assessment_row_retains_other_verified_prose_without_annotation_retr
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+            return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
         counts['compose'] += 1
         assert 'revision' not in payload, 'a metadata-only failure cannot resample the same body'
         document = compose(payload)
@@ -2015,7 +2015,7 @@ def test_owned_date_or_indicator_conflict_can_fund_real_revision_despite_bad_ann
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+            return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
         counts['compose'] += 1
         changed = 'revision' in payload
         if changed:

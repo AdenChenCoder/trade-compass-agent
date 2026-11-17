@@ -28,7 +28,7 @@ from trade_compass_agent.runtime.report_time import (
     check_statement_time, temporal_evidence_context, unavailable_bound_observation_dates,
 )
 from trade_compass_agent.runtime.report_support import check_support_basis
-from trade_compass_agent.runtime.report_assessments import assessments_with_availability, reasoned_empirical_ids
+from trade_compass_agent.runtime.report_assessments import assessments_with_availability, approved_source_review_ids
 from trade_compass_agent.runtime.report_annotation_repair import (
     ANNOTATION_REPAIR, annotation_conflicts, resolved_annotations,
 )
@@ -189,7 +189,9 @@ _GAP_COVERAGE = (
     "仅使用gaps中的实际id，不复制或改写正文，不把业务资料缺失与正文遗漏混为一谈。"
 )
 _SOURCE_REVIEW = (
-    "本次inferences是需要独立核对来源的原文事实性陈述，id可以是单个原文片段，不能因其他模型已核对过而默认正确。"
+    "本次inferences是需要独立核对的原文片段，id可以是单个片段，不能因其他模型已核对过而默认正确。"
+    "独立确定其中实际的观察、参与者行为、因果、统计性质和操作结果；这些事实前提需要来源支持。"
+    "真正的计划、取舍或行文约定不需要虚构的实证证明；也不能借这种解释豁免相邻的事实断言。"
     "每行先写reason，最后给supported：先还原原文对数值和关系声称的完整性质、方法、范围及限定，"
     "包括对象、统计含义、参与者身份/行为及因果承诺，再逐项与原始依据比较。"
     "核对完整主张，不能先把带有具体性质的主张缩成较宽的概念，再用一个正确数字支持这个较宽概念。"
@@ -938,7 +940,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                             assessment['verdict'] = 'unknown'
                     for assessment in assessments:
                         evaluate_assessment(assessment, statements_by_id[assessment['id']])
-                    source_review_ids = reasoned_empirical_ids(statements, assessments, factual_assessment_errors)
+                    source_review_ids = approved_source_review_ids(assessments, factual_assessment_errors)
                     if source_review_ids:
                         coverage_review_input['inferences'] = [{
                             'id': statement['id'], 'text': statement['text'],
@@ -971,23 +973,14 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         coverage_review_input['review_requirements'] = {
                             'review_ids': [statement['id'] for statement in statements if statement['id'] in source_review_ids],
                             'annotation_ids': list(annotation_candidates), 'gap_ids': [gap.id for gap in gaps]}
-                    # Completed independent factual work survives a subsequent
-                    # protocol/availability fault. An item awaiting another
-                    # required source check or metadata repair stays withheld.
-                    first_by_id = {row['id']: row for row in assessments}
+                    # Only a runtime-owned projection with no remaining author
+                    # claims can be complete before this call. No model label
+                    # can pre-approve prose awaiting independent review.
                     for identifier, claim_ids in assertion_owners.items():
-                        if (identifier in forced_reviews or identifier in unconfirmed_execution
-                                or any(key in factual_assessment_errors or key in source_review_ids
-                                       or key in annotation_candidates or first_by_id[key]['verdict'] != 'entailed'
-                                       for key in claim_ids)):
+                        if claim_ids or identifier in forced_reviews or identifier in unconfirmed_execution:
                             continue
                         fact_verified_before_coverage.add(identifier)
                         rendered[identifier] = prose[identifier]
-                        refs = list(dict.fromkeys(ref for key in claim_ids
-                            for ref in first_by_id[key]['time_evidence']
-                            if catalog.resolve(ref).kind not in {'identity', 'quotation'}))
-                        if refs:
-                            reviewed_source_refs[identifier] = refs
                 with llm_response_contract(max_tokens=16384, precise=True):
                     review = _json_value(call(_REVIEW + (_GAP_COVERAGE if optional_gaps else "")
                         + (ANNOTATION_REPAIR if annotation_candidates else "")

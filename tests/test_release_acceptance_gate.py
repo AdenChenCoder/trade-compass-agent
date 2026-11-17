@@ -214,7 +214,10 @@ def test_narrative_cli_finishes_after_real_source_selector_protocol(tmp_path, mo
         if Path(path).name == 'release_acceptance.py' else real_run_path(path, *args, **kwargs))
     class Coverage:
         def stream_complete(self, messages, **kwargs):
-            return providers.ChatCompletion(content='{"reviews":[],"coverage":{"complete":true,"missing":[]}}')
+            from report_contract_helpers import source_review_rows
+            payload = json.loads(messages[-1].content)
+            return providers.ChatCompletion(content=json.dumps({'reviews': source_review_rows(payload),
+                'coverage': {'complete': True, 'missing': []}}))
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
