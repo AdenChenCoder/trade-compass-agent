@@ -214,7 +214,8 @@ _ASSERTION_EDIT = (
     "只为edits中的每个id返回一次替换parts和refs，不返回整篇报告，不新增其他编辑id。"
     "每个edits.text只是要替换的原文片段；paragraphs.spans是只读上下文，不是需要重写的段落。"
     "替换内容只承担该片段的含义，不能复制相邻片段、整段或整篇；它们会由程序原样拼回。"
-    "change_required=false的非事实性意见片段可原样保留；其他片段必须真正纠正，整轮不能全部原样返回。"
+    "纠正实际错误，允许保留在修订后上下文中仍适用的原文；整轮必须有实质改动，不能全部原样返回。"
+    "保留原文不表示已经修好或通过；程序会重新核验完整正文，未解决的问题仍不能发布。"
     "表达业务结果和必要限制，不在正文叙述工具、内部字段或核验过程。"
     "parts按阅读顺序使用自然文字字符串及[事实id,字段]数组。数值使用value_with_unit，日期使用date；"
     "value_with_unit已有完整单位，文字不再补单位。对象、指标、日期和来源范围必须与实际事实相符。"
@@ -1234,6 +1235,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     'temporal_check': temporal_checks[identifier],
                     'support_basis_check': support_basis_checks[identifier],
                     'classification_check': classification_checks[identifier],
+                    'source_property_check': source_property_checks.get(identifier),
                     'runtime_findings': assessment.get('runtime_findings', []),
                 })
         revision_input = {"previous_document": transport.encode_document(document.model_dump()),
@@ -1244,8 +1246,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
             failed = {row['assertion_id'] for row in feedback
                       if row['completed'] and row['verdict'] != 'entailed' or row['runtime_findings']}
             edit_plan = assertion_edit_plan(document, catalog, factual_review_input['statements'],
-                assertion_owners, failed, optional_unchanged={row['id'] for row in annotation_resolutions
-                    if annotation_candidates[row['id']] == 'nonempirical_rejection'})
+                assertion_owners, failed)
             if edit_plan:
                 revision_input['assertion_edits'] = edit_plan
         revised = _publish_report(task=task, draft=draft, tool_results=tool_results, run_scope=run_scope,

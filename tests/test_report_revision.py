@@ -173,31 +173,30 @@ def test_edit_plan_declines_to_split_an_atomic_runtime_value():
         {'answer': ['c0', 'c1']}, {'c1'}) is None
 
 
-@pytest.mark.parametrize('scene', ['mixed', 'empirical_unchanged', 'all_nonempirical_unchanged', 'unowned_permission'])
-def test_optional_nonempirical_span_can_stay_only_beside_a_real_correction(scene):
+@pytest.mark.parametrize('changed_span', [None, 'c1', 'c2'])
+def test_any_retained_span_preserves_bindings_beside_a_real_change_but_is_not_approved(changed_span):
     from trade_compass_agent.runtime.report_revision import apply_assertion_edits, assertion_edit_plan
     catalog, transport, _, original = _fixture()
     texts = ['原始观察：23元/股。', '后续以观察为主。', '所给价格证明机构没有卖出。']
     original.items[0].parts[-1].text = ''.join(texts)[len('原始观察：23元/股'):]
-    optional = {'c1', 'c2'} if scene == 'all_nonempirical_unchanged' else (
-        {'foreign'} if scene == 'unowned_permission' else {'c1'})
     plan = assertion_edit_plan(original, catalog,
         [{'id': f'c{i}', 'text': text} for i, text in enumerate(texts)],
-        {'answer': ['c0', 'c1', 'c2']}, {'c1', 'c2'}, optional_unchanged=optional)
+        {'answer': ['c0', 'c1', 'c2']}, {'c1', 'c2'})
     revision = {'previous_document': transport.encode_document(original.model_dump()), 'assertion_edits': plan}
-    replacement = texts[2] if scene in {'empirical_unchanged', 'all_nonempirical_unchanged'} else '所给价格资料不足以识别交易主体。'
+    replacements = {f'c{i}': '所给价格资料不足以识别交易主体。' if f'c{i}' == changed_span else texts[i]
+                    for i in (1, 2)}
     response = {'schema_version': 1, 'edits': [
-        {'id': 'c1', 'parts': [texts[1]], 'refs': []},
-        {'id': 'c2', 'parts': [replacement], 'refs': []}], 'gaps': []}
-    if scene != 'mixed':
+        {'id': f'c{i}', 'parts': [replacements[f'c{i}']], 'refs': []} for i in (1, 2)], 'gaps': []}
+    if changed_span is None:
         with pytest.raises(ValueError):
             apply_assertion_edits(response, revision, transport, catalog)
         return
     value = apply_assertion_edits(response, revision, transport, catalog)
     result = ReportDocument.model_validate(value)
-    assert [paragraph_text(item, result, catalog) for item in result.items] == [texts[0], texts[1], replacement]
+    assert [paragraph_text(item, result, catalog) for item in result.items] == [
+        texts[0], replacements['c1'], replacements['c2']]
     assert result.items[0].parts[1] == original.items[0].parts[1]
-    assert [row['change_required'] for row in plan['edits']] == [False, True]
+    assert all('change_required' not in row for row in plan['edits'])
 
 
 @pytest.mark.parametrize('fault', ['valid', 'missing', 'duplicate', 'foreign', 'extra', 'unchanged', 'bad_binding'])
@@ -239,3 +238,70 @@ def test_edit_array_without_new_gaps_preserves_existing_required_business_gap():
     result = apply_assertion_edits([{'id': 'c1', 'parts': ['现有资料尚不能支持该结论。'], 'refs': []}],
         revision, transport, catalog)
     assert next(item for item in result['items'] if item['id'] == 'business-gap') == gap
+
+
+@pytest.mark.parametrize('retained_supported', [True, False])
+def test_retaining_a_failed_span_needs_fresh_consumer_review_even_beside_a_real_correction(tmp_path, retained_supported):
+    price = '002415在2025-01-02的收盘价为23元/股。'
+    wrong, corrected = '该日收盘价为24元/股。', '该日收盘价为23元/股。'
+    retained = '基于这些资料，后续以观察为主。' if retained_supported else '所给价格证明机构没有卖出。'
+    bodies, factual, writers = [], [], []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' not in payload:
+            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        writers.append(payload)
+        if 'revision' in payload:
+            plan = payload['revision']['assertion_edits']
+            assert {row['text'] for row in plan['edits']} == {wrong, retained}
+            return json.dumps({'schema_version': 1, 'edits': [{'id': row['id'],
+                'parts': [corrected if row['text'] == wrong else retained], 'refs': []} for row in plan['edits']], 'gaps': []})
+        ref = next(f['id'] for f in report_facts(payload) if f['metric'] == 'close')
+        return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph', 'section': 'market',
+            'parts': ['002415在2025-01-02的收盘价为', [ref, 'value_with_unit'], '。', wrong, retained], 'refs': [ref]}]})
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            bodies.append(payload)
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [
+                {'distribution_basis': 'none', 'text': text, 'kind': 'plan' if text == retained and retained_supported else 'other',
+                 'assertion_kind': 'judgment' if text == retained and retained_supported else
+                    'actor_activity' if text == retained else 'observation',
+                 'time_scope': 'other', 'outcome': 'none', 'extent': 'none'}
+                for text in ([price, wrong, retained] if len(bodies) == 1 else [p['text']])]} for p in payload['paragraphs']]})
+        factual.append(payload)
+        rows = []
+        for s in payload['statements']:
+            is_retained = s['text'] == retained
+            supported = s['text'] != wrong and (not is_retained or len(factual) == 2)
+            refs = [f['id'] for f in payload['contexts'][s['context_id']]['evidence'] if f['metric'] == 'close']
+            rows.append({'id': s['id'], 'comparison': '逐项核对所给价格及其支持范围。',
+                'verdict': 'entailed' if supported else 'unknown',
+                'support_basis': 'reasoned' if is_retained else 'direct',
+                # The final double optimistically approves the retained actor
+                # claim with both flags false. BODY's positive actor commitment
+                # and the runtime source-basis check must still veto it.
+                'commitments': {'participant_activity': False, 'causal_relation': False},
+                'time_evidence': [] if is_retained else refs,
+                'checks': {'identity_scope': 'not_applicable' if is_retained else 'entailed',
+                    'time': 'not_applicable' if is_retained else 'entailed',
+                    'quantity': 'not_applicable' if is_retained else 'entailed',
+                    'support': 'entailed' if supported else 'unknown'}})
+        return json.dumps({'assessments': rows})
+    result = publish_report(task='核对所给价格及资料能支持的结论。', draft='', tool_results=RECEIPTS,
+        run_scope='retained-span-fresh-review', call=writer, fact_review_call=checker,
+        reference_date='2025-01-02', max_calls=4)
+    assert len(bodies) == len(factual) == len(writers) == 2 and result.artifact['revision_changed_body']
+    assert price in result.artifact['reader_body'] and corrected in result.artifact['reader_body']
+    assert wrong not in result.artifact['reader_body']
+    assert (retained in result.artifact['reader_body']) is retained_supported
+    assert (result.verification['status'] == 'complete') is retained_supported
+    assert result.artifact['review_valid'] and not result.artifact['factual_assessment_errors']
+    if not retained_supported:
+        target = next(s['id'] for s in result.artifact['factual_review_input']['statements'] if s['text'] == retained)
+        row = next(r for r in result.artifact['factual_review']['assessments'] if r['id'] == target)
+        assert row['reported_checks']['support'] == 'entailed' and row['checks']['support'] == 'unknown'
+        assert result.artifact['support_basis_checks'][target]['reason'] == 'inference_is_not_actor_or_cause_evidence'
+    ref = persist_publication(tmp_path, result)
+    saved = json.loads((tmp_path/'report_artifacts'/(ref['artifact_id']+'.json')).read_text())
+    assert saved['published_text'] == result.text and len(saved['revision_attempts']) == 2

@@ -26,7 +26,7 @@ def _parts_between(segments, start, stop):
     return parts
 
 
-def assertion_edit_plan(document, catalog, statements, owners, failed, *, optional_unchanged=None):
+def assertion_edit_plan(document, catalog, statements, owners, failed):
     """Address failed assertions only when the original bindings remain atomic.
 
     Categories and verdicts come from completed upstream review. Text addressing
@@ -55,8 +55,7 @@ def assertion_edit_plan(document, catalog, statements, owners, failed, *, option
                 span = {'id': key, 'start': cursor, 'stop': stop, 'text': original}
                 spans.append(span)
                 if key in failed:
-                    edits.append({'id': key, 'paragraph_id': item.id, 'text': original,
-                                  'change_required': key not in (optional_unchanged or set())})
+                    edits.append({'id': key, 'paragraph_id': item.id, 'text': original})
                 cursor = stop
             paragraphs.append({'id': item.id, 'spans': spans})
     except (ValueError, KeyError):
@@ -119,7 +118,6 @@ def apply_assertion_edits(value, revision, transport, catalog):
     plans = {row['id']: row['spans'] for row in plan['paragraphs']}
     reserved = {item.id for item in previous.items} | set(catalog.facts) | set(transport.references)
     serial, items, changed = 0, [], False
-    required = {row['id'] for row in plan['edits'] if row.get('change_required', True)}
     for item in previous.items:
         if item.id not in plans:
             items.append(item.model_dump())
@@ -146,13 +144,10 @@ def apply_assertion_edits(value, revision, transport, catalog):
                 if errors or len(decoded.items) != 1 or not isinstance(decoded.items[0], Paragraph):
                     raise ValueError('invalid semantic edit parts')
                 replacement = decoded.items[0]
-                if paragraph_text(replacement, previous, catalog) == span['text']:
-                    if span['id'] in required:
-                        raise ValueError('semantic edit did not change its failed assertion')
-                    # Retaining an optional opinion is not a new binding or a
-                    # repaired claim. Preserve the original runs and provenance;
-                    # genuine neighboring corrections change its reader context.
-                else:
+                # Retention is not a repaired claim or a new approval.
+                # Keep its original bindings; the complete changed body still
+                # needs fresh review, including every retained failure.
+                if paragraph_text(replacement, previous, catalog) != span['text']:
                     changed = True
                     parts = [part.model_dump() for part in replacement.parts]
                     refs = list(dict.fromkeys([*refs, *replacement.refs]))
