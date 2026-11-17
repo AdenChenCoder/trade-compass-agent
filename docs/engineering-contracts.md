@@ -435,6 +435,10 @@ in the linked regression tests, not in expanding prose exception lists.
   checks empirical observation dates, not whether a proposed future action has
   already occurred. Pure proposals have no empirical time commitment; dated
   factual premises remain independently applicable and cannot be waived.
+  If a proposal's body date conflicts with a completed factual review that adds
+  no empirical time or quantity, the existing independent annotation review may
+  reconcile it. It must confirm the absence of empirical observation; bound
+  values, categorical properties and actor/causal commitments remain protected.
   This body-only review also identifies quantities whose units or numerical scale
   are not established by the reader context. Evidence review cannot supply a
   missing convention or override that finding. Explicit shared units and

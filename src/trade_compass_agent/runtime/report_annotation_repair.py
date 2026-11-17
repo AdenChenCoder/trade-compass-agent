@@ -38,6 +38,19 @@ def annotation_conflicts(statements, assessments, errors):
             and not statement.get('classifications') and row.get('support_basis') == 'reasoned'
             and not any(commitments.values()) and valid_report
             and all(reported[key] == 'not_applicable' for key in ('identity_scope', 'time', 'quantity')))
+        # A BODY date on a proposal can disagree with the first factual review's
+        # explicit absence of empirical time/quantity. Ask the existing independent
+        # reconciliation to settle that disagreement; this is not a time witness
+        # request or an automatic waiver of the first interpretation.
+        if (error and valid_report and statement['assertion_kind'] == 'judgment'
+                and statement['meaning_kind'] == 'plan' and statement['time_scope'] == 'reference_date'
+                and not statement['bound_fact_refs'] and not statement['time_fact_refs']
+                and not statement.get('classifications') and not row['time_evidence']
+                and not set(statement.get('observation_dates', [])) - {'task_now'}
+                and row.get('support_basis') == 'reasoned' and not any(commitments.values())
+                and all(reported[key] == 'not_applicable' for key in ('time', 'quantity'))):
+            result[row['id']] = 'opinion_time'
+            continue
         if (error and statement['assertion_kind'] == 'judgment' and statement['meaning_kind'] in {'other', 'plan'}
                 and statement['time_scope'] == 'reference_date' and not row['time_evidence']
                 and not statement['bound_fact_refs'] and not statement['time_fact_refs']

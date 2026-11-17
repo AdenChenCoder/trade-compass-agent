@@ -50,6 +50,7 @@ fi
   tests/test_report_narrative.py \
   tests/test_report_factual_role.py \
   tests/test_report_annotations.py \
+  tests/test_report_plan_time.py \
   tests/test_report_source_review.py \
   tests/test_report_source_properties.py \
   src/trade_compass_agent/runtime/report_source_properties.py \
