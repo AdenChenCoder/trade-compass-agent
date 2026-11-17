@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import report_facts, source_review_rows
 from trade_compass_agent.runtime.report_publication import publish_report, persist_publication
 
 
@@ -15,7 +15,7 @@ def test_time_only_annotation_disagreement_preserves_empirical_requirements(scen
         'opinion': '后续关注市场轮动和催化进展。',
         'observation': '002415今天盘中存在价格起伏。', 'quantity': '002415当前收盘价为23元/股。',
         'actor': '002415机构今天没有卖出。', 'category': '002415均线呈多头排列。',
-        'explicit_date': '002415在2025-01-01出现价格起伏。', 'bound': '002415当前收盘价为'}
+        'explicit_date': '002415在2025-01-02出现价格起伏。', 'bound': '002415当前收盘价为'}
     calls = []
     def writer(system, user):
         payload = json.loads(user)
@@ -25,7 +25,13 @@ def test_time_only_annotation_disagreement_preserves_empirical_requirements(scen
                 parts += [[next(f['id'] for f in report_facts(payload) if f['metric'] == 'close'), 'value_with_unit'], '。']
             return json.dumps({'schema_version': 1, 'items': [{'id': 'target', 'type': 'paragraph',
                 'section': 'assessment', 'parts': parts, 'refs': []}]})
-        result = {'reviews': [], 'coverage': {'complete': True, 'missing': []}}
+        result = {'reviews': source_review_rows(payload), 'coverage': {'complete': True, 'missing': []}}
+        if scene == 'explicit_date':
+            # The explicit source double compares the authored historical day
+            # with the supplied prior-day record; no annotation may erase it.
+            result['reviews'] = [{'id': row['id'], 'supported': False,
+                'reason': '所给资料为2025-01-01，不能确认原文声称的2025-01-02观察。'}
+                for row in payload['inferences']]
         if 'annotation_review' in payload:
             calls.append(payload)
             fresh = assess(payload['annotation_review'])['assessments'][0]
@@ -40,7 +46,7 @@ def test_time_only_annotation_disagreement_preserves_empirical_requirements(scen
                 'distribution_basis': 'none', 'through': payload['paragraphs'][0]['source_units'][-1]['id'],
                 'operation_code': 1 if scene in {'plan', 'named_plan'} else 0,
                 'claim_kind': 'actor_activity' if scene == 'actor' else 'observation' if scene == 'observation' else 'judgment',
-                'observation_dates': ['2025-01-01' if scene == 'explicit_date' else 'task_now'],
+                'observation_dates': ['2025-01-02' if scene == 'explicit_date' else 'task_now'],
                 'classifications': [{'property': 'moving_average_order', 'value': 'bullish_alignment',
                     'scope': 'all_mentioned', 'periods': []}] if scene == 'category' else []}]}]})
         result = assess(payload)
@@ -62,6 +68,9 @@ def test_time_only_annotation_disagreement_preserves_empirical_requirements(scen
         assert calls and result.artifact['annotation_candidates'] == {'c0': 'opinion_time'}
         assert not result.artifact['factual_assessment_errors']
         assert result.artifact['factual_review']['assessments'][0]['checks']['time'] == 'not_applicable'
+    if scene == 'explicit_date':
+        assert result.artifact['body_meaning']['target'][0]['observation_dates'] == ['2025-01-02']
+        assert not result.artifact['annotation_resolutions']
 
 
 @pytest.mark.parametrize('scene,accepted', [
@@ -111,7 +120,7 @@ def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obliga
                 {'id': 'good', 'section': 'market', 'type': 'paragraph',
                  'parts': ['002415在2025-01-01的收盘价为', [price, 'value_with_unit'], '。'], 'refs': []},
                 {'id': 'target', 'section': 'assessment', 'type': 'paragraph', 'parts': parts, 'refs': []}]})
-        result = {'reviews': [], 'coverage': {'complete': True, 'missing': []}}
+        result = {'reviews': source_review_rows(payload), 'coverage': {'complete': True, 'missing': []}}
         if 'annotation_review' in payload:
             repair = payload['annotation_review']
             repair_inputs.append(repair)

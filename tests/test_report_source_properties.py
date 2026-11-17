@@ -48,18 +48,20 @@ def test_source_property_is_checked_at_published_and_persisted_consumer(tmp_path
                 {'id': 'target', 'type': 'paragraph', 'section': 'plan',
                  'parts': ['002415上方', [high, 'value_with_unit'], '为前期成交密集区压力，后续观察突破。'], 'refs': []}]})
         source_inputs.append(payload)
-        assert [row['id'] for row in payload['inferences']] == ['c1']
-        assert payload['inferences'][0]['source_requirements'] == [
+        assert [row['id'] for row in payload['inferences']] == ['c0', 'c1']
+        target = payload['inferences'][1]
+        assert target['source_requirements'] == [
             {'property': 'distribution_basis', 'value': requirement}]
         refs = []
         if scene in {'quoted', 'other_quoted', 'title', 'read_result'}:
             refs = [f['id'] for context in payload['source_contexts'].values()
                 for f in context['evidence'] if f['kind'] == 'quotation']
         elif scene == 'price_ref':
-            refs = [f['id'] for f in payload['inferences'][0]['evidence'] if f['metric'] == 'high']
+            refs = [f['id'] for f in target['evidence'] if f['metric'] == 'high']
         elif scene == 'foreign_ref':
             refs = ['not-owned']
-        return json.dumps({'reviews': [{'id': 'c1', 'supported': scene != 'source_veto',
+        return json.dumps({'reviews': [{'id': 'c0', 'supported': True, 'reason': '显式价格与来源一致。'},
+            {'id': 'c1', 'supported': scene != 'source_veto',
             'reason': '故意乐观的审查替身不能豁免来源种类与对象要求。', 'evidence_refs': refs}],
             'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):

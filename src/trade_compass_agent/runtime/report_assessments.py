@@ -11,23 +11,16 @@ CORE_FIELDS = {'id', 'comparison', 'checks', 'time_evidence', 'verdict'}
 OPTIONAL_FIELDS = ('support_basis', 'commitments')
 
 
-def reasoned_empirical_ids(statements, assessments, errors):
-    """A model's reasoned empirical approval needs an independent source veto.
+def approved_source_review_ids(assessments, errors):
+    """A first approval cannot grant its own exemption from independent review.
 
-    Positive typed obligations select review work; this does not classify text
-    or turn a prior verdict into evidence for the second reviewer.
+    Neither a direct-support label nor a mistaken non-empirical classification
+    proves that the author's exact text contains no additional factual premise.
+    The existing second role checks it independently; genuine plans need no
+    invented empirical proof.
     """
-    by_id = {row['id']: row for row in statements}
     return {row['id'] for row in assessments if row['id'] not in errors
-        and row['verdict'] == 'entailed'
-        and (row.get('support_basis') == 'reasoned' or any(
-            claim['property'] == 'distribution_basis' for claim in by_id[row['id']].get('classifications', [])))
-        and (by_id[row['id']]['assertion_kind'] in {'observation', 'comparison'}
-             or by_id[row['id']]['bound_fact_refs'] or by_id[row['id']]['time_fact_refs']
-             or by_id[row['id']].get('observation_dates')
-             or by_id[row['id']].get('classifications')
-             or by_id[row['id']]['meaning_kind'] != 'plan'
-             and any(row['checks'][key] == 'entailed' for key in ('identity_scope', 'time', 'quantity')))}
+            and row['verdict'] == 'entailed'}
 
 
 def assessments_with_availability(value, statement_ids):

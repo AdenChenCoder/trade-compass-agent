@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import report_facts, source_review_rows
 from trade_compass_agent.runtime.report_contract import Calculation, EvidenceCatalog, calculate
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
 from trade_compass_agent.runtime.tools import stock_structure
@@ -105,7 +105,7 @@ def test_current_estimate_uses_its_source_date_despite_an_optimistic_model(monke
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []}})
+            return json.dumps({'reviews': source_review_rows(payload), 'coverage': {'complete': True, 'missing': []}})
         upper = next(f for f in report_facts(payload) if f['metric'] == 'cost_90_high')
         return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
             'section': 'assessment', 'parts': [[upper['id'], 'subject'], '当前', [upper['id'], 'label'],

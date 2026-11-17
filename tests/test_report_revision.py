@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import report_facts, source_review_rows
 from trade_compass_agent.runtime.report_body import reader_source_units
 from trade_compass_agent.runtime.report_contract import EvidenceCatalog, ReportDocument, paragraph_text
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
@@ -249,7 +249,7 @@ def test_retaining_a_failed_span_needs_fresh_consumer_review_even_beside_a_real_
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+            return json.dumps({"reviews": source_review_rows(payload), "coverage": {'complete': True, 'missing': []}})
         writers.append(payload)
         if 'revision' in payload:
             plan = payload['revision']['assertion_edits']

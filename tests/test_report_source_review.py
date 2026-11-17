@@ -3,9 +3,49 @@ import json
 
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import report_facts, source_review_rows
 from test_report_factual_role import assess, body_reply
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
+
+
+@pytest.mark.parametrize('basis', ['direct', 'reasoned', 'not_applicable'])
+@pytest.mark.parametrize('legitimate', [True, False])
+def test_no_first_classifier_or_support_label_can_exempt_exact_prose_from_review(basis, legitimate):
+    text = '后续建议以观察为主。' if legitimate else '低量比意味着机构今日没有卖出。'
+    calls = []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
+                'section': 'assessment', 'parts': [text], 'refs': []}]})
+        calls.append(payload)
+        assert [(row['id'], row['text']) for row in payload['inferences']] == [('c0', text)]
+        return json.dumps({'reviews': [{'id': 'c0', 'supported': legitimate,
+            'reason': '纯观察安排无需额外观测。' if legitimate else '匿名量比不能证明机构没有卖出。'}],
+            'coverage': {'complete': True, 'missing': []}})
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            # Reproduce the dangerous first-stage omission: it calls even the
+            # unsupported actor statement a purely non-empirical plan.
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'answer', 'parts': [{
+                'distribution_basis': 'none', 'through': payload['paragraphs'][0]['source_units'][-1]['id'],
+                'operation_code': 1, 'claim_kind': 'judgment', 'observation_dates': [], 'classifications': []}]}]})
+        result = assess(payload)
+        row = result['assessments'][0]
+        row.update(support_basis=basis, time_evidence=[])
+        row['checks'].update(identity_scope='not_applicable', time='not_applicable', quantity='not_applicable')
+        return json.dumps(result)
+    result = publish_report(task='说明资料能够支持的结论及后续安排。', draft='', tool_results=[
+        ('compute_volume_ratio', json.dumps({'symbol': '300406', 'as_of': '2026-11-12', 'volume_ratio': 0.594}))],
+        run_scope='no-self-issued-source-exemption', call=writer, fact_review_call=checker,
+        reference_date='2026-11-12', max_calls=2)
+    assert calls and result.artifact['review_valid']
+    assert (text in result.artifact['reader_body']) is legitimate
+    assert (result.verification['status'] == 'complete') is legitimate
+    assert result.artifact['factual_review']['assessments'][0]['reported_checks']['support'] == 'entailed'
+    assert result.artifact['independent_source_reviews']['c0']['supported'] is legitimate
+    assert result.artifact['model_calls'] == 4
 
 
 @pytest.mark.parametrize('fault', ['valid', 'duplicate_id', 'foreign_id', 'missing',
@@ -126,7 +166,7 @@ def test_repairing_rejected_nonempirical_time_metadata_cannot_clear_the_first_re
         row.update(support_basis='reasoned', verdict=fresh_support)
         row['checks'].update(identity_scope='not_applicable', time='not_applicable',
                              quantity='not_applicable', support=fresh_support)
-        return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []},
+        return json.dumps({'reviews': source_review_rows(payload), 'coverage': {'complete': True, 'missing': []},
             'annotation_resolutions': [{'id': 'c0', 'empirical_present': False, 'assessment': row}]})
     def checker(system, user):
         payload = json.loads(user)
@@ -155,7 +195,8 @@ def test_repairing_rejected_nonempirical_time_metadata_cannot_clear_the_first_re
     ('cause', True, False, False), ('actor', False, True, False),
     ('stale', True, True, False),
 ])
-def test_reasoned_empirical_claim_needs_independent_source_support(tmp_path, scene, first_supported, second_supported, accepted):
+@pytest.mark.parametrize('basis', ['direct', 'calculated', 'reasoned'])
+def test_empirical_claim_needs_independent_source_support_regardless_of_first_basis(tmp_path, scene, first_supported, second_supported, accepted, basis):
     receipts = [('compute_volume_ratio', json.dumps({'symbol': '300406', 'as_of': '2026-11-12',
         'volume_ratio': 0.594, 'turnover_pct': 1.18})),
         ('get_fundamentals', json.dumps({'symbol': '600928', 'as_of': '20261111', 'pb': 0.8}))]
@@ -179,9 +220,9 @@ def test_reasoned_empirical_claim_needs_independent_source_support(tmp_path, sce
         rows = payload['inferences']
         if rows:
             audit_inputs.append(payload)
-            assert {row['id'] for row in rows} == {'c1'}
+            assert {row['id'] for row in rows} == ({'c0', 'c1'} if first_supported and scene != 'stale' else {'c0'})
             assert rows[0]['evidence'] and payload['receipts']
-        return json.dumps({'reviews': [{'id': row['id'], 'supported': second_supported,
+        return json.dumps({'reviews': [{'id': row['id'], 'supported': row['id'] == 'c0' or second_supported,
             'reason': '匿名总量资料不能证明具体参与者或实际因果。' if not second_supported else '所述范围与原始资料相符。'}
             for row in rows], 'coverage': {'complete': True, 'missing': []}})
 
@@ -198,7 +239,7 @@ def test_reasoned_empirical_claim_needs_independent_source_support(tmp_path, sce
         # Reproduce the actual miss: the mixed statement was called an
         # observation and an approved reasoned interpretation, with both
         # empirical flags false. Correct ownership alone cannot prove it.
-        target['support_basis'] = 'reasoned'
+        target['support_basis'] = basis
         if not first_supported:
             target['checks']['support'] = target['verdict'] = 'unknown'
         return json.dumps(result)
@@ -211,9 +252,9 @@ def test_reasoned_empirical_claim_needs_independent_source_support(tmp_path, sce
     assert (('0.8倍' if scene == 'stale' else endings[scene].strip('，。')) in body) is accepted
     assert (report.verification['status'] == 'complete') is accepted
     assert report.artifact['review_valid'] and not report.artifact['factual_assessment_errors']
-    assert bool(audit_inputs) is (first_supported and scene != 'stale')
+    assert audit_inputs  # Even the directly labelled good measurement is reviewed.
     assert report.artifact['model_calls'] == len(calls) == 4
-    if audit_inputs:
+    if first_supported and scene != 'stale':
         review = report.artifact['independent_source_reviews']['c1']
         assert review['supported'] is second_supported
         assert report.artifact['factual_review']['assessments'][1]['reported_checks']['support'] == 'entailed'
@@ -224,7 +265,7 @@ def test_reasoned_empirical_claim_needs_independent_source_support(tmp_path, sce
 
 @pytest.mark.parametrize('fault', ['valid_true', 'valid_false', 'missing', 'duplicate', 'unknown_id',
                                    'invalid_boolean', 'unavailable', 'bad_coverage'])
-def test_completed_direct_fact_survives_a_separate_source_review_fault(tmp_path, fault):
+def test_first_direct_label_cannot_publish_without_its_required_source_review(tmp_path, fault):
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' in payload:
@@ -234,11 +275,11 @@ def test_completed_direct_fact_survives_a_separate_source_review_fault(tmp_path,
                  'parts': ['300406在2026-11-12量比为', [ref, 'value_with_unit'], '。'], 'refs': []},
                 {'id': 'target', 'type': 'paragraph', 'section': 'assessment',
                  'parts': ['相对成交活跃度偏低。'], 'refs': [ref]}]})
-        assert [row['id'] for row in payload['inferences']] == ['c1']
+        assert [row['id'] for row in payload['inferences']] == ['c0', 'c1']
         if fault == 'unavailable':
             raise TimeoutError('explicit independent source review timeout')
         row = {'id': 'c1', 'supported': fault != 'valid_false', 'reason': '核对来源范围。'}
-        rows = [row]
+        rows = [{'id': 'c0', 'supported': True, 'reason': '量比测量与原始来源一致。'}, row]
         if fault == 'missing':
             rows = []
         elif fault == 'duplicate':
@@ -259,11 +300,12 @@ def test_completed_direct_fact_survives_a_separate_source_review_fault(tmp_path,
     report = publish_report(task='说明量比及相对活跃程度。', draft='', tool_results=[('compute_volume_ratio',
         json.dumps({'symbol': '300406', 'as_of': '2026-11-12', 'volume_ratio': 0.594}))],
         run_scope='independent-source-fault', call=writer, fact_review_call=checker, max_calls=2)
-    assert '300406在2026-11-12量比为0.594倍。' in report.artifact['reader_body']
+    assert ('300406在2026-11-12量比为0.594倍。' in report.artifact['reader_body']) is (fault in {'valid_true', 'valid_false'})
     assert ('相对成交活跃度偏低。' in report.artifact['reader_body']) is (fault == 'valid_true')
     assert (report.verification['status'] == 'complete') is (fault == 'valid_true')
     assert report.artifact['factual_response'] and report.artifact['model_calls'] == 4
-    assert not any(f['item_id'] == 'good' for f in report.verification['findings'])
+    assert any(f['item_id'] == 'good' for f in report.verification['findings']) is (fault not in {'valid_true', 'valid_false'})
+    assert next(f['value'] for f in report.artifact['facts'] if f['metric'] == 'volume_ratio') == '0.594'
     reference = persist_publication(tmp_path, report)
     saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
     assert saved['reader_body'] == report.artifact['reader_body'] and saved['receipts'] == report.artifact['receipts']
@@ -286,7 +328,7 @@ def test_nonempirical_choice_does_not_need_measurement_basis_but_preserves_actua
         if 'schema' in payload:
             return json.dumps({'schema_version': 1, 'items': [{'id': 'plan', 'type': 'paragraph',
                 'section': 'plan', 'parts': [text], 'refs': []}]})
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
+        return json.dumps({'reviews': source_review_rows(payload), 'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
@@ -336,7 +378,7 @@ def test_missing_temporal_link_can_be_repaired_but_current_scope_and_source_date
         if repair == 'erase_current':
             assessment.update(support_basis='reasoned')
             assessment['checks'].update(identity_scope='not_applicable', time='not_applicable')
-        return json.dumps({'reviews': [], 'coverage': {'complete': True, 'missing': []},
+        return json.dumps({'reviews': source_review_rows(payload), 'coverage': {'complete': True, 'missing': []},
             'annotation_resolutions': [{'id': 'c1', 'empirical_present': repair != 'erase_current',
                                         'assessment': assessment}]})
     def checker(system, user):

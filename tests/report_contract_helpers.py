@@ -18,6 +18,12 @@ def report_facts(payload):
     return result
 
 
+def source_review_rows(payload):
+    """Explicit positive SOURCE double, independent of the FACT double's label."""
+    return [{'id': row['id'], 'supported': True, 'reason': 'Explicit independent source-review double.'}
+            for row in payload['inferences']]
+
+
 def report_reply(messages, *, metrics=None, gap=None, inference=None, invalid_ref=False):
     """Return only publication replies; normal agent rounds remain test-owned."""
     try:
