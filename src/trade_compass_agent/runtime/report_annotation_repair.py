@@ -61,6 +61,19 @@ def annotation_conflicts(statements, assessments, errors):
                 and all(reported[key] == 'not_applicable' for key in ('identity_scope', 'time', 'quantity'))):
             result[row['id']] = 'nonempirical_rejection'
             continue
+        # A time-only positive annotation beside otherwise non-empirical axes
+        # is a type disagreement, not proof of an observation missing a date.
+        # Let the independent reviewer decide meaning; positive values, actors,
+        # classifications and explicit calendar commitments remain ineligible.
+        if (error and valid_report and statement['assertion_kind'] == 'judgment'
+                and statement['meaning_kind'] in {'other', 'plan'}
+                and not statement['bound_fact_refs'] and not statement['time_fact_refs']
+                and not statement.get('classifications')
+                and not set(statement.get('observation_dates', [])) - {'task_now'}
+                and row.get('support_basis') == 'reasoned' and not any(commitments.values())
+                and all(reported[key] == 'not_applicable' for key in ('identity_scope', 'quantity'))):
+            result[row['id']] = 'opinion_time'
+            continue
         if (error and valid_report and not pure_opinion and statement['time_scope'] == 'reference_date'
                 and not statement['time_fact_refs'] and row.get('support_basis') in {'direct', 'calculated', 'reasoned'}):
             result[row['id']] = 'temporal_witness'
@@ -115,10 +128,11 @@ def resolved_annotations(value, candidates, statements, decode):
         # about an actor, cause, owned value or indicator classification. Only a
         # mutually identified opinion with no new identity/quantity/time claim
         # can correct its inconsistent present-observation annotation.
-        if not entry['empirical_present'] and statement['time_scope'] == 'reference_date':
+        if not entry['empirical_present']:
             basis_allowed = (assessment.get('support_basis') == 'reasoned'
                 or statement['meaning_kind'] == 'plan' and assessment.get('support_basis') == 'not_applicable')
-            if (not basis_allowed or assessment['time_evidence']
+            if (set(statement.get('observation_dates', [])) - {'task_now'}
+                    or not basis_allowed or assessment['time_evidence']
                     or assessment.get('commitments') != {'participant_activity': False, 'causal_relation': False}
                     or assessment['checks']['quantity'] != 'not_applicable'
                     or any(assessment['checks'][key] not in {'entailed', 'not_applicable'}

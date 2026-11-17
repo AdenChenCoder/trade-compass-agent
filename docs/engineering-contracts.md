@@ -164,7 +164,7 @@ in the linked regression tests, not in expanding prose exception lists.
   Affected spans become separate reader paragraphs before the new complete
   body undergoes fresh meaning, coverage and factual review. This isolates a
   failed replacement without approving it or hiding adjacent observations.
-  Reject foreign, duplicate, missing and unchanged edits, and keep the existing
+  Reject foreign, duplicate, missing and entirely unchanged edit batches, and keep the existing
   single-revision/call/deadline policy. No prior approval substitutes for review
   of the resulting body.
   Conflicting semantic annotations are repairable metadata, not permission to
@@ -236,11 +236,15 @@ in the linked regression tests, not in expanding prose exception lists.
   their feedback and read-only context without competing full-draft instructions.
   Keep full previous documents internally for exact reassembly and recovery;
   newly assembled prose still undergoes the complete factual and coverage checks.
-  A reconciled non-empirical opinion may remain verbatim beside genuine edits;
-  retain its original bindings and provenance. Actual factual failures still
-  require a changed assertion, and an entirely unchanged edit batch is rejected.
-  Retained opinions are not counted as repaired claims: their new reader context
-  and the complete assembled report must still pass fresh review.
+  A span may remain verbatim beside genuine edits; retain its original bindings
+  and provenance. Lexical change is not proof of a factual correction, and
+  retention is never approval: every retained failure undergoes the same fresh
+  checks in the new reader context. An entirely unchanged edit batch is rejected.
+  A time-only positive annotation with no identity, quantity, actor, bound-value,
+  classification or explicit calendar commitment may be independently checked
+  as an opinion/plan type disagreement. An actual empirical observation still
+  needs its own date; only mutually identified non-empirical text can remove the
+  inconsistent time annotation. Preserve earlier support rejections.
   Bounded edit transport accepts its canonical object or a complete edit array;
   the array adds no new gap text and never removes existing protected gaps. Apply
   identical ownership, completeness, binding and genuine-change checks to both

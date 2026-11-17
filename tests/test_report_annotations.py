@@ -7,6 +7,60 @@ from report_contract_helpers import report_facts
 from trade_compass_agent.runtime.report_publication import publish_report, persist_publication
 
 
+@pytest.mark.parametrize('scene,accepted', [('plan', True), ('opinion', True), ('observation', False),
+    ('quantity', False), ('actor', False), ('category', False), ('explicit_date', False), ('bound', False)])
+def test_time_only_annotation_disagreement_preserves_empirical_requirements(scene, accepted):
+    from test_report_factual_role import assess
+    texts = {'plan': '明日两只标的以持有观察为主。', 'opinion': '后续关注市场轮动和催化进展。',
+        'observation': '002415今天盘中存在价格起伏。', 'quantity': '002415当前收盘价为23元/股。',
+        'actor': '002415机构今天没有卖出。', 'category': '002415均线呈多头排列。',
+        'explicit_date': '002415在2025-01-01出现价格起伏。', 'bound': '002415当前收盘价为'}
+    calls = []
+    def writer(system, user):
+        payload = json.loads(user)
+        if 'schema' in payload:
+            parts = [texts[scene]]
+            if scene == 'bound':
+                parts += [[next(f['id'] for f in report_facts(payload) if f['metric'] == 'close'), 'value_with_unit'], '。']
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'target', 'type': 'paragraph',
+                'section': 'assessment', 'parts': parts, 'refs': []}]})
+        result = {'reviews': [], 'coverage': {'complete': True, 'missing': []}}
+        if 'annotation_review' in payload:
+            calls.append(payload)
+            fresh = assess(payload['annotation_review'])['assessments'][0]
+            fresh.update(time_evidence=[], support_basis='reasoned')
+            fresh['checks'].update(identity_scope='not_applicable', time='entailed', quantity='not_applicable')
+            result['annotation_resolutions'] = [{'id': fresh['id'], 'empirical_present': False, 'assessment': fresh}]
+        return json.dumps(result)
+    def checker(system, user):
+        payload = json.loads(user)
+        if 'paragraphs' in payload:
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'target', 'parts': [{
+                'distribution_basis': 'none', 'through': payload['paragraphs'][0]['source_units'][-1]['id'],
+                'operation_code': 1 if scene == 'plan' else 0,
+                'claim_kind': 'actor_activity' if scene == 'actor' else 'observation' if scene == 'observation' else 'judgment',
+                'observation_dates': ['2025-01-01' if scene == 'explicit_date' else 'task_now'],
+                'classifications': [{'property': 'moving_average_order', 'value': 'bullish_alignment',
+                    'scope': 'all_mentioned', 'periods': []}] if scene == 'category' else []}]}]})
+        result = assess(payload)
+        row = result['assessments'][0]
+        row.update(support_basis='reasoned', time_evidence=[])
+        row['checks'].update(identity_scope='not_applicable' if accepted else 'entailed',
+            quantity='entailed' if scene in {'quantity', 'bound'} else 'not_applicable', time='entailed')
+        return json.dumps(result)
+    result = publish_report(task='按所给资料研究并给出观察安排。', draft='',
+        tool_results=[('get_bars', json.dumps({'symbol': '002415', 'timeframe': '1d',
+            'bars': [{'timestamp': '2025-01-01', 'close': 22}]}))],
+        run_scope='time-only-annotation', call=writer, fact_review_call=checker, max_calls=2,
+        reference_date='2025-01-02')
+    assert (result.verification['status'] == 'complete') is accepted
+    assert (texts[scene] in result.artifact['reader_body']) is accepted
+    if accepted:
+        assert calls and result.artifact['annotation_candidates'] == {'c0': 'opinion_time'}
+        assert not result.artifact['factual_assessment_errors']
+        assert result.artifact['factual_review']['assessments'][0]['checks']['time'] == 'not_applicable'
+
+
 @pytest.mark.parametrize('scene,accepted', [
     ('opinion', True), ('event_interpretation', True),
     ('actor', False), ('cause', False), ('qualitative_observation', False), ('bound_stale_value', False),
