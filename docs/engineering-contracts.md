@@ -245,6 +245,10 @@ in the linked regression tests, not in expanding prose exception lists.
   as an opinion/plan type disagreement. An actual empirical observation still
   needs its own date; only mutually identified non-empirical text can remove the
   inconsistent time annotation. Preserve earlier support rejections.
+  A plan may name its subjects without adding a measured identity or value.
+  When its factual review already marks time and quantity inapplicable, that
+  subject-scope annotation does not turn it into a current observation. The
+  independent non-empirical agreement and all bound/calendar exclusions still apply.
   Bounded edit transport accepts its canonical object or a complete edit array;
   the array adds no new gap text and never removes existing protected gaps. Apply
   identical ownership, completeness, binding and genuine-change checks to both

@@ -7,11 +7,12 @@ from report_contract_helpers import report_facts
 from trade_compass_agent.runtime.report_publication import publish_report, persist_publication
 
 
-@pytest.mark.parametrize('scene,accepted', [('plan', True), ('opinion', True), ('observation', False),
+@pytest.mark.parametrize('scene,accepted', [('plan', True), ('named_plan', True), ('opinion', True), ('observation', False),
     ('quantity', False), ('actor', False), ('category', False), ('explicit_date', False), ('bound', False)])
 def test_time_only_annotation_disagreement_preserves_empirical_requirements(scene, accepted):
     from test_report_factual_role import assess
-    texts = {'plan': '明日两只标的以持有观察为主。', 'opinion': '后续关注市场轮动和催化进展。',
+    texts = {'plan': '明日两只标的以持有观察为主。', 'named_plan': '整体后续关注两只标的及市场轮动。',
+        'opinion': '后续关注市场轮动和催化进展。',
         'observation': '002415今天盘中存在价格起伏。', 'quantity': '002415当前收盘价为23元/股。',
         'actor': '002415机构今天没有卖出。', 'category': '002415均线呈多头排列。',
         'explicit_date': '002415在2025-01-01出现价格起伏。', 'bound': '002415当前收盘价为'}
@@ -37,7 +38,7 @@ def test_time_only_annotation_disagreement_preserves_empirical_requirements(scen
         if 'paragraphs' in payload:
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'target', 'parts': [{
                 'distribution_basis': 'none', 'through': payload['paragraphs'][0]['source_units'][-1]['id'],
-                'operation_code': 1 if scene == 'plan' else 0,
+                'operation_code': 1 if scene in {'plan', 'named_plan'} else 0,
                 'claim_kind': 'actor_activity' if scene == 'actor' else 'observation' if scene == 'observation' else 'judgment',
                 'observation_dates': ['2025-01-01' if scene == 'explicit_date' else 'task_now'],
                 'classifications': [{'property': 'moving_average_order', 'value': 'bullish_alignment',
@@ -47,6 +48,8 @@ def test_time_only_annotation_disagreement_preserves_empirical_requirements(scen
         row.update(support_basis='reasoned', time_evidence=[])
         row['checks'].update(identity_scope='not_applicable' if accepted else 'entailed',
             quantity='entailed' if scene in {'quantity', 'bound'} else 'not_applicable', time='entailed')
+        if scene == 'named_plan':
+            row['checks'].update(identity_scope='entailed', time='not_applicable')
         return json.dumps(result)
     result = publish_report(task='按所给资料研究并给出观察安排。', draft='',
         tool_results=[('get_bars', json.dumps({'symbol': '002415', 'timeframe': '1d',
