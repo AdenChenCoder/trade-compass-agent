@@ -482,6 +482,7 @@ def main():
     from trade_compass_agent.config import AppConfig, LLMConfig
     from trade_compass_agent.llm.providers import ChatMessage, create_chat_client, create_local_report_fact_check, llm_request_deadline
     from trade_compass_agent.runtime.report_publication import publish_report, _json_value
+    from trade_compass_agent.runtime.report_body import decode_body_value
 
     verify = runpy.run_path(str(Path(__file__).with_name("release_acceptance.py")))["verify_installed_wheel"]
     result = {"passed": False, "artifact": verify(wheel), "mode": "frozen first prose / real review and bounded normal revision",
@@ -659,7 +660,7 @@ def main():
             selector_calls = 0
             for row in factual_calls:
                 if row.get('stage') == 'body_meaning' and row.get('output'):
-                    body_paragraphs = _json_value(row['output']).get('paragraphs', [])
+                    body_paragraphs = decode_body_value(row['output'], _json_value).get('paragraphs', [])
                     selector_calls += bool(body_paragraphs) and all(
                         paragraph.get('parts') and all('through' in part for part in paragraph['parts'])
                         for paragraph in body_paragraphs)

@@ -20,7 +20,7 @@ from trade_compass_agent.runtime.report_contract import (
 )
 from trade_compass_agent.runtime.report_execution import execution_evidence
 from trade_compass_agent.runtime.report_body import (
-    BODY_MEANING, BodyMeaningError, reader_source_units, validate_body_meaning, runtime_bound_quantity_issue, factual_assertions, factual_review_statements,
+    BODY_MEANING, BodyMeaningError, reader_source_units, validate_body_meaning, runtime_bound_quantity_issue, factual_assertions, factual_review_statements, decode_body_value,
 )
 from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE, render_readable_document
 from trade_compass_agent.runtime.report_transport import ReportTransport, parse_report_items, review_receipts, source_record_context, composition_source_records, source_reference_view
@@ -408,11 +408,12 @@ _REPAIR = (
 )
 
 
-def _json_value(raw):
+def _json_value(raw, *, object_pairs_hook=None):
     """Decode one JSON value, optionally carried in one Markdown code fence.
 
     This is transport framing only: never extract claims from prose or repair
-    JSON field values. Extra prose, trailing values and duplicate keys fail.
+    JSON field values. Extra prose and trailing values fail. Duplicate keys fail
+    by default; the body collection decoder explicitly retains all pairs.
     """
     lines = raw.strip().splitlines()
     if len(lines) >= 3 and lines[0] in {"```", "```json"} and lines[-1] == "```":
@@ -424,7 +425,7 @@ def _json_value(raw):
                 raise ValueError("duplicate JSON field")
             result[key] = value
         return result
-    return json.loads(raw, object_pairs_hook=unique)
+    return json.loads(raw, object_pairs_hook=object_pairs_hook or unique)
 
 
 def _dismissed_gaps(review, gaps, verified_ids):
@@ -759,7 +760,8 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     body_response = body_call(BODY_MEANING, json.dumps(body_review_input, ensure_ascii=False,
                                                                       separators=(",", ":")))
                     check_active()
-                    body_meaning, body_quantity_issues = validate_body_meaning(_json_value(body_response), prose)
+                    body_meaning, body_quantity_issues = validate_body_meaning(
+                        decode_body_value(body_response, _json_value), prose)
                     for row in review_input["inferences"]:
                         issues = body_quantity_issues.get(row["id"], [])
                         owned = [issue for issue in issues if runtime_bound_quantity_issue(issue, row["segments"])]

@@ -231,6 +231,15 @@ in the linked regression tests, not in expanding prose exception lists.
   the array adds no new gap text and never removes existing protected gaps. Apply
   identical ownership, completeness, binding and genuine-change checks to both
   forms. Other report/assessment envelopes and incomplete JSON remain strict.
+  Body interpretation may group complete paragraph records in repeated root
+  paragraph collections. Concatenate only that collection, then enforce unique
+  owned IDs and complete contiguous source-unit coverage; never choose a last
+  value or discard a group. Repeated scalar/nested members, duplicate/missing IDs
+  and incomplete JSON remain invalid. Other assessment envelopes stay strict.
+  Extract necessary categorical ordering conditions of a stronger asserted
+  indicator state without correcting the author's meaning to fit its numbers.
+  A bounded trend opinion or price position alone does not imply whole-system
+  alignment. Preserve that distinction before source evidence is shown.
 - An explicitly configured `llm.local_report_review_model` separates factual
   entailment from task coverage. It uses only local LM Studio, original receipts,
   typed calculations, current execution records and the final statements. The original

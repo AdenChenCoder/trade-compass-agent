@@ -26,6 +26,7 @@ resolve it from the reader's established dates or runtime calendar, and preserve
 unresolved when that required anchor is absent. This distinction never removes
 the actual date of an adjacent price, valuation or completed operation.
 classifications records categorical indicator properties the reader actually asserts, without deciding truth. It is an array of {"property":"moving_average_order","value":"bullish_alignment|bearish_alignment|mixed","operator":"eq|ne","scope":"all_mentioned|explicit_subset","periods":[]}. operator is eq for an asserted category and ne for its denial; preserve negation, rather than changing it into an opposite category. Record an asserted ordering/alignment of moving averages; preserve the author's claimed category even if you doubt it. all_mentioned concerns the stated moving-average system and uses periods=[]; periods is meaningful only for explicit_subset and contains at least two distinct positive integers explicitly selected by the prose. A separately mentioned moving average does not narrow a whole-system alignment claim to that period. Do not invent period numbers from price values, infer an ordering from merely being above a moving average, or strengthen a bounded trend opinion into an assertion about every moving average. Other empirical commitments retain claim_kind and still need factual assessment. Use [] when no such categorical ordering is asserted.
+Register an ordering that is a NECESSARY condition of a stronger asserted moving-average state, including when that assertion is embedded beside values, comparisons or analysis. Do not omit a claimed category because the surrounding numbers appear inconsistent with it: extraction preserves the reader's commitment, not its truth. Mere price position or a bounded trend opinion does not imply an ordering of the whole system; preserve that distinction and the actual scope.
 operation_code is ONE integer selecting a complete operation meaning. It concerns an actor's state-changing order or memory operation, not price/return/valuation/holding/balance observations. Market movements are code 0 even when current. These labels classify meaning, not whether the claim is true:
 0: No assertion about a business operation, and no proposal or unconfirmed operation.
 1: A proposed action, recommendation, conditional watchpoint or authored choice/decision; it does not itself assert execution. This is usually a judgment; retain separately asserted empirical premises.
@@ -48,6 +49,36 @@ quantity_issues lists ONLY quantity meaning not established by the body. Copy an
 
 class BodyMeaningError(ValueError):
     """Fixed validation causes, safe to retain without reader payloads."""
+
+
+class _ObjectPairs(list):
+    """Keep all JSON members until the body collection protocol is checked."""
+
+
+def decode_body_value(raw, decode):
+    """Join root paragraph groups without dropping or choosing any record.
+
+    Only that collection may repeat. Nested/scalar fields remain unique, and
+    validate_body_meaning still requires complete, unique owned paragraph IDs
+    and exact contiguous source-unit coverage before the result is usable.
+    """
+    def normalize(value, root=False):
+        if isinstance(value, _ObjectPairs):
+            result = {}
+            for key, item in value:
+                item = normalize(item)
+                if key in result:
+                    if not (root and key == 'paragraphs'
+                            and isinstance(result[key], list) and isinstance(item, list)):
+                        raise BodyMeaningError('duplicate_body_field')
+                    result[key].extend(item)
+                else:
+                    result[key] = item
+            return result
+        if isinstance(value, list):
+            return [normalize(item) for item in value]
+        return value
+    return normalize(decode(raw, object_pairs_hook=_ObjectPairs), root=True)
 
 
 def _canonical_part(part):
