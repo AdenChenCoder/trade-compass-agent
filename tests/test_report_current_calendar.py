@@ -23,6 +23,9 @@ def test_same_current_observation_keeps_date_obligation(tmp_path, anchor, observ
     assert timing['expected_date'] == '2025-01-02'
     assert timing['evidence'][0]['comparison_date'] == (
         '2025-01-02' if accepted else '2025-01-01' if observed else None)
+    assert report.verification['data'] == ('insufficient' if observed is None else 'available')
+    assert any(f['code'] == 'observation_date_unavailable'
+               for f in report.verification['findings']) is (observed is None)
     reference = persist_publication(tmp_path, report)
     saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
     assert saved['published_text'] == report.text
@@ -54,7 +57,19 @@ def test_equivalent_current_anchor_allows_same_bounded_witness_repair(anchor, ob
     assert report.artifact['body_meaning']['pb'][0]['observation_dates'] == [anchor]
 
 
-def _publish(anchor, observed, bound, kind, *, repair_missing=False):
+@pytest.mark.parametrize('dimension', ['identity_scope', 'quantity', 'support'])
+@pytest.mark.parametrize('status', ['unknown', 'contradicted'])
+def test_missing_date_cannot_relabel_other_factual_failure_as_only_missing_data(dimension, status):
+    report = _publish('2025-01-02', None, False, 'observation',
+                      failed_dimension=dimension, failed_status=status)
+    assert report.verification['status'] == 'incomplete'
+    assert '0.8倍' not in report.artifact['reader_body']
+    assert any(f['code'] == 'insufficient_support' for f in report.verification['findings'])
+    assert not any(f['code'] == 'observation_date_unavailable' for f in report.verification['findings'])
+
+
+def _publish(anchor, observed, bound, kind, *, repair_missing=False,
+             failed_dimension=None, failed_status='unknown'):
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' in payload:
@@ -89,6 +104,9 @@ def _publish(anchor, observed, bound, kind, *, repair_missing=False):
         # empirical date. This is an explicit model double, not model execution.
         if kind == 'judgment':
             result['assessments'][0]['checks']['quantity'] = 'not_applicable'
+        if failed_dimension:
+            result['assessments'][0]['checks'][failed_dimension] = failed_status
+            result['assessments'][0]['verdict'] = failed_status
         return json.dumps(result)
 
     raw = json.dumps({'symbol': '600928', 'pb': 0.8, 'as_of': observed,

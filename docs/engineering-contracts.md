@@ -338,6 +338,10 @@ in the linked regression tests, not in expanding prose exception lists.
   retrieval time, classify a known stale date as missing, or clear another factual
   conflict or unavailable assessment through this notice. Persistence retains
   the original source and the incomplete/data-insufficient outcome.
+  The same owned observation nominated by a completed assessment retains that
+  missing-date meaning when its value was written literally rather than bound.
+  All non-time dimensions must still pass; unknown references, unavailable
+  review and substantive factual failures cannot become a date-only gap.
   Date-only observations, including provider `YYYYMMDD` and ISO `YYYY-MM-DD`,
   keep their supplied calendar date without an invented instant. Newly derived
   evidence preserves this precision; original receipts and already saved

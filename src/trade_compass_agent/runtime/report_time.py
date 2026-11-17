@@ -92,5 +92,9 @@ def unavailable_bound_observation_dates(statement, assessment, timing):
     conflicts = [row for row in timing['evidence'] if row['comparison_date'] != timing['expected_date']]
     if any(row['comparison_date'] is not None for row in conflicts):
         return []
-    mandatory = set(statement['time_fact_refs'])
+    # A verified value can be written literally as well as through a binding.
+    # Its completed assessment may nominate the same owned observation. Caller
+    # validation rejects foreign/unavailable witnesses; the guards above retain
+    # stale dates and every substantive non-time failure as factual failures.
+    mandatory = set(statement['time_fact_refs']) | set(assessment['time_evidence'])
     return [row['ref'] for row in conflicts if row['ref'] in mandatory]
