@@ -490,6 +490,8 @@ in the linked regression tests, not in expanding prose exception lists.
   gap: tool-use instructions do not themselves request a call transcript.
   Explicit requests for operation state, results and reasons still require an
   answer; empty receipts cannot establish that an operation did not occur.
+  A requested business operation is itself a task goal; its outcome remains
+  necessary even without a separate instruction to report the result.
   A report may reference raw facts, direct observation aliases and validated calculations; retain the original
   operands and resolve references independently of document order. Provenance
   does not establish semantic support, and model approval cannot clear a
