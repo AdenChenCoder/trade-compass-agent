@@ -105,6 +105,19 @@ def test_narrative_aggregation_requires_exact_completed_case_coverage(selected, 
     assert result['passed'] is passed and original['passed'] is False
 
 
+def test_task_coverage_controls_keep_evidence_and_factual_truth_independent_of_requested_outcome():
+    controls = NARRATIVE['TASK_COVERAGE_CASES']
+    cases = [NARRATIVE['SCOPE_CASES'][name] for name in controls]
+    assert len(controls) == 5
+    assert sum(expected for _, expected in controls.values()) == 2
+    assert len({body for body, _, _, _ in cases}) == 1
+    assert all(supported is True for _, supported, _, _ in cases)
+    assert all(receipts == cases[0][2] for _, _, receipts, _ in cases)
+    assert all(tool == 'get_bars' for tool, _ in cases[0][2])
+    assert all(NARRATIVE['CASES'][name][1] is True for name in controls)
+    assert controls['task_scope_action_goal'][1] is False
+
+
 @pytest.mark.parametrize('supported,linked,time,available,current_scope,passed', [
     (True, True, 'entailed', True, True, True),
     (True, False, 'entailed', True, True, False),

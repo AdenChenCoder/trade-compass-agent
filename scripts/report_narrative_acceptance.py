@@ -230,6 +230,17 @@ SCOPE_CASES = {
             "symbol": "002415", "account": "test", "side": "buy", "quantity": 100, "price": 22,
             "timestamp": "2025-01-02T10:00:00+08:00"}))], "说明两日收盘价和本轮执行结果。"),
 }
+TASK_COVERAGE_CASES = {
+    'task_scope_process_first': ('先load_skill(name=autonomous-paper-trading)，再按流程读取所给两次价格；最终仅报告002415在2025年1月1日和1月2日的收盘价。', True),
+    'task_scope_answer_first': ('最终仅报告002415在2025年1月1日和1月2日的收盘价。执行时先读取autonomous-paper-trading Skill，再查询所给价格，不需要说明调用过程。', True),
+    'task_scope_explicit_outcome': ('说明002415在2025年1月1日和1月2日的收盘价，并汇报本轮买入的实际结果。', False),
+    'task_scope_explicit_call_state': ('说明002415在2025年1月1日和1月2日的收盘价，并明确说明本轮是否调用place_paper_trade及其结果。', False),
+    'task_scope_action_goal': ('按市价买入002415共100股，使用short_stock账户。', False),
+}
+# The same supported price body answers the informational tasks but cannot
+# establish a requested operation. No mutation receipts or tools are supplied.
+SCOPE_CASES.update({name: (_price_prose, True, _prices, task)
+                    for name, (task, _) in TASK_COVERAGE_CASES.items()})
 CASES.update({name: (prose, expected) for name, (prose, expected, _, _) in SCOPE_CASES.items()})
 
 _dated_price = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars": [
@@ -512,7 +523,8 @@ def main():
             changed = json.loads(case_receipts[0][1])
             changed["bars"][0]["close"], changed["bars"][1]["close"] = 23, 22
             case_receipts[0] = ("get_bars", json.dumps(changed))
-        normal_publication = expected and name != "hidden_result"
+        normal_publication = (expected and name != "hidden_result"
+                              and TASK_COVERAGE_CASES.get(name, ('', True))[1])
         # Both outcomes need the same first body/coverage/evidence path as the
         # 240-second full task harness. Expected truth must not halve its time.
         # Negative controls still cannot rewrite or resample their first verdict.
@@ -680,7 +692,11 @@ def main():
                          and report.artifact["model_calls"] <= primary_limit + 4 * int(bool(factual_client))
                          and report.artifact["body_review_model_calls"] == (1 + int(revised)) * int(bool(factual_client))
                          and (not revised or changed_prose and report.artifact.get("selected_attempt") == 1)
-                         and ((coverage_complete is False and report.verification["report"] == "partial")
+                         and ((coverage_complete is TASK_COVERAGE_CASES[name][1]
+                               and report.verification['data'] == 'available'
+                               and report.verification['status'] == ('complete' if TASK_COVERAGE_CASES[name][1] else 'incomplete')
+                               and prose in report.artifact['reader_body']) if name in TASK_COVERAGE_CASES else
+                              (coverage_complete is False and report.verification["report"] == "partial")
                               if name == "hidden_result" else
                               (report.verification["status"] == "incomplete") if name == "bound_genuine_gap" else
                               (report.verification["status"] == "complete") if expected else
