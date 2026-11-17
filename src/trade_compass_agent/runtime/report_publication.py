@@ -821,6 +821,11 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                     selected_ids = {fact['id'] for context in contexts.values() for fact in context['evidence']}
                     contexts = source_record_context(catalog, contexts, review_input['receipts'],
                                                      report_context['display_timezone'])
+                    source_methods = catalog.source_semantics()
+                    # A method contract is not its evidence. Retain the actual
+                    # typed values, observation dates and method scope that it
+                    # references, including facts the writer did not bind.
+                    selected_ids.update(ref for method in source_methods for ref in method['fact_refs'])
                     review_contexts, source_references = source_reference_view(contexts, selected_ids)
                     review_contexts, review_statements, source_references = transport.encode_factual_review(
                         review_contexts, factual_review_statements(statements), source_references)
@@ -830,7 +835,7 @@ def _publish_report(*, task, draft, tool_results, run_scope, call, run_id, curre
                         "contexts": review_contexts, "statements": review_statements,
                         **({'source_fact_references': source_references} if source_references['sources'] else {}),
                         "receipts": review_input["receipts"], "execution_records": execution.records,
-                        "source_semantics": transport.encode_source_semantics(catalog.source_semantics()),
+                        "source_semantics": transport.encode_source_semantics(source_methods),
                     }
                     factual_response = fact_call(_FACT_REVIEW, json.dumps(factual_review_input, ensure_ascii=False,
                                                                           separators=(",", ":")))

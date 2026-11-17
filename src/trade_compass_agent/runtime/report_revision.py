@@ -95,6 +95,11 @@ def apply_assertion_edits(value, revision, transport, catalog):
     unchanged adjacent observations. Every resulting paragraph is reviewed anew.
     """
     plan = revision['assertion_edits']
+    # A complete list is an unambiguous bounded-edit wire form. It adds no
+    # new gap text; existing/protected gaps remain in the previous document.
+    # Every identity, binding, extent and real-change check below still applies.
+    if isinstance(value, list):
+        value = {'schema_version': 1, 'edits': value, 'gaps': []}
     if (not isinstance(value, dict) or set(value) != {'schema_version', 'edits', 'gaps'}
             or type(value['schema_version']) is not int or value['schema_version'] != 1
             or not isinstance(value['edits'], list) or not isinstance(value['gaps'], list)

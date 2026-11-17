@@ -32,6 +32,9 @@ def test_independent_review_keeps_unbound_owned_sources_and_their_reference_name
         assert payload['receipts'] == first['receipts']
         assert 'assessments' not in payload
         available = {f['id'] for c in payload['source_contexts'].values() for f in c['evidence']}
+        # Method policy references need their actual typed values and scope,
+        # not only an address into a separate raw receipt.
+        assert all(set(source['fact_refs']) <= available for source in payload['source_semantics'])
         available.update(row[0] for source in payload['source_fact_references']['sources']
                          for observation in source['observations'] for row in observation['rows'])
         assert all(set(source['fact_refs']) <= available for source in payload['source_semantics'])

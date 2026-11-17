@@ -190,6 +190,9 @@ in the linked regression tests, not in expanding prose exception lists.
   limits remain unchanged. Both reviewers receive the same owned source contexts,
   observation pointers and method records in one reference namespace; paragraph
   bindings cannot withdraw other supplied evidence from independent review.
+  Preserve method-referenced facts in full through source-view compaction, even
+  when no paragraph binds them: a pointer alone omits the typed value, unit and
+  estimator scope needed to apply that method's admissibility contract.
   Compare the complete asserted property, including statistical meaning, method
   and qualifiers, before approving its values. A supported broader interpretation
   cannot replace the narrower property the reader actually received; a fact
@@ -224,6 +227,10 @@ in the linked regression tests, not in expanding prose exception lists.
   require a changed assertion, and an entirely unchanged edit batch is rejected.
   Retained opinions are not counted as repaired claims: their new reader context
   and the complete assembled report must still pass fresh review.
+  Bounded edit transport accepts its canonical object or a complete edit array;
+  the array adds no new gap text and never removes existing protected gaps. Apply
+  identical ownership, completeness, binding and genuine-change checks to both
+  forms. Other report/assessment envelopes and incomplete JSON remain strict.
 - An explicitly configured `llm.local_report_review_model` separates factual
   entailment from task coverage. It uses only local LM Studio, original receipts,
   typed calculations, current execution records and the final statements. The original

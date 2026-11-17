@@ -198,3 +198,44 @@ def test_optional_nonempirical_span_can_stay_only_beside_a_real_correction(scene
     assert [paragraph_text(item, result, catalog) for item in result.items] == [texts[0], texts[1], replacement]
     assert result.items[0].parts[1] == original.items[0].parts[1]
     assert [row['change_required'] for row in plan['edits']] == [False, True]
+
+
+@pytest.mark.parametrize('fault', ['valid', 'missing', 'duplicate', 'foreign', 'extra', 'unchanged', 'bad_binding'])
+def test_complete_edit_array_uses_the_same_identity_binding_and_change_checks(fault):
+    from trade_compass_agent.runtime.report_revision import apply_assertion_edits
+    catalog, transport, revision, original = _fixture()
+    row = {'id': 'c1', 'parts': ['所给资料不足以支持该结论。'], 'refs': []}
+    value = [row]
+    if fault == 'missing':
+        value = []
+    elif fault == 'duplicate':
+        value.append(dict(row))
+    elif fault == 'foreign':
+        row['id'] = 'not-requested'
+    elif fault == 'extra':
+        row['new_paragraph'] = '未授权内容'
+    elif fault == 'unchanged':
+        row['parts'] = ['错误结论。']
+    elif fault == 'bad_binding':
+        row['parts'] = [['foreign', 'value_with_unit']]
+    if fault != 'valid':
+        with pytest.raises((ValueError, KeyError)):
+            apply_assertion_edits(value, revision, transport, catalog)
+        return
+    result = ReportDocument.model_validate(apply_assertion_edits(value, revision, transport, catalog))
+    assert [paragraph_text(item, result, catalog) for item in result.items] == [
+        '原始观察：23元/股。', '所给资料不足以支持该结论。']
+    assert result.items[0].parts[1] == original.items[0].parts[1]
+
+
+def test_edit_array_without_new_gaps_preserves_existing_required_business_gap():
+    from trade_compass_agent.runtime.report_revision import apply_assertion_edits
+    catalog, transport, revision, previous = _fixture()
+    gap = {'id': 'business-gap', 'type': 'gap', 'section': 'gaps', 'text': '缺少该季度营收资料，无法核对增长判断。'}
+    value = previous.model_dump()
+    value['items'].append(gap)
+    revision['previous_document'] = transport.encode_document(value)
+    revision['required_gaps'] = [gap]
+    result = apply_assertion_edits([{'id': 'c1', 'parts': ['现有资料尚不能支持该结论。'], 'refs': []}],
+        revision, transport, catalog)
+    assert next(item for item in result['items'] if item['id'] == 'business-gap') == gap
