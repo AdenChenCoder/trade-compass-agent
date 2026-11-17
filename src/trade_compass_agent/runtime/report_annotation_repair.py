@@ -38,19 +38,6 @@ def annotation_conflicts(statements, assessments, errors):
             and not statement.get('classifications') and row.get('support_basis') == 'reasoned'
             and not any(commitments.values()) and valid_report
             and all(reported[key] == 'not_applicable' for key in ('identity_scope', 'time', 'quantity')))
-        # A BODY date on a proposal can disagree with the first factual review's
-        # explicit absence of empirical time/quantity. Ask the existing independent
-        # reconciliation to settle that disagreement; this is not a time witness
-        # request or an automatic waiver of the first interpretation.
-        if (error and valid_report and statement['assertion_kind'] == 'judgment'
-                and statement['meaning_kind'] == 'plan' and statement['time_scope'] == 'reference_date'
-                and not statement['bound_fact_refs'] and not statement['time_fact_refs']
-                and not statement.get('classifications') and not row['time_evidence']
-                and not set(statement.get('observation_dates', [])) - {'task_now'}
-                and row.get('support_basis') == 'reasoned' and not any(commitments.values())
-                and all(reported[key] == 'not_applicable' for key in ('time', 'quantity'))):
-            result[row['id']] = 'opinion_time'
-            continue
         if (error and statement['assertion_kind'] == 'judgment' and statement['meaning_kind'] in {'other', 'plan'}
                 and statement['time_scope'] == 'reference_date' and not row['time_evidence']
                 and not statement['bound_fact_refs'] and not statement['time_fact_refs']
@@ -65,13 +52,17 @@ def annotation_conflicts(statements, assessments, errors):
         # is a type disagreement, not proof of an observation missing a date.
         # Let the independent reviewer decide meaning; positive values, actors,
         # classifications and explicit calendar commitments remain ineligible.
+        # A plan may name its subjects while the factual reviewer already says
+        # time is inapplicable; that identity metadata is not a new observation.
         if (error and valid_report and statement['assertion_kind'] == 'judgment'
                 and statement['meaning_kind'] in {'other', 'plan'}
                 and not statement['bound_fact_refs'] and not statement['time_fact_refs']
                 and not statement.get('classifications')
                 and not set(statement.get('observation_dates', [])) - {'task_now'}
                 and row.get('support_basis') == 'reasoned' and not any(commitments.values())
-                and all(reported[key] == 'not_applicable' for key in ('identity_scope', 'quantity'))):
+                and reported['quantity'] == 'not_applicable'
+                and (reported['identity_scope'] == 'not_applicable'
+                     or statement['meaning_kind'] == 'plan' and reported['time'] == 'not_applicable')):
             result[row['id']] = 'opinion_time'
             continue
         if (error and valid_report and not pure_opinion and statement['time_scope'] == 'reference_date'

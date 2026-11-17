@@ -245,6 +245,10 @@ in the linked regression tests, not in expanding prose exception lists.
   as an opinion/plan type disagreement. An actual empirical observation still
   needs its own date; only mutually identified non-empirical text can remove the
   inconsistent time annotation. Preserve earlier support rejections.
+  A plan may name its subjects without adding a measured identity or value.
+  When its factual review already marks time and quantity inapplicable, that
+  subject-scope annotation does not turn it into a current observation. The
+  independent non-empirical agreement and all bound/calendar exclusions still apply.
   Bounded edit transport accepts its canonical object or a complete edit array;
   the array adds no new gap text and never removes existing protected gaps. Apply
   identical ownership, completeness, binding and genuine-change checks to both
@@ -439,10 +443,6 @@ in the linked regression tests, not in expanding prose exception lists.
   checks empirical observation dates, not whether a proposed future action has
   already occurred. Pure proposals have no empirical time commitment; dated
   factual premises remain independently applicable and cannot be waived.
-  If a proposal's body date conflicts with a completed factual review that adds
-  no empirical time or quantity, the existing independent annotation review may
-  reconcile it. It must confirm the absence of empirical observation; bound
-  values, categorical properties and actor/causal commitments remain protected.
   This body-only review also identifies quantities whose units or numerical scale
   are not established by the reader context. Evidence review cannot supply a
   missing convention or override that finding. Explicit shared units and
