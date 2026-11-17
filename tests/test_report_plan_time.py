@@ -73,7 +73,9 @@ def _publish(tmp_path, text, *, fault=None, premise=None):
                 {'id': 'good', 'section': 'market', 'type': 'paragraph',
                  'parts': ['002415在2025-01-01的收盘价为', [price, 'value_with_unit'], '。'], 'refs': []},
                 {'id': 'plan', 'section': 'assessment', 'type': 'paragraph', 'parts': parts, 'refs': []}]})
-        value = {'reviews': [], 'coverage': {'complete': True, 'missing': []}}
+        value = {'reviews': [{'id': row['id'], 'supported': True, 'reason': '冻结的历史价格与原始资料一致。'}
+                             for row in payload['inferences']],
+                 'coverage': {'complete': True, 'missing': []}}
         if 'annotation_review' in payload:
             resolution = {'id': 'c0' if fault == 'foreign' else 'c1',
                           'empirical_present': fault == 'empirical',
