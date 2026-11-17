@@ -59,6 +59,10 @@ in the linked regression tests, not in expanding prose exception lists.
   estimate-backed research interpretations. A general analytical lookback is
   not an additional calendar-date commitment; specific observation dates and
   relative calendar references retain their original temporal obligations.
+  A sole explicit observation date equal to the task's reference date retains
+  the same runtime date check as `task_now`, including inside an opinion.
+  This equivalence must not collapse historical or multiple-date comparisons
+  into the task's present; those retain their existing semantic scope.
   Method-admissibility records bind to actual owned source observations and keep
   their fact IDs, instrument and original date. They are business interpretation
   contracts, not additional observations or approval decisions. A quoted source

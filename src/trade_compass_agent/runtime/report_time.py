@@ -20,16 +20,22 @@ def temporal_evidence_context(context, contexts):
 
 def check_statement_time(statement, assessment, context, report_context):
     expected = report_context['reference_date']
+    dates = statement.get('observation_dates', [])
+    # The blind reader may resolve "today" to the actual calendar date.
+    # It retains the same obligation as task_now. Do not collapse historical
+    # or multi-date comparisons into the task's present.
+    explicit_current = bool(expected) and dates == [expected]
     result = {'scope': statement['time_scope'], 'expected_date': expected,
               'comparison_timezone': report_context['reference_timezone'],
               'evidence': [], 'status': 'not_applicable', 'reason': 'not_current_observation'}
     if 'unresolved' in statement.get('observation_dates', []):
         result.update(status='unknown', reason='asserted_date_unresolved')
         return result
-    if statement['time_scope'] != 'reference_date':
+    if statement['time_scope'] != 'reference_date' and not explicit_current:
         return result
     if (statement['assertion_kind'] in {'judgment', 'discourse'}
             and 'task_now' not in statement.get('observation_dates', [])
+            and not explicit_current
             and assessment['checks']['quantity'] == 'not_applicable'
             and not statement['bound_fact_refs'] and not assessment['time_evidence']):
         # A present opinion is not a new dated measurement. Bound or asserted

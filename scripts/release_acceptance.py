@@ -25,6 +25,7 @@ SUITES = (
     "test_report_factual_role.py",
     "test_report_annotations.py",
     "test_report_plan_time.py",
+    "test_report_current_calendar.py",
     "test_report_source_review.py",
     "test_report_source_labels.py",
     "test_report_source_properties.py",
