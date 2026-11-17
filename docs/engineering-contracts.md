@@ -190,6 +190,10 @@ in the linked regression tests, not in expanding prose exception lists.
   limits remain unchanged. Both reviewers receive the same owned source contexts,
   observation pointers and method records in one reference namespace; paragraph
   bindings cannot withdraw other supplied evidence from independent review.
+  Compare the complete asserted property, including statistical meaning, method
+  and qualifiers, before approving its values. A supported broader interpretation
+  cannot replace the narrower property the reader actually received; a fact
+  premise inside a proposed analysis retains its source obligations.
   A pure proposed choice with no empirical premises
   may have a non-applicable measurement basis; actual premises, commitments,
   quantities and unresolved support remain independently blocking.
