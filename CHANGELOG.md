@@ -2,6 +2,14 @@
 
 This project follows [Semantic Versioning](https://semver.org/) and records user-visible changes here.
 
+## [0.5.12] - 2026-11-18
+
+- Preserve packet-filter rejection categories in private mobile diagnostics so
+  failures before TLS handling remain observable, without retaining packet
+  contents or changing permissions, reconnect behavior, identity or pairing.
+  This improves investigation and does not claim to resolve intermittent
+  public-ingress failures.
+
 ## [0.5.11] - 2026-11-18
 
 - Build the mobile connection helper with Go 1.27.4 to fix TLS ClientHello
