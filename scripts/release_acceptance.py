@@ -29,6 +29,7 @@ SUITES = (
     "test_report_source_review.py",
     "test_report_source_labels.py",
     "test_report_reader_calendar.py",
+    "test_report_empirical_axes.py",
     "test_report_source_properties.py",
     "test_report_revision.py",
     "test_report_classifications.py",

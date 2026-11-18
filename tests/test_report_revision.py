@@ -57,12 +57,12 @@ def test_publisher_preserves_correct_observation_when_neighbor_is_repaired(tmp_p
                 units = reader_source_units(paragraph['text'])
                 first = len(bodies) == 1
                 observation = paragraph['text'].startswith(price)
-                parts = [{'distribution_basis': 'none', 'through': units[0 if first else -1]['id'], 'operation_code': 0,
+                parts = [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none', 'through': units[0 if first else -1]['id'], 'operation_code': 0,
                     'claim_kind': 'observation' if observation else 'judgment',
                     'observation_dates': ['2025-01-02'] if observation else [], 'classifications': []}]
                 if observation and len(units) > 1:
                     parts[0]['through'] = units[0]['id']
-                    parts.append({'distribution_basis': 'none', 'through': units[-1]['id'], 'operation_code': 0,
+                    parts.append({'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none', 'through': units[-1]['id'], 'operation_code': 0,
                         'claim_kind': 'actor_activity' if first or repair_status == 'unsupported' else 'judgment',
                         'observation_dates': [], 'classifications': []})
                 elif repair_status == 'unsupported' and not observation:
@@ -264,7 +264,7 @@ def test_retaining_a_failed_span_needs_fresh_consumer_review_even_beside_a_real_
         if 'paragraphs' in payload:
             bodies.append(payload)
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [
-                {'distribution_basis': 'none', 'text': text, 'kind': 'plan' if text == retained and retained_supported else 'other',
+                {'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none', 'text': text, 'kind': 'plan' if text == retained and retained_supported else 'other',
                  'assertion_kind': 'judgment' if text == retained and retained_supported else
                     'actor_activity' if text == retained else 'observation',
                  'time_scope': 'other', 'outcome': 'none', 'extent': 'none'}
@@ -305,3 +305,83 @@ def test_retaining_a_failed_span_needs_fresh_consumer_review_even_beside_a_real_
     ref = persist_publication(tmp_path, result)
     saved = json.loads((tmp_path/'report_artifacts'/(ref['artifact_id']+'.json')).read_text())
     assert saved['published_text'] == result.text and len(saved['revision_attempts']) == 2
+
+
+def test_incomplete_coverage_uses_bounded_edits_and_separate_answer_addition(tmp_path):
+    from report_contract_helpers import report_facts
+    from test_report_factual_role import assess
+    receipts = [('get_bars', json.dumps({'symbol': '002415', 'timeframe': '1d', 'bars': [
+        {'timestamp': '2025-01-01', 'close': 22}, {'timestamp': '2025-01-02', 'close': 23}]}))]
+    writes, body_count, fact_count = [], 0, 0
+    def writer(system, user):
+        p = json.loads(user)
+        if 'schema' in p:
+            writes.append(p)
+            refs = [f['id'] for f in report_facts(p) if f['metric'] == 'close']
+            if 'revision' not in p:
+                return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'section': 'market',
+                    'type': 'paragraph', 'parts': ['002415在2025-01-01收盘价为', [refs[0], 'value_with_unit'],
+                        '。机构正在建仓。'], 'refs': []}]})
+            plan = p['revision']['assertion_edits']
+            assert plan['allow_additions'] and len(plan['edits']) == 1
+            return json.dumps({'schema_version': 1, 'edits': [{'id': plan['edits'][0]['id'],
+                'parts': ['这些价格不能确定机构行为。'], 'refs': []}], 'gaps': [], 'additions': [
+                {'id': 'second-day', 'type': 'paragraph', 'section': 'market',
+                 'parts': ['002415在2025-01-02收盘价为', [refs[1], 'value_with_unit'], '。'], 'refs': []}]})
+        complete = '2025-01-02收盘价' in p['report']
+        return json.dumps({'reviews': [{'id': r['id'], 'supported': True, 'reason': 'Explicit source double.'}
+            for r in p['inferences']], 'coverage': {'complete': complete,
+            'missing': [] if complete else ['第二日收盘价'], 'repairable': not complete}})
+    def checker(system, user):
+        nonlocal body_count, fact_count
+        p = json.loads(user)
+        if 'paragraphs' in p:
+            body_count += 1
+            rows = []
+            for r in p['paragraphs']:
+                units = reader_source_units(r['text'])
+                base = {'distribution_basis': 'none', 'temporal_scope': 'unspecified',
+                        'participant_scope': 'none', 'operation_code': 0, 'claim_kind': 'observation',
+                        'observation_dates': [], 'classifications': []}
+                parts = [{**base, 'through': units[-1]['id']}]
+                if body_count == 1:
+                    parts = [{**base, 'through': units[0]['id']},
+                             {**base, 'through': units[-1]['id'], 'claim_kind': 'actor_activity',
+                              'participant_scope': 'attributed'}]
+                rows.append({'id': r['id'], 'parts': parts})
+            return json.dumps({'quantity_issues': [], 'paragraphs': rows})
+        fact_count += 1
+        result = assess(p)
+        if fact_count == 1:
+            result['assessments'][1].update(verdict='unknown', support_basis='unknown')
+            result['assessments'][1]['checks']['support'] = 'unknown'
+        return json.dumps(result)
+    report = publish_report(task='报告002415两日收盘价，并说明能否识别机构行为。', draft='',
+        tool_results=receipts, run_scope='bounded-coverage-repair', call=writer,
+        fact_review_call=checker, max_calls=4)
+    assert len(writes) == body_count == fact_count == 2
+    assert report.verification['status'] == 'complete'
+    assert '002415在2025-01-01收盘价为22元/股。' in report.text
+    assert '002415在2025-01-02收盘价为23元/股。' in report.text
+    assert '机构正在建仓' not in report.text
+    assert '这些价格不能确定机构行为' in report.text
+    assert report.artifact['model_calls'] == 8
+    saved = persist_publication(tmp_path, report)
+    assert json.loads((tmp_path/'report_artifacts'/(saved['artifact_id']+'.json')).read_text())['published_text'] == report.text
+
+
+@pytest.mark.parametrize('field', ['value_with_unit', 'date', 'not_a_field'])
+def test_typed_context_reference_keeps_its_source_without_changing_text(field):
+    from trade_compass_agent.runtime.report_revision import apply_assertion_edits
+    catalog, transport, revision, _ = _fixture()
+    ref = next(iter(transport.references))
+    value = {'schema_version': 1, 'edits': [{'id': 'c1',
+        'parts': ['该资料不能识别参与者。'], 'refs': [[ref, field]]}], 'gaps': []}
+    if field == 'not_a_field':
+        with pytest.raises(ValueError):
+            apply_assertion_edits(value, revision, transport, catalog)
+        return
+    result = ReportDocument.model_validate(apply_assertion_edits(value, revision, transport, catalog))
+    assert paragraph_text(result.items[0], result, catalog) == '原始观察：23元/股。'
+    assert paragraph_text(result.items[1], result, catalog) == '该资料不能识别参与者。'
+    assert result.items[1].refs == [transport.references[ref]]

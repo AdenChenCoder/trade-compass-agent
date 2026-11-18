@@ -26,7 +26,7 @@ def test_literal_bound_display_date_does_not_refresh_a_different_task_calendar(t
         payload = json.loads(user)
         if 'paragraphs' in payload:
             body_inputs.extend(payload['paragraphs'])
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'temporal_scope': 'task_present' if current else 'record_date', 'participant_scope': 'none',
                 'through': p['source_units'][-1]['id'], 'distribution_basis': 'none',
                 'operation_code': 0, 'claim_kind': 'observation', 'classifications': [],
                 'observation_dates': ['task_now', '2025-01-02'] if current is True else ['2025-01-02']}]}

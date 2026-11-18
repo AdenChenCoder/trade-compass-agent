@@ -87,7 +87,7 @@ def _publish(tmp_path, text, *, fault=None, premise=None):
         stages.append('body' if 'paragraphs' in payload else 'fact')
         if 'paragraphs' in payload:
             return json.dumps({'quantity_issues': [], 'paragraphs': [
-                {'id': p['id'], 'parts': [{'distribution_basis': 'estimated_or_measured'
+                {'id': p['id'], 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'estimated_or_measured'
                     if p['id'] == 'plan' and premise == 'distribution' else 'none',
                     'through': p['source_units'][-1]['id'], 'operation_code': 1 if p['id'] == 'plan' else 0,
                     'claim_kind': 'observation' if p['id'] == 'good' or premise in {'unbound_value', 'qualitative'}

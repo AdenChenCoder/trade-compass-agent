@@ -28,7 +28,7 @@ def test_no_first_classifier_or_support_label_can_exempt_exact_prose_from_review
         if 'paragraphs' in payload:
             # Reproduce the dangerous first-stage omission: it calls even the
             # unsupported actor statement a purely non-empirical plan.
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'answer', 'parts': [{
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'answer', 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none',
                 'distribution_basis': 'none', 'through': payload['paragraphs'][0]['source_units'][-1]['id'],
                 'operation_code': 1, 'claim_kind': 'judgment', 'observation_dates': [], 'classifications': []}]}]})
         result = assess(payload)
@@ -69,7 +69,7 @@ def test_body_collection_groups_preserve_complete_owned_records_without_acceptin
         if 'paragraphs' not in payload:
             return json.dumps(assess(payload))
         rows = (body_reply(payload)['paragraphs'] if wire == 'legacy_quote' else [
-            {'id': row['id'], 'parts': [{'distribution_basis': 'none', 'through': row['source_units'][-1]['id'], 'operation_code': 0,
+            {'id': row['id'], 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none', 'through': row['source_units'][-1]['id'], 'operation_code': 0,
                 'claim_kind': 'observation', 'observation_dates': [], 'classifications': []}]}
             for row in payload['paragraphs']])
         if fault == 'duplicate_id':
@@ -175,7 +175,7 @@ def test_repairing_rejected_nonempirical_time_metadata_cannot_clear_the_first_re
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'target', 'parts': [{'distribution_basis': 'none',
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'target', 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none',
                 'through': payload['paragraphs'][0]['source_units'][-1]['id'], 'operation_code': operation,
                 'claim_kind': 'judgment', 'observation_dates': ['task_now'], 'classifications': []}]}]})
         result = assess(payload)
@@ -336,7 +336,7 @@ def test_nonempirical_choice_does_not_need_measurement_basis_but_preserves_actua
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'plan', 'parts': [{'distribution_basis': 'none',
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'plan', 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none',
                 'through': payload['paragraphs'][0]['source_units'][-1]['id'], 'operation_code': operation,
                 'claim_kind': kind, 'observation_dates': anchors, 'classifications': []}]}]})
         result = assess(payload)
@@ -389,7 +389,7 @@ def test_missing_temporal_link_can_be_repaired_but_current_scope_and_source_date
         payload = json.loads(user)
         if 'paragraphs' in payload:
             return json.dumps({'quantity_issues': [], 'paragraphs': [
-                {'id': paragraph['id'], 'parts': [{'distribution_basis': 'none', 'through': paragraph['source_units'][-1]['id'],
+                {'id': paragraph['id'], 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none', 'through': paragraph['source_units'][-1]['id'],
                     'operation_code': 0, 'claim_kind': kind if paragraph['id'] == 'current' else 'observation',
                     'observation_dates': ['task_now'] if paragraph['id'] == 'current' else [], 'classifications': []}]}
                 for paragraph in payload['paragraphs']]})

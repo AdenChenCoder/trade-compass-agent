@@ -362,7 +362,32 @@ in the linked regression tests, not in expanding prose exception lists.
   Body wire fields separately represent one complete operation state, claim kind,
   actual observation-date anchors and categorical indicator assertions. Explicit
   calendar anchors remain ISO dates; `task_now` preserves an additional present
-  observation commitment and `unresolved` remains unknown. Provide runtime calendar
+  observation commitment and `unresolved` remains unknown. New reviews independently
+  declare temporal_scope and participant_scope before the broad claim kind.
+  Record dates do not stand in for current-observation commitments, and a
+  judgment label cannot remove an actual participant attribution or exclusion.
+  The runtime combines positive obligations; absence or invalid metadata is an
+  unavailable review. Historical responses remain readable without being valid
+  fresh declarations. A runtime date binding has the display calendar; an
+  explicitly named calendar in author prose remains with semantic source review.
+  Participant claims require admissible owned group observations or substantive
+  quotations, returned as structured source references. Anonymous activity,
+  ordinary prices, titles or another instrument cannot meet that requirement.
+  Admissibility alone never establishes that a quotation actually supports the
+  group, gross/net measure, date, negation or full scope of the conclusion.
+  Named account/company records remain distinct from trader-group composition;
+  an issuer announcement does not establish group trading. Negated measurement
+  keeps its negative meaning rather than becoming a claim of actual measurement.
+  An anaphoric source in a mixed context requires independent reference agreement.
+  Composition and revision receive those same source-method constraints.
+  Cross-date comparisons retain their declared baseline and a current witness;
+  a research opinion naming a security is not itself a newly observed price.
+  An exclusively temporal opinion conflict may be independently reconciled,
+  preserving scalar, actor, explicit-date and categorical obligations.
+  Coverage measures requested answers rather than an unrequested presentation
+  format. A coverage omission does not authorize rewriting known adjacent
+  assertions: bounded repairs may append separate answer paragraphs, and the
+  complete assembled body is reviewed again under the same call budget. Provide runtime calendar
   and timezone context without task instructions or source evidence. A dated
   sample must not become current merely because it is an empirical observation.
   A bound display date does not prove the absence of an additional current

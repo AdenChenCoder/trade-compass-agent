@@ -13,6 +13,9 @@ task_now valuation inside an opinion. "Using the valuation of 0.8 observed on
 "I find valuations attractive" asserts an evaluation without a new measured value;
 "If valuation later falls to 0.8, reconsider" proposes a condition rather than a
 current observation. Preserve these different meanings in any language or wording.
+Before claim_kind, independently answer temporal_scope and participant_scope for EVERY part.
+temporal_scope: no_observation (no empirical observation, including an assessment of what the available evidence can establish), unspecified (an observation without an asserted calendar), record_date (only explicitly dated records), task_present (asserts an observation at the task's present), record_and_present (both a record date and a present observation), unresolved (an asserted time cannot be resolved). A quotation's record timestamp does not answer whether the surrounding claim says it is current: read that additional commitment separately. Record dates are in the reader's stated/display calendar; task-present uses the task reference timezone. Preserve both when they differ. A comparison baseline is an observation too: a task-present observation compared with a prior record uses record_and_present and retains BOTH calendar anchors, including relative dates resolved from report_context. Current evaluation of historical information does not make the original observations current. Use no_observation for a research preference or assessment that introduces no new dated measurement; evaluate adjacent empirical premises separately.
+participant_scope: none (no asserted actual participant composition/activity), recorded_actor (an identified account/person/company acting in a source record, without a trader-group composition claim), attributed (asserted actual trader-group identity, composition or activity), excluded (asserted absence/exclusion of such a group/activity). This is independent of whether the sentence is presented as analysis. Generic/unnamed trader categories are still groups. attributed/excluded concern groups of traders; corporate announcements use recorded_actor, while anonymous asset aggregates use none. These are groups of traders, not groups of assets: an anonymous sector-level flow total does not itself identify a trader class. Possibilities, conditional plans, and explicitly saying the available data cannot identify a group are not assertions of actual group activity or exclusion.
 Each part should contain an independently assessable predicate, including conjoined factual, causal, actor-behavior and qualitative assertions. Do not produce one part per source unit: join prefixes, connectives and argument fragments to the predicate they belong to. Keep negation, conditions and embedding attached to the proposition they qualify. Do not group a new conclusion with neighboring measurements merely because they share a sentence; the original paragraph remains available to resolve fragments.
 Independently identify what EACH part commits to before any evidence is seen. claim_kind is observation (a stated observed fact or available-record claim), comparison (a relationship between observations), actor_activity (an actor's identity, action or absence of action), causal_relation (one thing causing or explaining another), judgment (a recommendation or interpretation without an additional empirical commitment), or discourse (framing or a convention without a factual claim). This is meaning classification, NOT a truth verdict. Split changed commitment types where a source-unit boundary permits. When a unit contains several predicates, preserve them all and classify its empirical commitment rather than hiding observations or actor activity inside a judgment. An actor's asserted behavior remains actor_activity even when presented as technical analysis, an explanation or an opinion. Preserve qualifications and hypothetical scope; do not invent an assertion of actual activity from a proposed action or an inability to identify actors.
 Classify the proposition, not its grammatical tense. An analyst's assessment of whether a holding rationale remains persuasive is a judgment, not a report of the investor's private mental state or a completed strategy change. Any separately asserted market premises remain observations, comparisons or causal/actor claims. An attribution of what an investor actually believed, decided or executed is a different proposition and must retain that commitment.
@@ -27,9 +30,9 @@ unresolved when that required anchor is absent. This distinction never removes
 the actual date of an adjacent price, valuation or completed operation.
 classifications records asserted moving-average categories, without deciding truth. Each entry is {"property":"moving_average_order","value":"bullish_alignment|bearish_alignment|mixed","operator":"eq|ne","scope":"all_mentioned|explicit_subset","periods":[]} records asserted moving-average ordering. operator is eq for an asserted category and ne for its denial; preserve negation, rather than changing it into an opposite category. Record an asserted ordering/alignment of moving averages; preserve the author's claimed category even if you doubt it. all_mentioned concerns the stated moving-average system and uses periods=[]; periods is meaningful only for explicit_subset and contains at least two distinct positive integers explicitly selected by the prose. A separately mentioned moving average does not narrow a whole-system alignment claim to that period. Do not invent period numbers from price values, infer an ordering from merely being above a moving average, or strengthen a bounded trend opinion into an assertion about every moving average. Other empirical commitments retain claim_kind and still need factual assessment. Use [] when no moving-average ordering is asserted.
 Register an ordering that is a NECESSARY condition of a stronger asserted moving-average state, including when that assertion is embedded beside values, comparisons or analysis. Do not omit a claimed category because the surrounding numbers appear inconsistent with it: extraction preserves the reader's commitment, not its truth. Mere price position or a bounded trend opinion does not imply an ordering of the whole system; preserve that distinction and the actual scope.
-distribution_basis 是每个片段都必须回答的独立含义问题，在决定它是否属于计划或研判之前作答。只能选一个字符串：none | estimated_or_measured | estimated | measured。
+distribution_basis 是每个片段都必须回答的独立含义问题，在决定它是否属于计划或研判之前作答。只能选一个字符串：none | estimated_or_measured | estimated | measured | not_measured。
 它问的是：原文是否把某个价位与已存在或以往的成交/筹码分布结构联系起来？对聚集或分散的位置、成本分布的边界、某处分布结构的存在或缺失所作的定性判断，都保留这种来源要求；不要求原文出现统计数字、实测或方法说明。即使这是技术研判或未来行动的依据，也不能把这个既有结构前提改成一般价位作用。这里仅登记原文赋予价位的含义，不判断它是否真实或能否推导。
-一般分布结构用 estimated_or_measured；明确声称来自估算方法用 estimated；明确声称是逐价成交实测用 measured。none 只用于完全没有上述既存分布结构承诺的片段：纯价格观察位、只是假设未来形成某种分布、或明确说明不能确认分布。否定某种既存分布也需要相应来源；表达无法确认则不等于否定其存在。
+一般分布结构用 estimated_or_measured；明确声称来自估算方法用 estimated；明确声称是逐价成交实测用 measured；否认实测属性用 not_measured，不能把否定实测登记为肯定实测。none 只用于完全没有上述既存分布结构承诺的片段：纯价格观察位、只是假设未来形成某种分布、或明确说明不能确认分布。否定某种既存分布也需要相应来源；表达无法确认则不等于否定其存在。
 operation_code is ONE integer selecting a complete operation meaning. It concerns an actor's state-changing order or memory operation, not price/return/valuation/holding/balance observations. Market movements are code 0 even when current. These labels classify meaning, not whether the claim is true:
 0: No assertion about a business operation, and no proposal or unconfirmed operation.
 1: A proposed action, recommendation, conditional watchpoint or authored choice/decision; it does not itself assert execution. This is usually a judgment; retain separately asserted empirical premises.
@@ -44,8 +47,8 @@ operation_code is ONE integer selecting a complete operation meaning. It concern
 10: Categorical non-execution is asserted for a whole HISTORICAL run.
 A decision to continue holding or refrain from buying is code 1, not confirmation that an order did or did not occur. Split an additional completed-operation assertion where a source-unit boundary permits. A rejected attempt does not mean no actions occurred anywhere in the run. Do not soften categorical outcomes into uncertainty or turn absent records into non-execution.
 Resolve the proposition the author commits to, preserving negation, conditions and embedding. Mentioning an operation as the subject of a reporting rule does not assert its occurrence or non-occurrence. Reporting an outcome, proposing an action and performing it are different meanings. A past price observation is not a historical order. Never use a business-operation label as claim_kind; select one of its six categories independently.
-Return only JSON: {"quantity_issues":[{"id":"paragraph id","text":"exact problematic quantity span","reason":"missing unit or numerical scale"}],"paragraphs":[{"id":"input paragraph id","parts":[{"through":"exact source unit id","distribution_basis":"none|estimated_or_measured|estimated|measured","observation_dates":[],"operation_code":0,"claim_kind":"observation","classifications":[]}]}]}.
-Include every paragraph exactly once and every original source unit in contiguous order. Each part must include distribution_basis with one permitted string; omitting it is incomplete interpretation. operation_code must be an integer from 0 through 10, claim_kind one of its six categories, observation_dates an array of the permitted date anchors, and classifications the categorical assertions array. Do not supply invented labels, copied reader text, evidence hints or extra fields.
+Return only JSON: {"quantity_issues":[{"id":"paragraph id","text":"exact problematic quantity span","reason":"missing unit or numerical scale"}],"paragraphs":[{"id":"input paragraph id","parts":[{"through":"exact source unit id","distribution_basis":"none|estimated_or_measured|estimated|measured|not_measured","temporal_scope":"no_observation|unspecified|record_date|task_present|record_and_present|unresolved","participant_scope":"none|recorded_actor|attributed|excluded","observation_dates":[],"operation_code":0,"claim_kind":"observation","classifications":[]}]}]}.
+Include every paragraph exactly once and every original source unit in contiguous order. Each part must include distribution_basis, temporal_scope and participant_scope with permitted strings; omitting it is incomplete interpretation. operation_code must be an integer from 0 through 10, claim_kind one of its six categories, observation_dates an array of the permitted date anchors, and classifications the categorical assertions array. Do not supply invented labels, copied reader text, evidence hints or extra fields.
 Independently inspect whether the reader body itself establishes the meaning of each stated quantity: its dimensional unit and, for ratios/rates, its numerical scale. Do not calculate an implied intended number from other values, use outside conventions to supply a missing percentage sign, or repair what the author probably intended. A dimensional quantity needs a unit established in its assertion or an explicit shared convention in these paragraphs. A bare ratio/rate numeral without an explicit fraction, ratio scale or percent convention is ambiguous. Intrinsically dimensionless multiples such as valuation ratios do not require a currency or percent unit. Securities identifiers, dates, counts and qualitative directions are not missing-unit quantities.
 quantity_issues lists ONLY quantity meaning not established by the body. Copy an exact existing text span with its paragraph id for each issue. Use [] when all quantities are clear. This is NOT evidence review: an unambiguously stated factual error must not be marked as a quantity clarity issue. All paragraphs form one reader context; an explicitly shared unit/scale remains valid across clauses and paragraphs. Do not require repeated units or a fixed phrase. Do not infer a missing convention from evidence, calculated answers, or numerical plausibility."""
 
@@ -128,9 +131,16 @@ def _observation_commitments(part):
                 raise BodyMeaningError('invalid_observation_commitment')
     values = []
     for claim in classifications:
+        if isinstance(claim, dict) and claim.get('property') in {'observation_scope', 'participant_activity'}:
+            allowed = {'observation_scope': {'record_date', 'record_and_present'},
+                       'participant_activity': {'observed_actor', 'attributed', 'excluded'}}
+            if set(claim) != {'property', 'value'} or claim.get('value') not in allowed[claim['property']]:
+                raise BodyMeaningError('invalid_observation_commitment')
+            values.append(dict(claim))
+            continue
         if isinstance(claim, dict) and claim.get('property') == 'distribution_basis':
             if (set(claim) != {'property', 'value'} or not isinstance(claim['value'], str)
-                    or claim['value'] not in {'estimated_or_measured', 'estimated', 'measured'}):
+                    or claim['value'] not in {'estimated_or_measured', 'estimated', 'measured', 'not_measured'}):
                 raise BodyMeaningError('invalid_observation_commitment')
             values.append(dict(claim))
             continue
@@ -179,9 +189,39 @@ def _declared_source_part(part, required):
         raise BodyMeaningError('source_property_declaration_missing')
     basis = part.get('distribution_basis')
     if declared and (not isinstance(basis, str)
-                     or basis not in {'none', 'estimated_or_measured', 'estimated', 'measured'}):
+                     or basis not in {'none', 'estimated_or_measured', 'estimated', 'measured', 'not_measured'}):
         raise BodyMeaningError('source_property_declaration_invalid')
-    result = _canonical_part({key: value for key, value in part.items() if key != 'distribution_basis'})
+    temporal = part.get('temporal_scope')
+    participant = part.get('participant_scope')
+    if required and (temporal is None or participant is None):
+        raise BodyMeaningError('empirical_scope_declaration_missing')
+    if (temporal is not None and (not isinstance(temporal, str) or temporal not in
+            {'no_observation', 'unspecified', 'record_date', 'task_present', 'record_and_present', 'unresolved'})
+            or participant is not None and (not isinstance(participant, str) or participant not in
+                {'none', 'recorded_actor', 'attributed', 'excluded'})):
+        raise BodyMeaningError('empirical_scope_declaration_invalid')
+    result = _canonical_part({key: value for key, value in part.items()
+                              if key not in {'distribution_basis', 'temporal_scope', 'participant_scope'}})
+    if temporal in {'task_present', 'record_and_present', 'unresolved'}:
+        anchors = list(result.get('observation_dates', []))
+        anchor = 'unresolved' if temporal == 'unresolved' else 'task_now'
+        if anchor not in anchors:
+            anchors.append(anchor)
+        result['observation_dates'] = anchors
+        if anchor == 'task_now':
+            result['time_scope'] = 'reference_date'
+    if temporal in {'record_date', 'record_and_present'} and not (
+            set(result.get('observation_dates', [])) - {'task_now'}):
+        raise BodyMeaningError('record_date_anchor_missing')
+    new_claims = []
+    if temporal in {'record_date', 'record_and_present'}:
+        new_claims.append({'property': 'observation_scope', 'value': temporal})
+    if participant in {'recorded_actor', 'attributed', 'excluded'}:
+        new_claims.append({'property': 'participant_activity', 'value': 'observed_actor' if participant == 'recorded_actor' else participant})
+    if new_claims:
+        result.setdefault('observation_dates', [])
+        result['classifications'] = [*result.get('classifications', []), *new_claims]
+
     claims = result.get('classifications', [])
     if declared:
         if not isinstance(claims, list) or any(not isinstance(claim, dict) for claim in claims):
@@ -325,11 +365,17 @@ def factual_assertions(inferences, body_meaning):
             cursor = end
         if any(s['origin'] == 'evidence' for _, _, s in segments) and ''.join(s['text'] for _, _, s in segments) != ''.join(p['text'] for p in parts):
             raise ValueError('owned value locations differ from interpreted body')
+        paragraph_bound_refs = list(dict.fromkeys(ref for _, _, segment in segments
+            if segment['origin'] == 'evidence' and segment.get('field') == 'value_with_unit'
+            for ref in segment['fact_refs']))
         offset = 0
         for part in parts:
             end = offset + len(part['text'])
             owned = [segment for start, stop, segment in segments if start < end and stop > offset
                      and segment['origin'] == 'evidence' and segment.get('field') == 'value_with_unit']
+            bound_dates = [ref for start, stop, segment in segments if start < end and stop > offset
+                           and segment['origin'] == 'evidence' and segment.get('field') == 'date'
+                           for ref in segment['date_refs']]
             offset = end
             if part['kind'] == 'current_outcome':
                 continue
@@ -337,6 +383,8 @@ def factual_assertions(inferences, body_meaning):
             statements.append({'id': claim_id, 'context_id': context_id, 'text': part['text'],
                                'assertion_kind': part['assertion_kind'], 'meaning_kind': part['kind'],
                                'time_scope': part['time_scope'],
+                               **({'paragraph_bound_refs': paragraph_bound_refs} if paragraph_bound_refs else {}),
+                               **({'bound_date_refs': list(dict.fromkeys(bound_dates))} if bound_dates else {}),
                                'bound_fact_refs': list(dict.fromkeys(ref for s in owned for ref in s['fact_refs'])),
                                'time_fact_refs': list(dict.fromkeys(ref for s in owned for ref in s['date_refs'])),
                                **{key: part[key] for key in ('observation_dates', 'classifications') if key in part}})
@@ -349,7 +397,7 @@ def factual_review_statements(statements):
     result = []
     for statement in statements:
         row = {key: value for key, value in statement.items()
-               if key not in {'assertion_kind', 'meaning_kind', 'time_scope'}}
+               if key not in {'assertion_kind', 'meaning_kind', 'time_scope', 'bound_date_refs', 'paragraph_bound_refs'}}
         required = {}
         if statement['assertion_kind'] == 'actor_activity':
             required['participant_activity'] = True

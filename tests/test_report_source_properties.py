@@ -70,7 +70,7 @@ def test_source_property_is_checked_at_published_and_persisted_consumer(tmp_path
         calls.append('body' if 'paragraphs' in payload else 'fact')
         if 'paragraphs' in payload:
             return json.dumps({'quantity_issues': [], 'paragraphs': [
-                {'id': row['id'], 'parts': [{'distribution_basis': requirement if row['id'] == 'target' else 'none', 'through': row['source_units'][-1]['id'], 'operation_code': 1 if row['id'] == 'target' else 0,
+                {'id': row['id'], 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': requirement if row['id'] == 'target' else 'none', 'through': row['source_units'][-1]['id'], 'operation_code': 1 if row['id'] == 'target' else 0,
                     'claim_kind': 'judgment' if row['id'] == 'target' else 'observation',
                     'observation_dates': ['2025-01-02'], 'classifications': []}]}
                 for row in payload['paragraphs']]})
@@ -109,7 +109,7 @@ def test_distribution_requirement_does_not_take_moving_average_fields(value):
 def test_missing_or_invalid_source_answer_is_unavailable_not_implicitly_none(answer):
     from test_report_classifications import BULLISH, publication
     result, _, calls = publication(values=BULLISH, omit_source=answer == 'missing',
-        wire_change={} if answer == 'missing' else {'distribution_basis': answer})
+        wire_change={} if answer == 'missing' else {'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': answer})
     assert result.verification['status'] == 'incomplete' and not result.artifact['review_valid']
     assert result.artifact['factual_model_calls'] == 0 and len(calls) == 1
     assert '多头排列' not in result.artifact['reader_body']

@@ -33,6 +33,7 @@ def check_support_basis(statement, assessment):
                     for key in ('identity_scope', 'time', 'quantity')))
         if not pure_choice:
             return {"status": "unknown", "basis": basis, "reason": "substantive_commitment_needs_support"}
-    if (kind in {"actor_activity", "causal_relation"} or any(commitments.values())) and basis != "direct":
+    if (kind in {"actor_activity", "causal_relation"} or any(commitments.values())
+            or any(c['property'] == 'participant_activity' for c in statement.get('classifications', []))) and basis != "direct":
         return {"status": "unknown", "basis": basis, "reason": "inference_is_not_actor_or_cause_evidence"}
     return {"status": "compatible", "basis": basis, "reason": ""}

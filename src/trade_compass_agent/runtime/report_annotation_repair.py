@@ -75,7 +75,10 @@ def annotation_conflicts(statements, assessments, errors):
             continue
         if (statement['assertion_kind'] != 'judgment' or statement['meaning_kind'] != 'other'
                 or statement['bound_fact_refs'] or statement['time_fact_refs']
-                or statement.get('classifications') or row.get('support_basis') != 'reasoned'
+                or statement.get('classifications')
+                or not (row.get('support_basis') == 'reasoned'
+                    or row.get('support_basis') == 'not_applicable' and any(commitments.values())
+                    and all(reported[key] == 'not_applicable' for key in ('identity_scope', 'time', 'quantity')))
                 or row.get('reported_verdict', row['verdict']) != 'entailed'
                 or not isinstance(reported, dict)
                 or any(value not in {'entailed', 'not_applicable'} for value in reported.values())):

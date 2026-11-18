@@ -60,7 +60,7 @@ def test_estimate_contract_preserves_independent_dates_and_persisted_sources(tmp
         payload = json.loads(user)
         if 'paragraphs' in payload:
             assert 'source_semantics' not in payload
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'distribution_basis': 'none',
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none',
                 'through': p['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
                 'observation_dates': ['task_now'], 'classifications': []}]} for p in payload['paragraphs']]})
         seen.append(payload)
@@ -186,7 +186,7 @@ def test_only_numeric_binding_is_not_a_filter_on_review_sources_or_saved_reader(
     def assessor(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'distribution_basis': 'none',
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none',
                 'through': p['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
                 'observation_dates': ['2025-01-02'], 'classifications': []}]} for p in payload['paragraphs']]})
         seen.append(payload)
@@ -220,7 +220,7 @@ def test_an_unselected_newer_receipt_cannot_replace_the_bound_observation_date()
     def assessor(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'distribution_basis': 'none',
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none',
                 'through': p['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
                 'observation_dates': ['task_now'], 'classifications': []}]} for p in payload['paragraphs']]})
         assert len(payload['receipts']) == 2
@@ -253,7 +253,7 @@ def test_same_run_scan_record_can_anchor_unbound_prose_and_survive_reopening(tmp
     def assessor(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'distribution_basis': 'none',
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none',
                 'through': p['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
                 'observation_dates': ['task_now'], 'classifications': []}]} for p in payload['paragraphs']]})
         quote = next(f for ctx in payload['contexts'].values() for f in ctx['evidence'] if f['metric'] == 'read_result')
@@ -425,7 +425,7 @@ def test_unselected_indicator_remains_addressable_without_changing_body_or_origi
     def assessor(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'distribution_basis': 'none',
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none',
                 'through': p['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'judgment',
                 'observation_dates': ['task_now'], 'classifications': []}]} for p in payload['paragraphs']]})
         seen.append(payload)
@@ -498,7 +498,7 @@ def test_positive_current_qualitative_observation_needs_its_own_date_witness(
     def assessor(system, user):
         p = json.loads(user)
         if 'paragraphs' in p:
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [{'distribution_basis': 'none',
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': row['id'], 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none',
                 'through': row['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'judgment',
                 'observation_dates': ['task_now'], 'classifications': []}]} for row in p['paragraphs']]})
         refs = [row[0] for source in p['source_fact_references']['sources']

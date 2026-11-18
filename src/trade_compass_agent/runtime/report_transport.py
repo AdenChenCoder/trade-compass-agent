@@ -10,7 +10,7 @@ from dataclasses import asdict
 import json
 
 from trade_compass_agent.runtime.report_contract import (
-    EvidenceCatalog, ReportDocument, owned_read_result,
+    EvidenceCatalog, EvidenceValue, ReportDocument, owned_read_result,
 )
 
 
@@ -316,6 +316,16 @@ class ReportTransport:
         for item in value['items']:
             if not isinstance(item, dict) or item.get('type') != 'paragraph' or not isinstance(item.get('parts'), list):
                 continue
+            if not compact and isinstance(item.get('refs'), list):
+                refs = []
+                for ref in item['refs']:
+                    # A typed display reference still names the same source in
+                    # a context-only refs slot; never infer it from prose.
+                    if isinstance(ref, list) and len(ref) == 2 and all(isinstance(v, str) for v in ref):
+                        EvidenceValue.model_validate({'type': 'value', 'ref': ref[0], 'field': ref[1]})
+                        ref = ref[0]
+                    refs.append(ref)
+                item['refs'] = refs
             parts = []
             for part in item['parts']:
                 if compact:

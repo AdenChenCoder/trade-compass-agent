@@ -20,7 +20,12 @@ def report_facts(payload):
 
 def source_review_rows(payload):
     """Explicit positive SOURCE double, independent of the FACT double's label."""
-    return [{'id': row['id'], 'supported': True, 'reason': 'Explicit independent source-review double.'}
+    quotations = [fact['id'] for context in payload.get('source_contexts', {}).values()
+                  for fact in context['evidence'] if fact.get('kind') == 'quotation'
+                  and fact.get('metric') in {'content', 'text', 'snippet', 'excerpt'}]
+    return [{'id': row['id'], 'supported': True, 'reason': 'Explicit independent source-review double.',
+             **({'evidence_refs': quotations} if any(r['property'] == 'participant_activity'
+                  for r in row.get('source_requirements', [])) else {})}
             for row in payload['inferences']]
 
 

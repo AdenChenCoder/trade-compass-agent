@@ -39,7 +39,7 @@ def publication(*, values, prose='均线呈多头排列。', operator='eq', peri
         if 'paragraphs' in payload:
             assert set(payload) == {'paragraphs', 'report_context'}
             assert payload['report_context']['reference_date'] == reference
-            part = {'distribution_basis': 'none',
+            part = {'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none',
                 'through': payload['paragraphs'][0]['source_units'][-1]['id'], 'operation_code': 0,
                 'claim_kind': 'observation', 'observation_dates': list(anchors), 'classifications': [{
                     'property': 'moving_average_order', 'value': 'bullish_alignment', 'operator': operator,

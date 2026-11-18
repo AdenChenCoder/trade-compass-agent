@@ -25,19 +25,36 @@ def is_current_observation(statement, report_context):
     # The blind reader may resolve "today" to the actual calendar date.
     # It retains the same obligation as task_now. Do not collapse historical
     # or multi-date comparisons into the task's present.
+    if statement['time_scope'] != 'reference_date' and _record_observation(statement):
+        return False
     return statement['time_scope'] == 'reference_date' or bool(expected) and dates == [expected]
+
+
+def _record_observation(statement):
+    return (len(statement.get('observation_dates', [])) == 1
+            and 'task_now' not in statement['observation_dates']
+            and any(c['property'] == 'observation_scope' and c['value'] == 'record_date'
+                    for c in statement.get('classifications', [])))
 
 
 def check_statement_time(statement, assessment, context, report_context):
     expected = report_context['reference_date']
     current = is_current_observation(statement, report_context)
+    # Only runtime-rendered date bindings have a mechanically known display
+    # calendar. Author-specified calendars remain with factual/source review.
+    dated_record = (not current and _record_observation(statement)
+                    and bool(statement.get('bound_date_refs')))
+    timezone = report_context['reference_timezone']
+    if dated_record:
+        expected = statement['observation_dates'][0]
+        timezone = report_context.get('display_timezone', 'Asia/Shanghai')
     result = {'scope': statement['time_scope'], 'expected_date': expected,
-              'comparison_timezone': report_context['reference_timezone'],
+              'comparison_timezone': timezone,
               'evidence': [], 'status': 'not_applicable', 'reason': 'not_current_observation'}
     if 'unresolved' in statement.get('observation_dates', []):
         result.update(status='unknown', reason='asserted_date_unresolved')
         return result
-    if not current:
+    if not current and not dated_record:
         return result
     if (statement['assertion_kind'] in {'judgment', 'discourse'}
             and 'task_now' not in statement.get('observation_dates', [])
@@ -53,6 +70,7 @@ def check_statement_time(statement, assessment, context, report_context):
     # A derived price change describes the interval ending at its later operand.
     bound = set(statement['bound_fact_refs'])
     refs = list(dict.fromkeys([*statement['time_fact_refs'],
+        *(statement.get('bound_date_refs', []) if dated_record else []),
         *(ref for ref in assessment['time_evidence'] if ref not in bound)]))
     observations = [facts[ref] for ref in refs if facts[ref]['kind'] != 'identity']
     snapshots = PORTFOLIO_OPERATIONS | {'analyze_portfolio'} | READ_RESULT_OPERATIONS
@@ -63,12 +81,20 @@ def check_statement_time(statement, assessment, context, report_context):
         return result
     observations = [fact for fact in observations if fact['source'] not in snapshots]
     result['evidence'] = [{'ref': fact['id'], 'observed_date': fact['observed_date'],
-                          'comparison_date': observation_date(fact['observed_at'], report_context['reference_timezone'])}
+                          'comparison_date': observation_date(fact['observed_at'], timezone)}
                           for fact in observations]
     if not expected:
         result.update(status='unknown', reason='reference_date_unavailable')
     elif not observations:
         result.update(status='unknown', reason='observation_unavailable')
+    elif (statement['assertion_kind'] == 'comparison'
+            and set(statement.get('observation_dates', [])) - {'task_now', 'unresolved'}):
+        declared = set(statement['observation_dates']) - {'task_now', 'unresolved'} | {expected}
+        result['declared_dates'] = sorted(declared)
+        matched = (any(row['comparison_date'] == expected for row in result['evidence'])
+                   and all(row['comparison_date'] in declared for row in result['evidence']))
+        result.update(status='entailed' if matched else 'unknown',
+                      reason='matched_comparison_dates' if matched else 'observation_not_at_asserted_date')
     elif any(row['comparison_date'] != expected for row in result['evidence']):
         result.update(status='unknown', reason='observation_not_at_asserted_date')
     else:

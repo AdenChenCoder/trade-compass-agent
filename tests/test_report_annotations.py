@@ -42,7 +42,7 @@ def test_time_only_annotation_disagreement_preserves_empirical_requirements(scen
     def checker(system, user):
         payload = json.loads(user)
         if 'paragraphs' in payload:
-            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'target', 'parts': [{
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': 'target', 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none',
                 'distribution_basis': 'none', 'through': payload['paragraphs'][0]['source_units'][-1]['id'],
                 'operation_code': 1 if scene in {'plan', 'named_plan'} else 0,
                 'claim_kind': 'actor_activity' if scene == 'actor' else 'observation' if scene == 'observation' else 'judgment',
@@ -74,7 +74,7 @@ def test_time_only_annotation_disagreement_preserves_empirical_requirements(scen
 
 
 @pytest.mark.parametrize('scene,accepted', [
-    ('opinion', True), ('event_interpretation', True),
+    ('opinion', True), ('event_interpretation', True), ('evidence_limit', True), ('actor_na', False),
     ('actor', False), ('cause', False), ('qualitative_observation', False), ('bound_stale_value', False),
 ])
 @pytest.mark.parametrize('fault', [None, 'foreign_id', 'duplicate', 'missing', 'bad_metadata', 'unowned_reference',
@@ -84,6 +84,8 @@ def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obliga
         'opinion': '从所给资料看，倾向保持观察。',
         'event_interpretation': '结合所给注册证公告，相关产品进展值得继续跟踪。',
         'actor': '这些统计证明当日非主力出货。',
+        'actor_na': '这些统计证明当日非主力出货。',
+        'evidence_limit': '该总量指标不能识别特定参与者的出货行为。',
         'cause': '注册证公告直接导致了当日股价上涨。',
         'qualitative_observation': '002415今天盘中存在价格起伏。',
         'bound_stale_value': '600928当前市净率为',
@@ -98,10 +100,10 @@ def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obliga
     calls, repair_inputs = [], []
 
     def row(identifier, *, target=False, repaired=False):
-        pure = target and scene == 'opinion'
+        pure = target and scene in {'opinion', 'actor_na', 'evidence_limit'}
         return {'id': identifier, 'comparison': '独立核对原文承诺与原始资料。', 'verdict': 'entailed',
-            'support_basis': 'reasoned' if target else 'direct', 'time_evidence': [],
-            'commitments': {'participant_activity': target and scene == 'actor',
+            'support_basis': 'not_applicable' if target and scene in {'actor_na', 'evidence_limit'} and not repaired else 'reasoned' if target else 'direct', 'time_evidence': [],
+            'commitments': {'participant_activity': target and (scene in {'actor', 'actor_na'} or scene == 'evidence_limit' and not repaired),
                 'causal_relation': target and scene in {'cause', 'event_interpretation'} and not (repaired and accepted)},
             'checks': {'identity_scope': 'not_applicable' if pure else 'entailed',
                 'time': 'not_applicable' if target else 'entailed',
@@ -151,7 +153,7 @@ def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obliga
         calls.append('body' if 'paragraphs' in payload else 'fact')
         if 'paragraphs' in payload:
             return json.dumps({'quantity_issues': [], 'paragraphs': [
-                {'id': p['id'], 'parts': [{'distribution_basis': 'none', 'through': p['source_units'][-1]['id'], 'operation_code': 0,
+                {'id': p['id'], 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none', 'through': p['source_units'][-1]['id'], 'operation_code': 0,
                     'claim_kind': 'observation' if p['id'] == 'good' else 'judgment', 'classifications': [],
                     'observation_dates': ['task_now'] if p['id'] == 'target' and scene in {
                         'opinion', 'qualitative_observation', 'bound_stale_value'} else []}]}

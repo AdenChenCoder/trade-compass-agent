@@ -29,8 +29,9 @@ def _parts_between(segments, start, stop):
 def assertion_edit_plan(document, catalog, statements, owners, failed):
     """Address failed assertions only when the original bindings remain atomic.
 
-    Categories and verdicts come from completed upstream review. Text addressing
-    here establishes neither a claim's meaning nor its truth.
+    Owned interpretation supplies exact addresses. Completed failures and
+    unresolved review can both need repair; neither an edit plan nor a changed
+    span establishes meaning or truth. The complete result is reviewed anew.
     """
     by_id = {row['id']: row for row in statements}
     if not any(failed.intersection(ids) and set(ids) - failed for ids in owners.values()):
@@ -67,7 +68,7 @@ def assertion_edit_plan(document, catalog, statements, owners, failed):
 
 
 def assertion_edit_schema(plan, parts_schema):
-    return {'type': 'object', 'additionalProperties': False,
+    schema = {'type': 'object', 'additionalProperties': False,
         'required': ['schema_version', 'edits', 'gaps'], 'properties': {
             'schema_version': {'const': 1},
             'edits': {'type': 'array', 'minItems': len(plan['edits']), 'maxItems': len(plan['edits']),
@@ -85,6 +86,16 @@ def assertion_edit_schema(plan, parts_schema):
                     'text': {'type': 'string', 'minLength': 1, 'maxLength': 1000}}}},
         }}
 
+    if plan.get('allow_additions'):
+        schema['properties']['additions'] = {'type': 'array', 'maxItems': 20, 'items': {
+            'type': 'object', 'additionalProperties': False,
+            'required': ['id', 'type', 'section', 'parts', 'refs'], 'properties': {
+                'id': {'type': 'string', 'minLength': 1, 'maxLength': 80},
+                'type': {'const': 'paragraph'}, 'section': {'type': 'string'},
+                'parts': {'type': 'array', 'maxItems': 80, 'items': parts_schema},
+                'refs': {'type': 'array', 'maxItems': 30, 'items': {'type': 'string'}}}}}
+    return schema
+
 
 def apply_assertion_edits(value, revision, transport, catalog):
     """Reassemble original runs and changed spans, then let the normal review run.
@@ -99,7 +110,8 @@ def apply_assertion_edits(value, revision, transport, catalog):
     # Every identity, binding, extent and real-change check below still applies.
     if isinstance(value, list):
         value = {'schema_version': 1, 'edits': value, 'gaps': []}
-    if (not isinstance(value, dict) or set(value) != {'schema_version', 'edits', 'gaps'}
+    if (not isinstance(value, dict) or set(value) not in ({'schema_version', 'edits', 'gaps'},
+                {'schema_version', 'edits', 'gaps', 'additions'})
             or type(value['schema_version']) is not int or value['schema_version'] != 1
             or not isinstance(value['edits'], list) or not isinstance(value['gaps'], list)
             or len(value['gaps']) > 20):
@@ -159,6 +171,19 @@ def apply_assertion_edits(value, revision, transport, catalog):
                     break
             items.append({'id': identifier, 'type': 'paragraph', 'section': item.section,
                           'parts': parts, 'refs': refs})
+    additions = value.get('additions', [])
+    if (not isinstance(additions, list) or len(additions) > 20
+            or additions and not plan.get('allow_additions')):
+        raise ValueError('unrequested coverage additions')
+    for row in additions:
+        if not isinstance(row, dict) or row.get('type') != 'paragraph' or row.get('id') in reserved:
+            raise ValueError('invalid coverage addition identity')
+        decoded, _, errors = parse_report_items(transport.decode_document({'schema_version': 1, 'items': [row]}))
+        if errors or len(decoded.items) != 1 or not isinstance(decoded.items[0], Paragraph):
+            raise ValueError('invalid coverage addition')
+        reserved.add(decoded.items[0].id)
+        items.append(decoded.items[0].model_dump())
+        changed = True
     if not changed:
         raise ValueError('semantic edits did not change the reader body')
     for row in value['gaps']:
