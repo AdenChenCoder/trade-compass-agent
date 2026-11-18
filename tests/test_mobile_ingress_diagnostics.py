@@ -50,6 +50,7 @@ def test_network_failure_does_not_print_provider_exception(monkeypatch):
     monkeypatch.setattr(probe_module.socket, "create_connection", failed_connect)
     result = probe_module.probe("private.example.ts.net", "1.1.1.1", "private-id")
     assert not result["ok"] and result["stage"] == "tcp"
+    assert result["cause"] == "socket_error"
     assert "private" not in json.dumps(result)
 
 
@@ -97,6 +98,7 @@ def test_real_https_identity_and_certificate_verification(tmp_path, monkeypatch,
         assert not wrong_identity["ok"] and wrong_identity["stage"] == "identity"
         wrong_host = probe_module.probe("another.example.ts.net", "1.1.1.1", "fixture")
         assert not wrong_host["ok"] and wrong_host["stage"] == "tls"
+        assert wrong_host["cause"] == "certificate_verification"
         assert capsys.readouterr().out == ""
     finally:
         server.shutdown()

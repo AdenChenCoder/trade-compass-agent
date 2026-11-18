@@ -49,9 +49,21 @@ def probe(host, address, computer_id):
                         result["stage"] = "complete"
                 finally:
                     client.close()
+    except ssl.SSLCertVerificationError:
+        result["cause"] = "certificate_verification"
+    except ssl.SSLEOFError:
+        result["cause"] = "tls_eof"
+    except ConnectionResetError:
+        result["cause"] = "connection_reset"
+    except TimeoutError:
+        result["cause"] = "timeout"
+    except ssl.SSLError:
+        result["cause"] = "tls_protocol"
+    except OSError:
+        result["cause"] = "socket_error"
     except Exception:
         # No provider exception strings: they can include the private target.
-        pass
+        result["cause"] = "response_invalid"
     return result
 
 
