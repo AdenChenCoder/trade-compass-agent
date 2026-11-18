@@ -9,7 +9,7 @@ from trade_compass_agent.runtime.report_publication import persist_publication, 
 
 
 @pytest.mark.parametrize('wrong_date_binding', [False, True])
-@pytest.mark.parametrize('current', [False, True])
+@pytest.mark.parametrize('current', [False, True, 'resolved_iso'])
 def test_literal_bound_display_date_does_not_refresh_a_different_task_calendar(tmp_path, current, wrong_date_binding):
     body_inputs = []
     def writer(system, user):
@@ -29,7 +29,7 @@ def test_literal_bound_display_date_does_not_refresh_a_different_task_calendar(t
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{
                 'through': p['source_units'][-1]['id'], 'distribution_basis': 'none',
                 'operation_code': 0, 'claim_kind': 'observation', 'classifications': [],
-                'observation_dates': ['task_now', '2025-01-02'] if current else ['2025-01-02']}]}
+                'observation_dates': ['task_now', '2025-01-02'] if current is True else ['2025-01-02']}]}
                 for p in payload['paragraphs']]})
         return json.dumps(assess(payload))
     receipt = json.dumps({'symbol': '002415', 'price': 22, 'timestamp':

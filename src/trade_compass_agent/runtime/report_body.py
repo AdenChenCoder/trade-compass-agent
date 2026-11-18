@@ -2,9 +2,6 @@
 from __future__ import annotations
 from datetime import date
 
-from trade_compass_agent.runtime.report_contract import observation_date
-from trade_compass_agent.runtime.report_reading import DISPLAY_TIMEZONE
-
 
 BODY_MEANING = """Read ONLY the supplied reader paragraphs. No task instructions, execution evidence or source records are supplied. Interpret the author's exact commitments; do not decide truth or repair the meaning to fit your knowledge.
 Partition EACH input text by selecting the supplied source_units, not by copying or rewriting text. Each part supplies through, the exact ID of its last unit. The first part starts at the FIRST unit, and every next part starts immediately after the previous through unit. End the final part at the LAST supplied unit. This covers every original character, including framing, punctuation and spacing; there is no way to skip a prefix or a gap. Do not return text, character offsets or new units. Source-unit boundaries are mechanical addressing aids, not truth or meaning labels. Combine adjacent units to keep negation, conditions and embedding attached; split independent assertions where a unit boundary permits.
@@ -333,12 +330,6 @@ def factual_assertions(inferences, body_meaning):
             end = offset + len(part['text'])
             owned = [segment for start, stop, segment in segments if start < end and stop > offset
                      and segment['origin'] == 'evidence' and segment.get('field') == 'value_with_unit']
-            date_refs = [ref for start, stop, segment in segments if start < end and stop > offset
-                         and segment['origin'] == 'evidence' and segment.get('field') == 'date'
-                         for ref in segment['date_refs']]
-            by_ref = {fact['id']: fact for fact in contexts[context_id]['evidence']}
-            display_dates = list(dict.fromkeys(observation_date(by_ref[ref]['observed_at'], DISPLAY_TIMEZONE)
-                                               for ref in date_refs))
             offset = end
             if part['kind'] == 'current_outcome':
                 continue
@@ -346,7 +337,6 @@ def factual_assertions(inferences, body_meaning):
             statements.append({'id': claim_id, 'context_id': context_id, 'text': part['text'],
                                'assertion_kind': part['assertion_kind'], 'meaning_kind': part['kind'],
                                'time_scope': part['time_scope'],
-                               **({'bound_display_dates': display_dates} if display_dates and None not in display_dates else {}),
                                'bound_fact_refs': list(dict.fromkeys(ref for s in owned for ref in s['fact_refs'])),
                                'time_fact_refs': list(dict.fromkeys(ref for s in owned for ref in s['date_refs'])),
                                **{key: part[key] for key in ('observation_dates', 'classifications') if key in part}})

@@ -25,31 +25,19 @@ def is_current_observation(statement, report_context):
     # The blind reader may resolve "today" to the actual calendar date.
     # It retains the same obligation as task_now. Do not collapse historical
     # or multi-date comparisons into the task's present.
-    if statement['time_scope'] != 'reference_date' and _bound_display_anchor(statement):
-        return False
     return statement['time_scope'] == 'reference_date' or bool(expected) and dates == [expected]
-
-
-def _bound_display_anchor(statement):
-    dates = statement.get('observation_dates', [])
-    return len(dates) == 1 and dates == statement.get('bound_display_dates')
 
 
 def check_statement_time(statement, assessment, context, report_context):
     expected = report_context['reference_date']
     current = is_current_observation(statement, report_context)
-    display_anchor = not current and _bound_display_anchor(statement)
-    timezone = report_context['reference_timezone']
-    if display_anchor:
-        expected = statement['observation_dates'][0]
-        timezone = report_context['display_timezone']
     result = {'scope': statement['time_scope'], 'expected_date': expected,
-              'comparison_timezone': timezone,
+              'comparison_timezone': report_context['reference_timezone'],
               'evidence': [], 'status': 'not_applicable', 'reason': 'not_current_observation'}
     if 'unresolved' in statement.get('observation_dates', []):
         result.update(status='unknown', reason='asserted_date_unresolved')
         return result
-    if not current and not display_anchor:
+    if not current:
         return result
     if (statement['assertion_kind'] in {'judgment', 'discourse'}
             and 'task_now' not in statement.get('observation_dates', [])
@@ -75,7 +63,7 @@ def check_statement_time(statement, assessment, context, report_context):
         return result
     observations = [fact for fact in observations if fact['source'] not in snapshots]
     result['evidence'] = [{'ref': fact['id'], 'observed_date': fact['observed_date'],
-                          'comparison_date': observation_date(fact['observed_at'], timezone)}
+                          'comparison_date': observation_date(fact['observed_at'], report_context['reference_timezone'])}
                           for fact in observations]
     if not expected:
         result.update(status='unknown', reason='reference_date_unavailable')

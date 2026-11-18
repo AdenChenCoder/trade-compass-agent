@@ -365,11 +365,9 @@ in the linked regression tests, not in expanding prose exception lists.
   observation commitment and `unresolved` remains unknown. Provide runtime calendar
   and timezone context without task instructions or source evidence. A dated
   sample must not become current merely because it is an empirical observation.
-  An explicit runtime date binding retains its display calendar through review.
-  When its single literal anchor matches that bound date, compare the value's
-  observation in the display timezone; an equal task-date string does not make
-  it task-present. An additional `task_now` commitment still uses the task
-  timezone. Borrowing another observation's date cannot refresh the bound value.
+  A bound display date does not prove the absence of an additional current
+  commitment. Preserve the distinction between the record timestamp and the
+  observation the reader claims is current; neither may erase the other.
   The operation code chooses a valid combination of
   meaning, outcome and scope instead of asking the model to cross-fill three
   related fields. Exact typed decoding maps into the existing canonical types
