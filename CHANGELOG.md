@@ -2,6 +2,13 @@
 
 This project follows [Semantic Versioning](https://semver.org/) and records user-visible changes here.
 
+## [0.5.11] - 2026-11-18
+
+- Build the mobile connection helper with Go 1.27.4 to fix TLS ClientHello
+  compatibility with network inspection devices. Retain normal certificate
+  verification and default hybrid key exchange, without changing the Tailscale
+  SDK, public address, node identity or paired devices.
+
 ## [0.5.10] - 2026-11-18
 
 - Deliver ordinary task reports as the agent wrote them, without mandatory

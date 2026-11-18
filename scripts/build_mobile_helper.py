@@ -14,7 +14,9 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "scripts/mobile-funnel-probe"
 BUNDLE = ROOT / "src/trade_compass_agent/mobile_bin"
-GO_VERSION = "go1.27.1"
+# Go 1.27.4 fixes certificate-signature ClientHello compatibility with TLS
+# inspectors while retaining the default hybrid key exchange (tailscale#21708).
+GO_VERSION = "go1.27.4"
 TARGETS = ("darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64")
 
 
