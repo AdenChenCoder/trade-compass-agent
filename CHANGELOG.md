@@ -2,7 +2,7 @@
 
 This project follows [Semantic Versioning](https://semver.org/) and records user-visible changes here.
 
-## [0.5.10] - Unreleased
+## [0.5.10] - 2026-11-18
 
 - Deliver ordinary task reports as the agent wrote them, without mandatory
   content review, structured rewriting or review-driven publication failures.
@@ -27,6 +27,10 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
   internal verification JSON. Keep report text and actual error messages visible.
 - Require Soup Sieve 4 or later to include its selector-performance security fix.
 - Require dnspython 2.9.2 or later to include its zone parser resource-use fix.
+- Temporarily except GHSA-fc5q-39xc-vjpf in the build/test-only picomatch
+  dependency, with user authorization while no patched version is available.
+  Remove the exception when a patched version becomes available; other dependency
+  and signature checks remain enabled.
 
 ## 0.5.9
 
