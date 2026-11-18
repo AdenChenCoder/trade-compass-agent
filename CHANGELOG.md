@@ -4,42 +4,27 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 
 ## [0.5.10] - Unreleased
 
-- Preserve explicit historical dates separately from current observations, and
-  check stated moving-average categories against the same calculation used by
-  the tools. Normal period subsets and negated categories keep their meaning.
-- Review independently assessable assertions within reader paragraphs, requiring
-  complete assessment coverage before publication. Keep original context for
-  natural phrasing without letting correct neighboring numbers prove an
-  unsupported conclusion. Round percentage display without changing raw facts
-  or turning small nonzero observations into zero.
-  Preserve body-only commitment types through review: an actor or causal claim
-  requires its own evidence and cannot become a qualitative interpretation of
-  an otherwise correct measurement.
-- Support an independently configured local factual reviewer. Separate task
-  coverage from evidence entailment; unavailable or inconclusive factual review
-  keeps the report incomplete. Both review roles retain the original deadline.
-  Semantic review uses bounded reasoning rather than the formatting mode;
-  private reasoning is excluded from the published body and saved evidence.
-- Render current execution outcomes from actual operation receipts. Independent
-  body interpretation prevents empty receipts from being accepted as proof that
-  no operation happened, while preserving historical statements and plans.
-- Preserve decisions based on user-supplied rules without treating the request
-  as proof of market facts or completed trades.
-- Apply bounded semantic revision to internal learning documents, retaining
-  verified observations when a correction remains incomplete.
-- Check quantity units and numerical scale from the reader body before consulting
-  evidence, while accepting explicit shared units and concise valid expressions.
-- Preserve the scheduled business date and display timezone through report
-  writing, factual review and saved evidence; old observations cannot acquire
-  the date of a later review.
+- Deliver ordinary task reports as the agent wrote them, without mandatory
+  content review, structured rewriting or review-driven publication failures.
+  Unreviewed reports are not labelled fact-checked. Actual data failures,
+  execution limits and uncertain operation outcomes remain visible.
+- Render current execution outcomes from original operation receipts, keeping
+  confirmed trades distinct from rejections and unknown outcomes. Preserve the
+  original answer, receipts and historical records without replaying operations.
+- Review the quality of lessons learned from saved reports and records before
+  adding them to searchable memory. Retain historical dates, conditions and
+  uncertainty; unavailable or rejected learning does not retract the report.
+  Keep existing direct memory, scheduled memory, knowledge and Skill rules at
+  their previous scope, without the new blanket factual review of all writes.
 - Present scheduled task reports as natural paragraphs with expandable sources on
   mobile. Keep original evidence, calculation results and incomplete-task status
-  available; review factual meaning separately from wording style.
+  available.
 - Preserve expanded sources and citation focus through mobile background refresh,
   while retaining full-message copy and new-content updates.
-- Ground automatic report learning in its original run evidence. Build memory
-  extracts from complete selected records without rewriting them, and make
-  truncated memory search results explicit.
+- Build memory extracts from complete selected records without rewriting them,
+  and make truncated memory search results explicit.
+- Show normal unreviewed task steps as generated reports rather than exposing
+  internal verification JSON. Keep report text and actual error messages visible.
 - Require Soup Sieve 4 or later to include its selector-performance security fix.
 - Require dnspython 2.9.2 or later to include its zone parser resource-use fix.
 
