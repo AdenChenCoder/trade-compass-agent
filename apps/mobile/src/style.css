@@ -233,6 +233,11 @@ input, textarea { display: block; background: var(--surface); border: 1px solid 
 input::placeholder, textarea::placeholder { color: var(--muted-text); }
 textarea { resize: vertical; min-height: 84px; }
 details { color: var(--muted-text); font-size: 13px; }
+.report-sources { margin-top: 20px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.report-sources summary { padding: 12px 0; cursor: pointer; }
+.report-sources > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.markdown sup a { display: inline-flex; min-width: 24px; min-height: 28px; align-items: center; justify-content: center; }
+.report-sources :target, .report-sources :focus { scroll-margin-block: 16px; }
 summary { cursor: pointer; min-height: 44px; padding: 10px 0; }
 details p { line-height: 1.9; margin: 8px 0; }
 details button { margin: 8px 0; }

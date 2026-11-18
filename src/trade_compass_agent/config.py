@@ -149,10 +149,13 @@ class LLMConfig:
     vision_model: str = ""  # fallback model for vision tasks (e.g. gpt-4o-mini)
     vision_provider: str = ""  # provider for vision_model (defaults to main provider)
     vision_api_key_env: str = ""  # API key env for vision provider (defaults to main)
+    local_report_review_model: str = ""  # optional independent LM Studio factual reviewer
 
     def __post_init__(self) -> None:
         if type(self.native_max_tool_calls) is not int or self.native_max_tool_calls < 1:
             raise ValueError("llm.native_max_tool_calls must be an integer >= 1")
+        if not isinstance(self.local_report_review_model, str):
+            raise ValueError("llm.local_report_review_model must be a string")
 
 
 @dataclass(frozen=True)
@@ -421,6 +424,7 @@ def load_app_config(path: Path | None = None) -> AppConfig:
             vision_model=str(llm_raw.get("vision_model", "")),
             vision_provider=str(llm_raw.get("vision_provider", "")),
             vision_api_key_env=str(llm_raw.get("vision_api_key_env", "")),
+            local_report_review_model=llm_raw.get("local_report_review_model", ""),
         ),
         debate=DebateConfig(
             max_debate_rounds=int(debate_raw.get("max_debate_rounds", 2)),

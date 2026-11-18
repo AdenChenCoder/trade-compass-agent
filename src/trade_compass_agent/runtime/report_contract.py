@@ -10,7 +10,7 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN, localcontext
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
@@ -59,12 +59,34 @@ class Inference(Item):
     refs: list[str] = Field(min_length=1, max_length=20, description="引用事实目录id或本报告中fact/calculation条目的id；条件和其他研判不是证据")
 
 
+class Prose(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    type: Literal["text"]
+    text: str = Field(min_length=1, max_length=2500)
+
+
+class EvidenceValue(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    type: Literal["value"]
+    ref: str = Field(description="事实id、fact条目id或calculation条目id；不是正文段落id")
+    field: Literal["value_with_unit", "subject", "account", "date", "label"] = Field(
+        description="value_with_unit是完整的带单位数值，例如22元/股或4.55%，不能再补单位。计算仅支持此字段。日期不从检索时间推测。")
+
+
+class Paragraph(Item):
+    """Author-owned prose with runtime-owned values; meaning still needs review."""
+    type: Literal["paragraph"]
+    parts: list[Annotated[Prose | EvidenceValue, Field(discriminator="type")]] = Field(min_length=1, max_length=80)
+    refs: list[str] = Field(default_factory=list, max_length=30,
+                            description="该段判断的额外依据；parts中的引用自动计入")
+
+
 class Gap(Item):
     type: Literal["gap"]
     text: str = Field(min_length=1, max_length=1000)
 
 
-ReportItem = Annotated[Observation | Calculation | Condition | Inference | Gap,
+ReportItem = Annotated[Observation | Calculation | Condition | Inference | Paragraph | Gap,
                        Field(discriminator="type")]
 
 
@@ -106,8 +128,32 @@ class Fact:
     timeframe: str = ""
     scope: str = ""
 
+    def observation_date(self, timezone_name: str) -> str | None:
+        """Calendar date of the original observation, never its retrieval."""
+        return observation_date(self.observed_at, timezone_name)
+
+    @property
+    def display_value_with_unit(self) -> str:
+        value = self.value
+        if self.kind == 'classification' and self.metric == 'ma_alignment':
+            return {'bullish_alignment': '多头排列', 'bearish_alignment': '空头排列',
+                    'mixed': '混合排列', 'insufficient_data': '资料不足'}[value]
+        if self.kind == 'percentage' and self.unit == '%':
+            number = Decimal(value)
+            if number == 0:
+                value = '0'
+            elif abs(number) >= Decimal('0.01'):
+                with localcontext() as display_context:
+                    display_context.rounding = ROUND_HALF_EVEN
+                    value = f'{number:.2f}'.rstrip('0').rstrip('.')
+        return value + self.unit
+
     def display(self) -> str:
         context = " · ".join(x for x in (self.subject, self.account) if x)
+        return f"{context + '：' if context else ''}{self.label} {self.display_value_with_unit}（{self.context()}）"
+
+    def context(self) -> str:
+        """Exact observation context shared by audit and reader presentations."""
         stamp = self.observed_at or "时点未提供"
         details = json.loads(self.scope) if self.scope else {}
         labels = {"timeframe": "周期", "adjustment": "复权口径", "classification": "分类来源",
@@ -123,7 +169,7 @@ class Fact:
         if details.get("pnl_basis") == "fifo_after_entry_and_exit_fees":
             notes.append("FIFO净结算，已扣分摊买卖费用")
         scope = "；" + "；".join(notes) if notes else ""
-        return f"{context + '：' if context else ''}{self.label} {self.value}{self.unit}（{stamp}{scope}；{self.source}）"
+        return f"{stamp}{scope}；{self.source}"
 
 
 # These are producer field contracts, not phrases recognized in generated prose.
@@ -169,6 +215,15 @@ FIELDS = {
     "snippet": ("来源摘要", "", "quotation"), "excerpt": ("来源原文", "", "quotation"),
     "text": ("来源原文", "", "quotation"),
 }
+# The same producer key may describe a different business quantity. In CYQ,
+# avg_cost is a distribution estimate, never the owner's portfolio entry cost.
+CHIP_FIELDS = {
+    "avg_cost": ("筹码平均成本估算", "元/股", "chip_cost"),
+    "cost_90_low": ("90%筹码成本估算下沿", "元/股", "chip_cost"),
+    "cost_90_high": ("90%筹码成本估算上沿", "元/股", "chip_cost"),
+    "cost_70_low": ("70%筹码成本估算下沿", "元/股", "chip_cost"),
+    "cost_70_high": ("70%筹码成本估算上沿", "元/股", "chip_cost"),
+}
 EVIDENCE_TOOLS = frozenset({
     "analyze_portfolio", "get_bars", "batch_get_bars", "sina_realtime_quote",
     "get_market_pulse", "get_market_constraints", "get_fund_flow", "get_chip_distribution",
@@ -177,9 +232,32 @@ EVIDENCE_TOOLS = frozenset({
     "search_stock_news", "batch_search_news", "search_announcements", "search_concept_boards", "get_events",
 })
 PORTFOLIO_OPERATIONS = {"builtin.check_positions", "builtin.refresh_market_prices", "builtin.scan_portfolio_exits"}
+READ_RESULT_OPERATIONS = {"builtin.check_exit_signals"}
+RECORD_EVIDENCE_TOOLS = EVIDENCE_TOOLS | PORTFOLIO_OPERATIONS | READ_RESULT_OPERATIONS
 _NON_OBSERVATIONS = {"query", "arguments", "params", "prompt", "analysis", "summary",
                      "reasoning", "warnings", "error", "retry_hint", "hint", "note",
                      "interpretation", "task", "available", "_meta", "metadata"}
+
+
+def excluded_observation(value):
+    """Producer-declared exclusions, shared by fact and receipt selection."""
+    meta = value.get('_meta') if isinstance(value.get('_meta'), dict) else {}
+    return (any(value.get(k) or meta.get(k) for k in ('is_sample', 'is_synthetic', 'synthetic', 'error'))
+        or any(isinstance(value.get(k), str) and value[k] in {'sample', 'synthetic', 'disabled'}
+               for k in ('source', 'provider', 'data_status'))
+        or meta.get('source') in {'sample', 'synthetic'}
+        or value.get('has_real_fundamentals') is False)
+
+
+def owned_read_result(tool, result):
+    """A real read remains evidence of its returned record, not inferred contents."""
+    if tool not in RECORD_EVIDENCE_TOOLS or not isinstance(result, dict):
+        return False
+    rows = [result]
+    if isinstance(result.get('data'), dict):
+        rows.append(result['data'])
+    return all(not excluded_observation(row) and row.get('ok') is not False
+        and row.get('available') is not False and row.get('unavailable') is not True for row in rows)
 
 
 def _number(value) -> Decimal:
@@ -198,12 +276,24 @@ def _pointer(token) -> str:
     return str(token).replace("~", "~0").replace("/", "~1")
 
 
+def observation_date(value, timezone_name):
+    """Use one calendar for instant comparison; leave date-only values intact."""
+    if not value:
+        return None
+    stamp = datetime.fromisoformat(value)
+    if stamp.tzinfo:
+        stamp = stamp.astimezone(ZoneInfo(timezone_name))
+    return stamp.date().isoformat()
+
+
 def observation_time(value, zone="Asia/Shanghai"):
     """Normalize observations, without promoting request times to observations."""
     if not isinstance(value, str):
         return None
     try:
-        if len(value) == 10:
+        if len(value) in {8, 10}:
+            # ISO basic dates (YYYYMMDD), used by trading-date providers,
+            # have the same date precision as YYYY-MM-DD, not midnight time.
             return date.fromisoformat(value).isoformat()
         stamp = datetime.fromisoformat(value)
         if stamp.tzinfo is None:
@@ -242,6 +332,13 @@ class EvidenceCatalog:
                 catalog._visit(data["data"], {}, "/data", rid, tool)
             if tool in EVIDENCE_TOOLS:
                 catalog._visit(data, {}, "", rid, tool)
+            if tool in READ_RESULT_OPERATIONS and owned_read_result(tool, data):
+                # Quote the exact returned record. Do not turn missing fields
+                # into empty collections, derive a count or invent a date.
+                fid = hashlib.sha256(rid.encode()).hexdigest()[:24]
+                catalog.facts[fid] = Fact(fid, rid, '', '本轮退出预警扫描', '', 'read_result',
+                    '原始扫描回执', raw, '', None, 'quotation', tool,
+                    scope=json.dumps({'record_scope': 'run_read_result'}))
         unique = {}
         for fact in catalog.facts.values():
             identity = tuple(value for key, value in asdict(fact).items() if key not in {"id", "receipt_id", "pointer"})
@@ -284,10 +381,7 @@ class EvidenceCatalog:
         if not isinstance(value, dict):
             return
         meta = value.get("_meta") if isinstance(value.get("_meta"), dict) else {}
-        if (any(value.get(k) or meta.get(k) for k in ("is_sample", "is_synthetic", "synthetic", "error"))
-                or any(isinstance(value.get(k), str) and value[k] in {"sample", "synthetic", "disabled"} for k in ("source", "provider", "data_status"))
-                or meta.get("source") in {"sample", "synthetic"}
-                or value.get("has_real_fundamentals") is False):
+        if excluded_observation(value):
             return
         context = {**inherited}
         parts = path.split("/")
@@ -323,11 +417,16 @@ class EvidenceCatalog:
                 continue
             metric = {"O": "open", "H": "high", "L": "low", "C": "close", "V": "volume"}.get(key, key) if compact_bar else key
             descriptor = FIELDS.get(metric)
+            if tool == 'get_chip_distribution' and not path and metric in CHIP_FIELDS:
+                descriptor = None if value.get('unavailable') is True else CHIP_FIELDS[metric]
+            if tool == 'compute_ma' and not path and key == 'trend' and isinstance(item, str) and item in {
+                    'bullish_alignment', 'bearish_alignment', 'mixed', 'insufficient_data'}:
+                metric, descriptor = 'ma_alignment', ('均线排列', '', 'classification')
             if path.endswith("/ma") and key.startswith("MA") and key[2:].isdigit():
                 descriptor = (key, "元/股", "moving_average")
             if descriptor and isinstance(item, (str, int, float)) and not isinstance(item, bool):
                 label, unit, kind = descriptor
-                if kind not in {"identity", "quotation"}:
+                if kind not in {"identity", "quotation", "classification"}:
                     try:
                         _number(item)
                     except ValueError:
@@ -336,7 +435,7 @@ class EvidenceCatalog:
                     unit = {"shares": "股", "lots": "手"}.get(context.get("volume_unit"), "单位未提供")
                 if kind in {"price", "moving_average"} and (context.get("price_unit") == "index_points" or path.startswith("/indices/")):
                     unit = "点"
-                if kind in {"price", "cost", "entry", "exit"} and _number(item) <= 0:
+                if kind in {"price", "cost", "chip_cost", "entry", "exit"} and _number(item) <= 0:
                     continue
                 if tool in PORTFOLIO_OPERATIONS | {"analyze_portfolio"}:
                     if "/recent_trades/" in path:
@@ -357,6 +456,10 @@ class EvidenceCatalog:
                 fid = hashlib.sha256((rid + pointer).encode()).hexdigest()[:24]
                 subject = " ".join(context.get(k, "") for k in ("symbol", "name")).strip()
                 scope = {k: context[k] for k in ("timeframe", "adjustment", "classification", "url") if context.get(k)}
+                if kind == 'chip_cost':
+                    scope['estimate'] = 'chip_cost_distribution'
+                    if isinstance(meta.get('source'), str) and meta['source']:
+                        scope['method'] = meta['source']
                 if tool == "get_fund_flow":
                     category = path.split("/")[1] if path else ""
                     if category in {"industry_flow", "concept_flow"}:
@@ -386,6 +489,64 @@ class EvidenceCatalog:
                  if key not in {"receipt_id", "pointer", "entity", "timeframe"} and value not in ("", None)}
                 for fact in self.facts.values()]
 
+    def source_semantics(self):
+        """Bind method admissibility to owned observations, never to reader prose.
+
+        These records neither invent a source nor approve a claim. Quoted sources
+        still retain their own text for independent review of their methodology.
+        """
+        groups = {}
+        for fact in self.facts.values():
+            if fact.source != 'get_chip_distribution':
+                continue
+            scope = json.loads(fact.scope) if fact.scope else {}
+            if scope.get('estimate') != 'chip_cost_distribution':
+                continue
+            key = (fact.receipt_id, fact.entity, fact.observed_at, fact.timeframe)
+            groups.setdefault(key, []).append(fact.id)
+        records = [{
+            'status': 'runtime_business_contract_not_source_evidence',
+            'source_method': 'chip_cost_distribution',
+            'required_owned_fact_scope': {'estimate': 'chip_cost_distribution'},
+            'permitted_inference': ['qualitative_historical_distribution_structure',
+                                   'support_resistance_watchpoint'],
+            'not_established': ['directly_measured_volume_profile', 'exact_price_frequency_maximum',
+                                'specific_participant_attribution', 'realized_causation'],
+            'constraints': ['source_must_actually_be_supplied', 'identity_level_date_and_scope_must_match',
+                            'retain_source_estimate_method', 'no_required_reader_formula_or_repeated_qualifier'],
+            'receipt_id': receipt, 'entity': entity, 'observed_at': stamp,
+            'timeframe': timeframe, 'fact_refs': refs,
+        } for (receipt, entity, stamp, timeframe), refs in groups.items()]
+        activity = {}
+        for fact in self.facts.values():
+            if fact.source == 'compute_volume_ratio' and fact.metric in {'volume_ratio', 'turnover_pct'}:
+                key = (fact.receipt_id, fact.entity, fact.observed_at, fact.timeframe)
+                activity.setdefault(key, []).append(fact.id)
+        records.extend({
+            'status': 'runtime_business_contract_not_source_evidence',
+            'source_method': 'relative_total_trading_activity',
+            'quantity_definition': {
+                'numerator': 'current_bar_volume',
+                'denominator': 'rolling_mean_volume_for_tool_comparison_window',
+                'reference_multiple': 1,
+                'comparison': {'below_reference': 'less_aggregate_volume_than_comparison_mean',
+                               'above_reference': 'more_aggregate_volume_than_comparison_mean'},
+                'nonpositive_denominator_fallback': 1,
+                'window': 'use_supplied_period_and_timeframe_never_invent_a_fixed_window',
+            },
+            'permitted_inference': ['relative_total_trading_intensity',
+                                   'bounded_price_volume_interpretation_with_owned_price_observations'],
+            'not_established': ['trader_group_composition_or_absence', 'measured_buy_sell_side_volumes',
+                                'realized_causation', 'future_price_outcome'],
+            'constraints': ['actual_owned_aggregate_observations_only',
+                '参与者划分包括未具名群体或交易统计类别；其归属、存在或排除与总量强弱不是同一指标。',
+                '所给聚合强弱不能证实交易分类构成；常规技术用语也不能补出缺失的分组统计。',
+                '其他真实的分组来源仍可独立支持相关结论；本契约不否定那些来源。'],
+            'receipt_id': receipt, 'entity': entity, 'observed_at': stamp,
+            'timeframe': timeframe, 'fact_refs': refs,
+        } for (receipt, entity, stamp, timeframe), refs in activity.items())
+        return records
+
     def model_table(self):
         columns = ["id", "subject", "account", "metric", "label", "value", "unit", "observed_at", "kind", "source", "scope"]
         return {"fact_columns": columns, "facts": [[getattr(fact, column) for column in columns] for fact in self.facts.values()]}
@@ -410,7 +571,7 @@ def calculate(item: Calculation, catalog: EvidenceCatalog) -> tuple[str, dict]:
     if item.operation in {"difference", "change_pct", "compare"}:
         if not (facts[0].entity or facts[0].account) or len({(f.entity, f.account, f.timeframe, f.scope) for f in facts}) != 1:
             raise ValueError("不能混用不同标的或账户的数值")
-        price_kinds = {"price", "cost", "entry", "exit", "moving_average"}
+        price_kinds = {"price", "cost", "chip_cost", "entry", "exit", "moving_average"}
         if len({f.metric for f in facts}) != 1 and not all(f.kind in price_kinds for f in facts):
             raise ValueError("不能混用不同含义的指标")
     if item.operation in {"compare", "difference", "share_pct"}:
@@ -453,10 +614,11 @@ def calculate(item: Calculation, catalog: EvidenceCatalog) -> tuple[str, dict]:
     rendered = format(result.quantize(Decimal("0.01")), "f")
     operands = "；".join(f.display() for f in facts)
     return f"{label}：{rendered}{unit}。依据：{operands}", {
-        "operation": item.operation, "refs": item.refs, "result": str(result), "unit": unit}
+        "operation": item.operation, "refs": item.refs, "result": str(result), "unit": unit,
+        "display_value_with_unit": rendered + unit}
 
 
-def inference_evidence(item: Inference, document: ReportDocument, catalog: EvidenceCatalog):
+def inference_evidence(item: Inference | Paragraph, document: ReportDocument, catalog: EvidenceCatalog):
     """Resolve judgments to source observations and verified calculations.
 
     Calculations keep their raw-fact-only operand contract. Revalidating them
@@ -465,7 +627,9 @@ def inference_evidence(item: Inference, document: ReportDocument, catalog: Evide
     """
     items = {entry.id: entry for entry in document.items}
     facts, calculations = {}, {}
-    for ref in item.refs:
+    refs = item.refs + ([part.ref for part in item.parts if isinstance(part, EvidenceValue)]
+                        if isinstance(item, Paragraph) else [])
+    for ref in dict.fromkeys(refs):
         if ref in catalog.facts:
             if ref in items:
                 raise ValueError("报告条目ID与事实ID冲突，引用含义不明确")
@@ -485,7 +649,60 @@ def inference_evidence(item: Inference, document: ReportDocument, catalog: Evide
                 facts[fact.id] = fact
         else:
             raise ValueError("研判引用不属于本轮事实或已验证计算")
+    # Computed categorical results belong to the same owned observation as
+    # their operands; retain them alongside the numbers and original receipt.
+    selected_receipts = {fact.receipt_id for fact in facts.values()}
+    facts.update({fact.id: fact for fact in catalog.facts.values()
+                  if fact.kind == 'classification' and fact.receipt_id in selected_receipts})
     return list(facts.values()), list(calculations.values())
+
+
+def paragraph_segments(item: Paragraph, document: ReportDocument, catalog: EvidenceCatalog):
+    """Resolve explicit bindings, never recognize or rewrite claims in prose.
+
+    This checks reference/field validity, not the truth of surrounding language.
+    The semantic reviewer sees this exact expanded paragraph and its evidence.
+    """
+    from trade_compass_agent.runtime.report_reading import _date, _plain
+
+    entries = {entry.id: entry for entry in document.items}
+    inference_evidence(item, document, catalog)
+    segments = []
+    for part in item.parts:
+        if isinstance(part, Prose):
+            segments.append({"origin": "author", "text": part.text})
+            continue
+        if segments and segments[-1]["origin"] == "evidence":
+            # Adjacent owned fields remain separate tokens. Formatting supplies
+            # no connective meaning and does not alter either bound value.
+            segments.append({"origin": "format", "text": " "})
+        ref = part.ref
+        unit = ""
+        entry = entries.get(ref)
+        if isinstance(entry, Calculation):
+            if part.field != "value_with_unit":
+                raise ValueError("计算仅提供带单位的结果，身份和日期须引用原始事实")
+            _, trace = calculate(entry, catalog)
+            unit = trace.get("unit", "")
+            value = trace.get("display_value_with_unit", trace["result"])
+            fact_refs = list(entry.refs)
+            date_refs = fact_refs[-1:] if entry.operation == 'change_pct' else fact_refs
+        else:
+            fact = catalog.resolve(entry.ref if isinstance(entry, Observation) else ref)
+            unit = fact.unit if part.field == "value_with_unit" else ""
+            fact_refs = date_refs = [fact.id]
+            value = {"value_with_unit": fact.display_value_with_unit, "subject": fact.subject,
+                     "account": fact.account, "date": _date(fact) if fact.observed_at else "",
+                     "label": fact.label}[part.field]
+            if not value:
+                raise ValueError("引用的事实未提供所需身份、账户、日期或单位")
+        segments.append({"origin": "evidence", "ref": part.ref, "field": part.field, "text": _plain(value),
+                         "quantity_unit": unit, "fact_refs": fact_refs, "date_refs": date_refs})
+    return segments
+
+
+def paragraph_text(item: Paragraph, document: ReportDocument, catalog: EvidenceCatalog):
+    return "".join(segment["text"] for segment in paragraph_segments(item, document, catalog))
 
 
 def validate_document(document: ReportDocument, catalog: EvidenceCatalog):
@@ -514,6 +731,8 @@ def validate_document(document: ReportDocument, catalog: EvidenceCatalog):
                     action += f"{item.quantity}股"
                 rendered[item.id] = (f"条件计划：若{fact.subject}的{fact.label}{op}{threshold}{item.unit}，{action}。"
                                      f"该条件不是已发生事实或已执行指令。参考：{fact.display()}")
+            elif isinstance(item, Paragraph):
+                paragraph_text(item, document, catalog)
             elif isinstance(item, Inference):
                 inference_evidence(item, document, catalog)
             else:
@@ -538,22 +757,27 @@ def render_document(document, rendered, findings):
     return "\n".join(lines).strip()
 
 
-def verification_result(findings, *, report="complete", execution="completed", data="available"):
+def verification_result(findings, *, report="complete", execution="completed", data="available",
+                        review_status="completed"):
     rows = [asdict(f) if isinstance(f, Finding) else f for f in findings]
     rows = [{**row, "sources": list(row.get("sources", []))} for row in rows]
     return {"schema_version": 1, "report": report, "execution": execution, "data": data,
-            "status": "complete" if not rows and report == "complete" and execution == "completed" and data == "available" else "incomplete",
+            "status": (("not_reviewed" if review_status == "not_requested" else "complete")
+                       if not rows and report == "complete" and execution == "completed" and data == "available"
+                       else "incomplete"),
+            "review_status": review_status,
             "findings": rows}
 
 
 def incomplete(result):
-    return bool(result) and result.get("status") != "complete"
+    return bool(result) and result.get("status") not in {"complete", "not_reviewed"}
 
 
 def combine_verifications(steps):
     """Aggregate typed outcomes without interpreting exception message text."""
     findings, children = [], {}
     report, execution, data = "complete", "completed", "available"
+    review_status = "completed"
     for step, output in steps.items():
         payload = output.get("data") if isinstance(output.get("data"), dict) else output
         verified = payload.get("verification") or output.get("verification")
@@ -565,6 +789,8 @@ def combine_verifications(steps):
             else:
                 continue
         children[step] = verified
+        if verified.get("review_status") == "not_requested" or verified.get("status") == "not_reviewed":
+            review_status = "not_requested"
         findings.extend({**row, "step_id": step} for row in verified.get("findings", []))
         if verified.get("report") != "complete":
             report = "partial"
@@ -574,4 +800,5 @@ def combine_verifications(steps):
             data = "insufficient"
     if not children:
         return {}
-    return {**verification_result(findings, report=report, execution=execution, data=data), "steps": children}
+    return {**verification_result(findings, report=report, execution=execution, data=data,
+                                   review_status=review_status), "steps": children}

@@ -473,9 +473,10 @@ class AgentLoop:
         )
         session = self.session_store.get_or_create(session_id)
         context_start = len(session.messages)
+        report_run_id = self.report_run_id or uuid4().hex
         from trade_compass_agent.llm.native_session import NativeConversation
         native_conversation = None
-        publish_after_verification = session.session_id.startswith("scheduler-") or self.verify_report_grounding
+        buffer_report = session.session_id.startswith("scheduler-") or self.verify_report_grounding
         if turn_id:
             self._emit(
                 "turn_started",
@@ -639,14 +640,14 @@ class AgentLoop:
             elif name == "skill_manage" and is_committed_mutation(name, arguments, result):
                 self._nudge.on_skill_write()
             section = _section_from_tool(name, result)
-            if section and not publish_after_verification:
+            if section and not buffer_report:
                 sections.append(section)
                 self._emit("section", _section_to_dict(section))
 
         def native_delta(chunk: str) -> None:
             nonlocal final_text
             final_text += chunk
-            if not publish_after_verification:
+            if not buffer_report:
                 self._emit("delta", {"text": chunk})
 
         native_tool_started = {}
@@ -654,7 +655,16 @@ class AgentLoop:
         def read_only_report_call(system, user):
             _check_cancelled()
             review_messages = [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
-            if _budget.estimate(review_messages) > _budget.context_budget:
+            report_budget, measured = _budget, None
+            if str(getattr(client, 'name', '')).startswith('lmstudio'):
+                from trade_compass_agent.llm.providers import llm_response_token_limit
+                report_budget = TokenBudget(self.config, context_window=window,
+                    output_reserve=llm_response_token_limit(reserve))
+                counter = getattr(client, 'measure_input_tokens', None)
+                if callable(counter):
+                    measured = counter(review_messages, tools=None)
+            tokens = measured.input_tokens if measured is not None else report_budget.estimate(review_messages)
+            if tokens > report_budget.context_budget:
                 from trade_compass_agent.runtime.exceptions import LLMContextBudgetError
                 raise LLMContextBudgetError("报告核验所需依据超出本轮上下文预算")
             if isinstance(client, NativeAgentClient):
@@ -667,20 +677,24 @@ class AgentLoop:
                     on_delta=lambda _chunk: None, is_cancelled=is_cancelled)
             return reviewed.content or ""
 
-        def validate_scheduled_memory(content, evidence):
+        def validate_durable_memory(content, evidence):
             from trade_compass_agent.llm.providers import check_execution_active
-            from trade_compass_agent.runtime.report_publication import publish_report, persist_publication
+            from trade_compass_agent.runtime.report_publication import review_durable_content, persist_publication
             def active():
                 _check_cancelled()
                 check_execution_active()
-            publication = publish_report(task="仅保留拟保存记忆的含义和必要依据，不扩展结论范围：\n" + content,
+            from trade_compass_agent.llm.providers import create_local_report_fact_check
+            factual_report_call = create_local_report_fact_check(self.config, is_cancelled=is_cancelled)
+            publication = review_durable_content(task="仅保留拟保存记忆的含义和必要依据，不扩展结论范围：\n" + content,
                 draft=content, tool_results=evidence, current_tool_results=[],
-                run_scope=f"{session.session_id}:memory:{uuid4().hex}", run_id=self.report_run_id,
-                call=read_only_report_call, check_active=active)
+                reader_prose=False,
+                run_scope=f"{session.session_id}:memory:{uuid4().hex}", run_id=report_run_id,
+                call=read_only_report_call, check_active=active, fact_review_call=factual_report_call,
+                reference_date=self.report_date, reference_timezone=self.config.scheduler.timezone)
             publication.verification.update(persist_publication(self.config.data_dir, publication, check_active=active))
             return publication
 
-        memory_report = validate_scheduled_memory if self.memory_actor == "scheduler" else None
+        memory_report = validate_durable_memory if self.memory_actor == "scheduler" else None
 
         def native_tool_result(tc, result):
             self._emit("tool_end", build_tool_end_payload(tc.name, native_tool_started.pop(tc.id), result))
@@ -752,7 +766,7 @@ class AgentLoop:
                 def _on_delta(chunk: str) -> None:
                     nonlocal final_text
                     final_text += chunk
-                    if not publish_after_verification:
+                    if not buffer_report:
                         self._emit("delta", {"text": chunk})
 
                 try:
@@ -875,7 +889,7 @@ class AgentLoop:
                 def _on_forced_delta(chunk: str) -> None:
                     nonlocal forced_text
                     forced_text += chunk
-                    if not publish_after_verification:
+                    if not buffer_report:
                         self._emit("delta", {"text": chunk})
 
                 try:
@@ -916,97 +930,26 @@ class AgentLoop:
 
             if not final_text:
                 final_text = TOOL_ROUND_LIMIT_MESSAGE
+                incomplete_reason = incomplete_reason or "已达到分析轮次上限，尚未生成完整答复。"
 
-            from trade_compass_agent.runtime.verifier import unverified_execution_claim
-            from trade_compass_agent.runtime.report_quality import (
-                assess_data_quality, report_facts, report_issues, report_portfolio_facts, report_settlement_facts, retain_rejected_report,
-                review_report_evidence,
+            from trade_compass_agent.runtime.report_quality import assess_data_quality
+            from trade_compass_agent.runtime.report_publication import publish_task_report
+            from trade_compass_agent.llm.providers import check_execution_active
+
+            def publication_active():
+                _check_cancelled()
+                check_execution_active()
+
+            publication = publish_task_report(
+                task=message if report_task is None else report_task,
+                draft=final_text, tool_results=[*self.initial_evidence, *tool_calls_log],
+                run_scope=f"{session.session_id}:{turn_id or uuid4().hex}",
+                run_id=report_run_id, current_tool_results=tool_calls_log,
+                check_active=publication_active, reference_date=self.report_date,
+                reference_timezone=self.config.scheduler.timezone,
             )
-            def review_call(system, user):
-                return read_only_report_call(system, user)
-
-            publication = None
-            verification = {}
-            report_evidence = [*self.initial_evidence, *tool_calls_log]
-            if publish_after_verification:
-                from trade_compass_agent.runtime.report_publication import publish_report
-                from trade_compass_agent.llm.providers import check_execution_active
-
-                def publication_active():
-                    _check_cancelled()
-                    check_execution_active()
-
-                publication = publish_report(
-                    task=message if report_task is None else report_task,
-                    draft=final_text, tool_results=report_evidence,
-                    run_scope=f"{session.session_id}:{turn_id or uuid4().hex}",
-                    run_id=self.report_run_id, current_tool_results=tool_calls_log,
-                    call=review_call, check_active=publication_active,
-                )
-                final_text = publication.text
-                verification = publication.verification
-            else:
-                if publish_after_verification and unverified_execution_claim(final_text, tool_calls_log):
-                    retain_rejected_report(self.config.data_dir, session.session_id, final_text,
-                                           ["成交声明缺少匹配的本轮回执"])
-                    raise AgentTurnError("报告声称已成交，但缺少本轮成交回执；本轮执行未确认，请核对账本")
-                issues = report_issues(final_text, tool_calls_log, reference_date=self.report_date)
-                if self.verify_report_grounding and final_text != TOOL_ROUND_LIMIT_MESSAGE:
-                    try:
-                        issues.extend(review_report_evidence(final_text, message, tool_calls_log, review_call))
-                    except AgentTurnError as exc:
-                        retain_rejected_report(self.config.data_dir, session.session_id, final_text, [str(exc)])
-                        raise
-                if issues:
-                    retain_rejected_report(self.config.data_dir, session.session_id, final_text, issues)
-                    correction_limit = 2 if self.verify_report_grounding else 1
-                    correction_issues = list(issues)
-                    for correction_index in range(correction_limit):
-                        correction = [ChatMessage(role="system", content=(
-                            "只校正报告，不执行任何操作。以给定本轮事实修正标的名称、日期、高低价、数值关系和证据缺口，"
-                            "保留有依据的结论与数据缺口；不能编造成交或补造数据。只输出最终完整报告，"
-                            "仅改已指出的错处，保留其余正确内容；不要新增计算结果，无法核实的派生百分比直接删除并保留原始数值。"
-                            "对问题涉及的整句或表格整行重新核对数值、单位、日期和来源归属，不能只替换数字或引用标签。"
-                            "新闻中的历史估值与基本面工具的当前估值必须分别表述，不能把工具数值写成新闻曾披露的数值；"
-                            "若无法清楚区分来源，删去冲突断言并保留待核实说明。先前指出的问题也不能再次引入。"
-                            "历史日期的当日不能改成今日；FIFO净盈亏已扣分配费用，不能用价差乘数量替换。"
-                            "换手率turnover_pct不是量比volume_ratio；没有对应日期的量比回执，不得将换手率改名为量比。"
-                            "交易日天数缺少日历依据时删去天数并保留起止日期，不按自然日或复核意见猜算。"
-                            "不写校正过程、行号、审查步骤或开发说明。")),
-                            ChatMessage(role="user", content=json.dumps({"report": final_text,
-                                "issues": issues, "previous_issues": correction_issues, "facts": report_facts(tool_calls_log),
-                                "portfolio_facts": report_portfolio_facts(tool_calls_log),
-                                "settlement_facts": report_settlement_facts(tool_calls_log),
-                                "report_date": self.report_date,
-                                **({"task": message, "tool_results": tool_calls_log} if self.verify_report_grounding else {
-                                    "market_tool_results": [(name, raw) for name, raw in tool_calls_log
-                                                            if name in {"get_market_pulse", "get_fund_flow"}]
-                                })}, ensure_ascii=False))]
-                        _check_cancelled()
-                        if native:
-                            def reject_tool(_tc):
-                                raise AgentTurnError("报告校正阶段不能执行工具")
-                            corrected = client.run_agent(correction, tools=[], execute_tool=reject_tool,
-                                on_delta=lambda _chunk: None, is_cancelled=is_cancelled, max_calls=1)
-                        else:
-                            corrected = client.stream_complete(correction, tools=None,
-                                on_delta=lambda _chunk: None, is_cancelled=is_cancelled)
-                        candidate = (corrected.content or "").strip()
-                        remaining = report_issues(candidate, tool_calls_log, reference_date=self.report_date)
-                        if self.verify_report_grounding and candidate:
-                            remaining.extend(review_report_evidence(candidate, message, tool_calls_log, review_call))
-                        if not candidate or unverified_execution_claim(candidate, tool_calls_log):
-                            retain_rejected_report(self.config.data_dir, session.session_id, candidate,
-                                                   remaining or ["校正报告为空或成交声明未核实"])
-                            raise AgentTurnError("报告中的标的或数值关系未能核实，本轮结果未发布")
-                        if not remaining:
-                            final_text = candidate
-                            break
-                        retain_rejected_report(self.config.data_dir, session.session_id, candidate, remaining)
-                        if correction_index + 1 == correction_limit:
-                            raise AgentTurnError("报告中的标的或数值关系未能核实，本轮结果未发布")
-                        final_text, issues = candidate, remaining
-                        correction_issues = list(dict.fromkeys([*correction_issues, *remaining]))
+            final_text = publication.text + _build_provenance_footer(tool_calls_log)
+            verification = publication.verification
             initial_data = ([("analyze_portfolio", json.dumps(self.initial_portfolio))]
                             if self.initial_portfolio is not None else [])
             data_tool_calls = tool_calls_log
@@ -1019,35 +962,34 @@ class AgentLoop:
                 if incomplete_reason:
                     findings.append(asdict(Finding("execution", "execution_incomplete", incomplete_reason)))
                 verification = verification_result(
-                    findings, report=verification["report"],
+                    findings, report=verification["report"], review_status=verification["review_status"],
                     execution="incomplete" if incomplete_reason else verification["execution"],
                     data="insufficient" if quality.degraded or verification["data"] != "available" else "available",
                 )
                 quality.degraded |= incomplete(verification)
                 publication.verification = verification
                 publication.artifact["verification"] = verification
-                from trade_compass_agent.runtime.report_publication import persist_publication
-                verification.update(persist_publication(
-                    self.config.data_dir, publication, check_active=publication_active))
                 quality.warnings = list(dict.fromkeys([*quality.warnings, *(f["message"] for f in findings)]))
             if data_warnings:
                 final_text += "\n\n数据可用性：\n" + "\n".join(f"- {w}" for w in data_warnings)
             if self.initial_findings and publication is not None:
                 final_text += "\n\n待核实事项：\n" + "\n".join(f"- {f['message']}" for f in self.initial_findings)
-            if quality.execution_warnings and publication is None:
-                final_text += "\n\n未成交记录：\n" + "\n".join(f"- {w}" for w in quality.execution_warnings)
             if incomplete_reason:
                 quality.degraded = True
                 quality.warnings.append(incomplete_reason)
                 final_text += "\n\n" + incomplete_reason
-            if publication is None:
-                final_text += "".join(build_report_evidence(final_text, data_tool_calls))
-            if publish_after_verification:
+            # Preserve exactly the text delivered, including real availability notices.
+            from trade_compass_agent.runtime.report_publication import persist_publication
+            publication.artifact["reader_body"] += final_text[len(publication.text):]
+            publication.text = final_text
+            publication.artifact["published_text"] = final_text
+            verification.update(persist_publication(
+                self.config.data_dir, publication, check_active=publication_active))
+            if buffer_report:
                 self._emit("delta", {"text": final_text})
 
             section_payload = [_section_to_dict(s) for s in sections]
             _check_cancelled()
-            from trade_compass_agent.llm.providers import check_execution_active
             check_execution_active()
             self.session_store.append(
                 session,
@@ -1082,7 +1024,8 @@ class AgentLoop:
                     with llm_request_deadline(time.monotonic() + self.config.llm.timeout,
                                               is_cancelled=is_cancelled):
                         _check_cancelled()
-                        curate_turn_insight(config=self.config, user_message=message, response=response)
+                        curate_turn_insight(config=self.config, user_message=message, response=response,
+                            report_run_id=report_run_id, report_call=read_only_report_call)
                         _check_cancelled()
                 except LLMExecutionCancelled:
                     _check_cancelled()  # User stop is distinct from parent workflow expiry.
@@ -1280,8 +1223,6 @@ def _compact_forecast_summary(result: str) -> TurnSection | None:
         forecast_data=forecast_data,
     )
 
-
-import re
 
 _DIRECTIONAL_PATTERN = re.compile(
     r"(买入|卖出|加仓|减仓|建仓|清仓|做多|做空|追涨|抄底|建议介入|可以买|适合买|建议卖)",

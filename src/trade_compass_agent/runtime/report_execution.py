@@ -16,12 +16,14 @@ class ExecutionEvidence:
     records: list[dict] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     trade_table: str = ""
+    trade_details: str = ""
 
-    def render(self):
+    def render(self, *, heading=True, include_table=True):
         messages = [row["message"] for row in self.records]
         if any(row["status"] == "executed" for row in self.records):
-            messages.insert(0, "本轮已成交，逐笔结果见下表。")
-        return ("\n\n## 执行记录\n\n" + "\n\n".join(messages) if messages else "") + self.trade_table
+            messages.insert(0, "本轮已成交，逐笔结果见下方成交核对。")
+        prefix = "\n\n## 执行记录\n\n" if heading else ""
+        return (prefix + "\n\n".join(messages) if messages else "") + (self.trade_table if include_table else "")
 
 
 def execution_evidence(tool_results):
@@ -76,4 +78,5 @@ def execution_evidence(tool_results):
             result.findings.append(Finding("execution", "outcome_unknown", message))
         result.records.append({"receipt_index": index, "tool": name, "status": status, "message": message})
     result.trade_table = trade_receipt_section(table_receipts)
+    result.trade_details = trade_receipt_section(table_receipts, compact=True)
     return result

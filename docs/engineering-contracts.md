@@ -7,12 +7,586 @@ in the linked regression tests, not in expanding prose exception lists.
 
 ## Report and market evidence
 
+Ordinary task answers are delivered as written by the agent. They do not pass
+through mandatory structured composition, blind classification, factual review,
+coverage review or corrective rewrites. A report's phrasing, dates, participant
+interpretation or a review protocol failure cannot withhold its text. This is a
+user-requested delivery policy, not a certification of every statement.
+
+The saved verification status is `not_reviewed` with
+`review_status=not_requested` when delivery/execution has no actual failure.
+Do not label it fact-checked or let a workflow aggregate promote it to verified.
+Original tool failures, unavailable data and uncertain mutation outcomes retain
+their real statuses. Authorization, tool permissions, cancellation and trading
+execution controls remain at their existing execution boundaries.
+
+History stores the original answer and immutable tool receipts. The newly added
+blanket factual-review gate on all memory writes is withdrawn: ordinary
+interactive notes and user preferences retain their previous write path rather
+than passing through the full report-review pipeline. Pre-existing scheduled
+memory checks, knowledge/skill rules, ownership, versions and storage safeguards
+are unchanged. Do not expand those rules to additional entry points.
+
+Learning from saved historical reports or records reviews the candidate's
+quality: usefulness, faithfulness, scope, conditions and uncertainty. It does not
+invoke the legacy report fact/date/participant matrix. Failed quality review or
+learning storage must not retract a delivered answer or alter source history.
+
+- Reading acceptance permits minor awkward wording, redundancy or ellipsis when
+  the surrounding body makes the business meaning unambiguous. Polished prose
+  is not a completion gate. Preserve factual identity, dates, values, units,
+  scale, direction and execution state; ambiguity that changes their meaning is
+  not a cosmetic defect. Verify downstream consumers separately: original
+  receipts and typed results remain authoritative, while narrative supplied to
+  later reasoning or learning must not silently become a new factual source.
+- Evidence structure is not the reader's writing structure. Published paragraphs
+  may combine observations and judgments naturally. Explicit inline bindings keep
+  values, units, identity and dates runtime-owned; a semantic review checks their
+  use in the expanded sentence against original receipts and task scope. The explicitly named
+  `value_with_unit` field binds a number and its unit as one indivisible display
+  value; a percentage must not lose its percent sign. Author-written facts or
+  units still require semantic review. The body must establish the units of
+  author-written quantities; evidence units cannot silently fill a missing unit
+  or rescale an unqualified ratio as a percentage. Reference
+  existence alone does not establish meaning, and prose keyword/regex rules are
+  not a substitute for this review.
+  Composition receives source context alongside the typed catalogue: deterministic
+  classifications and source limitations must not disappear. A labelled writing
+  view may omit exact numeric fields already represented in that catalogue,
+  retaining unindexed values, strings, units, list positions and genuine empty
+  states. Such omissions cannot establish absent data. Independent review and
+  saved artifacts retain the full original records. Report context checks use
+  the available native token counter and this request's existing response cap,
+  including stricter parent caps, without changing the loaded model window.
+  Computed moving-average alignment is also a typed categorical fact, retaining
+  the original receipt, observation time and indicator scope. Its reader display
+  uses the business category; the raw source value and historical records remain
+  unchanged. Calculation and publication share the same alignment operation,
+  including its existing equality and insufficient-data behavior.
+  Writer input retains the raw category alongside its runtime-owned display
+  value and binding example. Business prose expresses that display value,
+  rather than narrating tool calls or exposing internal enums. A correction
+  preserves useful analysis and necessary answers without unrelated expansion;
+  a stale observation used in a present-dated report retains its explicit source
+  date. No post-review replacement or shortened incomplete answer repairs it.
+  These records provide context, not another fact-reference namespace; original
+  receipts remain unchanged and numeric bindings still use the fact catalogue.
+  Numeric field meaning belongs to its producer. A chip-distribution average or
+  cost interval is a dated estimate, separate from an account's holding cost or
+  an observed transaction price. Preserve its method and scope through bindings,
+  review and saved reports; a change in that estimate is not a stock return.
+  A supplied distribution estimate may support ordinary technical language about
+  a concentration/resistance area without repeating its method in every reader
+  sentence. Preserve the estimator, date and scope in the owned sources. An
+  ordinary price high alone cannot establish historical concentration, and an
+  estimate cannot become a measured profile or exact frequency maximum.
+  Apply measurement requirements to asserted measurements, not to bounded
+  estimate-backed research interpretations. A general analytical lookback is
+  not an additional calendar-date commitment; specific observation dates and
+  relative calendar references retain their original temporal obligations.
+  A sole explicit observation date equal to the task's reference date retains
+  the same runtime date check as `task_now`, including inside an opinion.
+  This equivalence must not collapse historical or multiple-date comparisons
+  into the task's present; those retain their existing semantic scope.
+  Method-admissibility records bind to actual owned source observations and keep
+  their fact IDs, instrument and original date. They are business interpretation
+  contracts, not additional observations or approval decisions. A quoted source
+  may establish its own method through its original text; absence of a typed
+  method record does not establish absence of that method in a quoted source.
+  Relative total-activity observations retain their owned instrument and date;
+  they do not establish a participant partition, including unnamed groups or
+  trading categories, buy/sell-side quantities, realized causation or a future
+  outcome. That limit applies to those aggregate observations alone. Other
+  supplied classification records or original documents remain eligible to
+  support the actual participant claim through independent source review.
+  Blind body interpretation retains an asserted distribution property's necessary
+  source family, including empirical premises inside a plan. Later review cannot
+  replace it with a generic price watchpoint. Runtime checks the owned instrument
+  and method family independently of optimistic verdicts; a measured profile
+  cannot be supplied by a cost estimate. Original method-bearing document text
+  remains eligible through an explicitly nominated content quotation, never a
+  title, an ordinary price or an unrelated read receipt. Source admissibility is
+  necessary, not semantic approval: dates, levels, method and conclusion still
+  require the independent factual and source reviews.
+  Each newly reviewed reader span explicitly declares whether it asserts such a
+  distribution structure; a missing answer is unavailable interpretation, not
+  an implicit negative. Qualitative technical judgments can carry an empirical
+  distribution premise without claiming a measured statistic. Old saved body
+  responses remain decodable but cannot stand in for this complete new review.
+  Choosing numeric bindings does not withdraw other owned sources from review.
+  Original announcements, source qualifications and successful first-party read
+  results remain available, including an empty result with no numeric rows.
+  Model drafts and excluded sample/error sources do not become evidence.
+  Large batch views still retain only explicitly selected instrument subtrees;
+  source visibility cannot replace a bound value's original observation date.
+  A first-party exit scan is also an exact quotation of its returned record,
+  including empty or missing fields. Its run ownership anchors a statement
+  about that scan's return, without inventing a market observation date or
+  proving market freshness, risk absence or trading outcomes. Source-only
+  quotation IDs remain available without a numerical paragraph binding;
+  they cannot waive dates of adjacent market observations or widen batch views.
+  Adjacent bound fields retain a runtime formatting separator, so a date and
+  amount cannot concatenate into a different token. This whitespace is part of
+  the exact reviewed and saved body; it supplies no factual or connective meaning.
+  Percentage display uses runtime-owned decimal rounding to two places when the
+  magnitude is at least 0.01 percent, with half-even ties. Smaller nonzero values
+  retain their original precision so presentation cannot turn them into zero.
+  Review receives this display value alongside the unchanged raw fact; receipts,
+  calculations and persisted factual values retain their original precision.
+- Review the actual reader presentation. No model rewrites approved paragraphs
+  afterwards. Save the final consumer text alongside evidence and review; runtime
+  availability notices may be appended without changing reviewed prose. Sources
+  may be disclosed on demand. Task coverage is assessed from the reader body;
+  a requested result present only in source notes does not count as an answer.
+  Material gaps and uncertain execution outcomes
+  stay visible in the body. Legacy saved text remains readable without regeneration.
+  The parser may discard an exact empty text token, which contributes no reader
+  characters. Preserve every nonempty character, strict field validation, the raw
+  response and the minimum-content requirement; an empty report is not a repair.
+  Natural-writing wire parts use literal JSON strings and exact two-string
+  `[ref, field]` pairs. Expand them into the existing canonical text/value objects
+  before validation, review or persistence. Legacy object parts remain supported.
+  Never parse bindings out of prose, guess malformed JSON values or bypass the
+  final semantic review. Repair prompts use the same wire format and aliases.
+
+- Natural paragraph writing uses the model's reasoning path, with bounded output
+  and application-side schema validation. Non-thinking mode serves internal
+  evidence serialization. Body interpretation and entailment use the local
+  model's bounded reasoning path, clearing inherited formatting mode while
+  preserving the parent's token cap, deadline and cancellation. Reasoning is
+  private and cannot become reader text or evidence.
+  The semantic response envelope is at most 16,384 tokens, including reasoning
+  and the final structured response. A smaller caller cap still wins. This does
+  not extend the parent deadline, permit more calls or allow an incomplete
+  response to become an approval; normal scenes must still finish in time.
+  Reader writing, body/factual review and task-coverage review explicitly request
+  the Qwen 3.5/3.6 precision sampling profile (temperature 0.6, presence penalty 0)
+  while retaining reasoning, token caps and cancellation. General chat and raw
+  non-thinking maintenance keep their existing profiles. Scope the request through
+  nested calls and restore it on failure; never mutate the loaded model's settings.
+  This adapts the model's [official task-specific sampling guidance](https://huggingface.co/Qwen/Qwen3.6-35B-A3B),
+  not a claim that a sampling profile guarantees factual correctness.
+- Report composition and task-coverage review share a maximum of four model calls. Unused
+  structural-repair capacity may fund one feedback revision and a fresh review.
+  This applies to both reader paragraphs and internal evidence/learning documents;
+  a revision retains the chosen document format and cannot discard useful verified
+  observations or calculations when its correction remains incomplete.
+  Fingerprint the complete candidate reader text before review filtering. An
+  unchanged body cannot become an accepted correction through renamed item IDs
+  or a different second verdict; retain the initial outcome and both attempts.
+  Preserve required gaps through revision; unavailable review must retain the
+  first verified evidence. Invalid optional gap-dismissal metadata cannot remove
+  a gap or invalidate independently valid paragraph reviews. Preserve cancellation
+  and the parent deadline, and never replay business tools to repair prose.
+  A removable gap cannot supply an answer during task-coverage review and then
+  disappear from the published body. Coverage reviews the complete candidate
+  and records the original gap IDs it uses as answers, independently of the
+  optional gap-disposition decisions. Preserve those dependencies even when a
+  disposition calls them unrelated. Valid unrelated gaps can still be removed
+  when another answer is missing: incomplete writing must not become unavailable
+  business data. Invalid or missing dependency metadata cannot clear gaps or
+  discard independently verified prose. This uses the existing review call.
+  These dependencies concern necessary business answers, not acknowledgments
+  that execution or writing constraints were followed. Omission of content the
+  task excludes cannot become an unavailable requested result merely because
+  the draft mentions that exclusion. Explicit requests to report a state remain
+  distinct from instructions constraining how the task should be performed.
+  When completed factual review finds a failed assertion beside retained
+  assertions in the same paragraph, and task coverage is already complete,
+  revision may replace only the addressed failed spans. Preserve all other
+  original text, binding identity and item order. A span boundary cannot cut an
+  atomic bound value; unsupported shapes retain the existing full revision path.
+  Affected spans become separate reader paragraphs before the new complete
+  body undergoes fresh meaning, coverage and factual review. This isolates a
+  failed replacement without approving it or hiding adjacent observations.
+  Reject foreign, duplicate, missing and entirely unchanged edit batches, and keep the existing
+  single-revision/call/deadline policy. No prior approval substitutes for review
+  of the resulting body.
+  Conflicting semantic annotations are repairable metadata, not permission to
+  approve unsupported prose or rewrite verified text. After factual assessment,
+  the existing task-coverage call may independently recheck a narrowly selected
+  disagreement: an unbound opinion mislabelled as a present observation, or a
+  reasoned interpretation with inconsistent empirical-commitment flags. Preserve
+  the original body, responses and checks. Recheck any proposed assessment through
+  the same ownership, date, support and classification guards. A present anchor
+  can be corrected only for a mutually identified opinion with no new empirical
+  identity, quantity or time claim. Never clear a positive actor/causal body
+  requirement, owned value/date, categorical conflict or unrelated failed row.
+  Invalid or unresolved repairs retain their original failures and valid siblings.
+  This uses the existing coverage call after factual review; call limits, the
+  single prose revision, cancellation and parent deadlines stay unchanged.
+  For that mutually identified opinion, an entailed identity of a known subject
+  or an entailed time-axis label does not establish a new market observation.
+  Preserve the reported axes and normalize its observation-time applicability;
+  unknown/contradicted axes or quantities remain blocking. Unknown substantive
+  support remains unsupported after annotation repair, never approved or
+  relabelled as unavailable review merely because its time label was inconsistent.
+  The categorical scope discriminator owns a moving-average claim's range.
+  Well-typed redundant periods on a whole-system claim are retained in the raw
+  response and canonicalized to an unused empty list; they never select a
+  favorable subset. Explicit subsets still require at least two distinct periods.
+  Verify the canonical whole-system claim against all its owned operands,
+  including rejection when a redundant listed subset would have passed.
+  Every approved model-authored span also receives an independent source
+  check in the existing coverage call. The first review's direct, calculated
+  or reasoned label, nor a non-empirical classification, can exempt prose from
+  that check. The reviewer receives exact statements and owned
+  sources without the first verdict as authority. Both source checks must support
+  publication. The independent result is a veto only: it cannot clear an earlier
+  rejection or a runtime-owned value, identity, date or categorical conflict.
+  Retain both results through persistence and bounded revision feedback. This
+  catches inferred participant/causal facts hidden beside correct measurements
+  even when the first classifier misses that subtype. Existing call and deadline
+  limits remain unchanged. Both reviewers receive the same owned source contexts,
+  observation pointers and method records in one reference namespace; paragraph
+  bindings cannot withdraw other supplied evidence from independent review.
+  Source review uses one shared, deduplicated run-source context. A writer's
+  paragraph selection is not the boundary of support for a conclusion; the
+  review must be able to use another paragraph's owned evidence. Preserve exact
+  source identities, values, dates, units, scope, calculations and unexpanded
+  receipt pointers. Sharing that view cannot establish support or permit a
+  different instrument or observation date to replace the asserted one.
+  Preserve method-referenced facts in full through source-view compaction, even
+  when no paragraph binds them: a pointer alone omits the typed value, unit and
+  estimator scope needed to apply that method's admissibility contract.
+  Compare the complete asserted property, including statistical meaning, method
+  and qualifiers, before approving its values. A supported broader interpretation
+  cannot replace the narrower property the reader actually received; a fact
+  premise inside a proposed analysis retains its source obligations.
+  A pure proposed choice with no empirical premises
+  may have a non-applicable measurement basis; actual premises, commitments,
+  quantities and unresolved support remain independently blocking.
+  A missing witness reference on an otherwise completed current empirical
+  assessment may be repaired through that same call. Keep its positive current
+  scope and require an actual owned witness for the same subject/property; do
+  not infer it from retrieval time or a fresh unrelated fact. A witness-only
+  repair cannot erase the current observation by relabelling it an opinion,
+  and a known linked stale/unknown source date is never an annotation fault.
+  Re-run normal ownership and observation-date checks on supplied references;
+  missing, foreign or unresolved references still block that item.
+  Preserve paragraphs whose factual assertions completed all required checks
+  before a separate coverage/source response becomes unavailable or malformed.
+  Items awaiting a source veto or metadata repair remain withheld. Retain approved
+  provenance and the incomplete report status; a failure of the later call cannot
+  turn completed factual work into unavailable review or manufacture task success.
+  A first-pass direct label alone is not completed empirical verification.
+  If its required independent source response is unavailable, keep that prose
+  pending while preserving the original typed observations, execution records
+  and history. Pure non-empirical text does not acquire a source obligation
+  solely from this label: the independent reviewer accepts genuine plans and
+  discourse without inventing empirical requirements, while checking all actual
+  factual premises in their exact text.
+  An unbound judgment or plan rejected on support may independently resolve a
+  conflicting non-empirical time annotation. Preserve that first support veto
+  even if the fresh assessment is optimistic; resolving availability never
+  promotes a rejected claim. Actor, causal, bound-value and categorical
+  obligations remain ineligible for this narrow reconciliation.
+  Bounded prose editing is a distinct authoring task. Supply the editable spans,
+  their feedback and read-only context without competing full-draft instructions.
+  Keep full previous documents internally for exact reassembly and recovery;
+  newly assembled prose still undergoes the complete factual and coverage checks.
+  A span may remain verbatim beside genuine edits; retain its original bindings
+  and provenance. Lexical change is not proof of a factual correction, and
+  retention is never approval: every retained failure undergoes the same fresh
+  checks in the new reader context. An entirely unchanged edit batch is rejected.
+  A time-only positive annotation with no identity, quantity, actor, bound-value,
+  classification or explicit calendar commitment may be independently checked
+  as an opinion/plan type disagreement. An actual empirical observation still
+  needs its own date; only mutually identified non-empirical text can remove the
+  inconsistent time annotation. Preserve earlier support rejections.
+  A plan may name its subjects without adding a measured identity or value.
+  When its factual review already marks time and quantity inapplicable, that
+  subject-scope annotation does not turn it into a current observation. The
+  independent non-empirical agreement and all bound/calendar exclusions still apply.
+  Bounded edit transport accepts its canonical object or a complete edit array;
+  the array adds no new gap text and never removes existing protected gaps. Apply
+  identical ownership, completeness, binding and genuine-change checks to both
+  forms. Other report/assessment envelopes and incomplete JSON remain strict.
+  Body interpretation may group complete paragraph records in repeated root
+  paragraph collections. Concatenate only that collection, then enforce unique
+  owned IDs and complete contiguous source-unit coverage; never choose a last
+  value or discard a group. Repeated scalar/nested members, duplicate/missing IDs
+  and incomplete JSON remain invalid. Other assessment envelopes stay strict.
+  Extract necessary categorical ordering conditions of a stronger asserted
+  indicator state without correcting the author's meaning to fit its numbers.
+  A bounded trend opinion or price position alone does not imply whole-system
+  alignment. Preserve that distinction before source evidence is shown.
+- An explicitly configured `llm.local_report_review_model` separates factual
+  entailment from task coverage. It uses only local LM Studio, original receipts,
+  typed calculations, current execution records and the final statements. The original
+  task is supplied separately as requirements context: it can establish a requested
+  decision rule, but cannot prove market/account facts, causal premises or execution.
+  Drafts and coverage decisions are not evidence. The local assessor returns
+  separate identity/scope, time, quantity and inferential-support checks for
+  every assertion. The runtime combines them with the overall verdict; an
+  unknown or contradictory dimension cannot be overridden by a blanket approval.
+  Missing or malformed dimensions make review unavailable, not a correct
+  rejection. Supply the observation's calendar date in the display timezone
+  alongside its unchanged original timestamp. Current claims must respect that
+  date even within a judgment; retrieval time and latest-available status cannot
+  make a prior-day quantity current. Explicitly dated historical values remain
+  usable. Before evidence is supplied, body interpretation separately fixes
+  whether an observation is asserted as of the task's present date. Review
+  distinguishes an explicitly established calendar anchor from present currency.
+  Referring back to that date retains it; a sample's date or the report's topic
+  does not itself assert that an observation is current. Preserve any additional
+  present-time assertion even when an explicit date accompanies it. Review
+  cannot reinterpret that commitment as latest available. Temporal evidence
+  links must be runtime-owned observations already supplied in this report.
+  Paragraph selection is not source ownership: comparisons may span securities,
+  accounts, timeframes and observation scopes. Ownership alone does not prove
+  semantic identity, relevance or support; these dimensions remain independent.
+  Unselected facts from supplied non-batch sources retain their canonical IDs
+  and original dates in review context. Approved review observations remain
+  navigable in reader source notes; original text, bindings and receipts stay
+  unchanged. Unavailable or rejected assertions cannot add approved sources.
+  The assessor may receive unselected numerical observations as canonical
+  ID/receipt/JSON-pointer/date rows alongside the full original receipts,
+  rather than a second copy of every number and its metadata. Runtime checks
+  retain the complete typed contexts. Selected values, quotations and derived
+  categorical facts remain explicit; addresses cannot establish support.
+  Review wire references may use the same request-local aliases as composition.
+  Decode only reference slots before validation; source values, reader text,
+  receipts and canonical persisted facts retain their original IDs and values.
+  Preserve raw review responses and the alias map for diagnostics.
+  Numeric bindings remain tied to their original context and mandatory even
+  if the assessor omits them. The runtime compares those
+  source dates in the task's reference timezone with the task date and can withhold a statement despite an
+  optimistic model verdict. A bound price-change interval uses its later
+  operand's observation date without discarding the earlier operand. This market
+  observation check preserves the existing ownership contract for account
+  snapshots. Display dates keep the display timezone; a different displayed day
+  cannot by itself establish that a task-time observation is stale or current.
+  A completed assessment whose sole failure is an unknown mandatory observation
+  date retains the rejected current claim and reports a specific business data
+  gap. Keep independently verified paragraphs visible. Never fill that date from
+  retrieval time, classify a known stale date as missing, or clear another factual
+  conflict or unavailable assessment through this notice. Persistence retains
+  the original source and the incomplete/data-insufficient outcome.
+  The same owned observation nominated by a completed assessment retains that
+  missing-date meaning when its value was written literally rather than bound.
+  All non-time dimensions must still pass; unknown references, unavailable
+  review and substantive factual failures cannot become a date-only gap.
+  Date-only observations, including provider `YYYYMMDD` and ISO `YYYY-MM-DD`,
+  keep their supplied calendar date without an invented instant. Newly derived
+  evidence preserves this precision; original receipts and already saved
+  reports are not rewritten. A present research opinion is not itself a new market measurement;
+  its independently asserted empirical premises still need their own support.
+  These checks stay in internal evidence, never reader copy.
+  Composition receives an actual date-binding rendering example, including a
+  calendar-crossing observation when available. Raw stored instants are not
+  reader calendar dates. Revision feedback retains each original assertion,
+  its completion state, dimension checks and runtime date comparison rather
+  than flattening the date conflict into a paragraph reason. This feedback is
+  repair context, never new evidence or a prewritten reader sentence.
+  Body interpretation selects runtime-addressed original source units rather
+  than reproducing long paragraphs. Ranges start at the first unit, continue
+  without gaps or overlap and end at the last unit. The runtime restores exact
+  original characters, including framing, negation, conditions and whitespace;
+  addressing boundaries assign no semantic categories or truth verdicts.
+  Body wire fields separately represent one complete operation state, claim kind,
+  actual observation-date anchors and categorical indicator assertions. Explicit
+  calendar anchors remain ISO dates; `task_now` preserves an additional present
+  observation commitment and `unresolved` remains unknown. New reviews independently
+  declare temporal_scope and participant_scope before the broad claim kind.
+  Record dates do not stand in for current-observation commitments, and a
+  judgment label cannot remove an actual participant attribution or exclusion.
+  Complete participant predicates distinguish actual attribution/exclusion,
+  named actor records and source-capability limits. New factual reviews use
+  that scoped predicate; legacy booleans remain readable. A source-capability
+  assertion requires an owned method record and explicit source references; it
+  does not cancel any separate positive market-participant obligation.
+  FACT and independent Source reviews also declare temporal scope before their
+  truth verdict. Any additional task-present obligation reaches the runtime
+  calendar check even when an earlier reader saw only a record date. Fresh
+  reviews require those declarations; legacy saved reviews remain readable.
+  The runtime combines positive obligations; absence or invalid metadata is an
+  unavailable review. Historical responses remain readable without being valid
+  fresh declarations. A runtime date binding has the display calendar; an
+  explicitly named calendar in author prose remains with semantic source review.
+  Participant claims require admissible owned group observations or substantive
+  quotations, returned as structured source references. Anonymous activity,
+  ordinary prices, titles or another instrument cannot meet that requirement.
+  Admissibility alone never establishes that a quotation actually supports the
+  group, gross/net measure, date, negation or full scope of the conclusion.
+  Named account/company records remain distinct from trader-group composition;
+  an issuer announcement does not establish group trading. Negated measurement
+  keeps its negative meaning rather than becoming a claim of actual measurement.
+  An anaphoric source in a mixed context requires independent reference agreement.
+  Composition and revision receive those same source-method constraints.
+  Cross-date comparisons retain their declared baseline and a current witness;
+  a research opinion naming a security is not itself a newly observed price.
+  An unresolved anchor beside an independently declared current predicate may
+  be reconciled only with actual bound observation references; source dates
+  and account-snapshot ownership are still checked. A pure research-clock
+  disagreement needs a fresh explicit temporal interpretation and preserves
+  every actual market-value, actor and categorical requirement.
+  An exclusively temporal opinion conflict may be independently reconciled,
+  preserving scalar, actor, explicit-date and categorical obligations.
+  Coverage measures requested answers rather than an unrequested presentation
+  format. A coverage omission does not authorize rewriting known adjacent
+  assertions: bounded repairs may append separate answer paragraphs, and the
+  complete assembled body is reviewed again under the same call budget. Provide runtime calendar
+  and timezone context without task instructions or source evidence. A dated
+  sample must not become current merely because it is an empirical observation.
+  A bound display date does not prove the absence of an additional current
+  commitment. Preserve the distinction between the record timestamp and the
+  observation the reader claims is current; neither may erase the other.
+  The operation code chooses a valid combination of
+  meaning, outcome and scope instead of asking the model to cross-fill three
+  related fields. Exact typed decoding maps into the existing canonical types
+  before review and persistence; earlier boolean wire annotations, legacy selectors and
+  exact quoted responses remain readable. Reject mixed field namespaces and
+  illegal values rather than guessing a category or repairing reader meaning.
+  Strictly reconstructed quoted responses remain readable for compatibility.
+  This adapts the source-selection idea in the
+  [W3C annotation model](https://www.w3.org/TR/annotation-model/#text-position-selector)
+  and delimiter retention in [LangChain's splitter source](https://github.com/langchain-ai/langchain/blob/master/libs/text-splitters/langchain_text_splitters/character.py).
+  Unlike retrieval chunks, these units have no overlap, trimming or content
+  normalization, and belong to one immutable body snapshot.
+  An invalid temporal reference makes that assertion unavailable, not false.
+  The same row ownership applies to malformed assessment fields. Preserve valid
+  sibling assessments, the original response and the unavailable row's causes;
+  never coerce an invalid label into an approval or completed rejection.
+  Missing, repeated or foreign assertion IDs invalidate the shared envelope.
+  The same applies when review claims an entailed current observation time but
+  supplies neither a source witness nor an existing runtime date binding.
+  Qualitative observations still need their source date; absence of an explicit
+  number does not make a present empirical claim atemporal. Unknown source time
+  remains a substantive uncertainty when the review actually reports it.
+  Persist this distinction and withhold its paragraph while preserving other
+  independently verified analysis. A completed rejection elsewhere can justify
+  the one existing genuine body revision; an annotation error alone cannot
+  trigger a review retry. A conflict independently established by original bound
+  dates or owned indicator operands may also justify that single changed-body
+  revision while the model annotation remains unavailable. Exclude model-selected
+  witnesses from this independent check; missing or ambiguous evidence is not
+  a demonstrated conflict. Normal completion and learning still require all
+  checks. An incomplete reader revision may retain independently approved
+  paragraphs despite another paragraph's annotation error; withhold that
+  paragraph and preserve the unavailable status, causes and prior supported
+  business sections. Do not replace useful revised analysis with an older
+  rejected body merely because its review envelope was complete.
+  Each statement
+  must be entailed; contradictory or unknown statements are withheld. Missing,
+  malformed or unavailable assessments cannot fall back to writer approval.
+  Assess actual factual commitments while preserving negation, conditions and
+  modality. Evaluate qualitative descriptions within their stated observation
+  scope; do not add an unstated claim of persistence, statistical significance
+  or a stronger technical diagnostic. Those properties still require evidence
+  when asserted. An evidence-scoped limitation concerns what the provided observations
+  establish, not whether a future event is impossible. Non-empirical report discourse
+  needs no market attribution; claims about available records still do. Disclaimers
+  and opinions cannot exempt adjacent factual claims, causal premises or quantities.
+  Before evidence review, the same local model independently partitions and types
+  the body without task instructions, receipts or other source evidence. Exact
+  text reconstruction is required; omission or rewriting fails this contract.
+  Reuse these exact spans as independently assessed assertions, including a
+  conclusion joined to otherwise correct measurements. Give each assertion a
+  runtime-owned ID and require exactly one assessment per ID. A paragraph passes
+  only when all its assertions pass. The factual assessor receives every exact
+  original reader span in reading order, grouped by paragraph, so subjects,
+  ellipsis and shared conventions retain their original context. Reader spans
+  are untrusted claims, never evidence for one another. Do not generate copied
+  or normalized referent hints as a second authority for reader meaning; legacy
+  hints are ignored and never reach factual assessment. Source contexts contain only owned facts and
+  calculations. Do not duplicate the candidate paragraph as apparent source
+  text. Matching activity measurements cannot establish unobserved actors'
+  actions or causes. Missing, duplicate or unknown assertion assessments fail
+  the review rather than silently dropping a claim.
+  Record each span's commitment type before evidence is supplied: observation,
+  comparison, actor activity, causal relationship, judgment or discourse. Split
+  spans when that type changes. An asserted actor identity/action or causal
+  process cannot become a qualitative judgment merely because it accompanies
+  standard technical analysis. The evidence assessor preserves that interpreted
+  commitment and checks the corresponding actors, actions, dates and scope;
+  a correct measurement cannot replace the required proof. These internal types
+  are neither factual evidence nor reader-facing content.
+  Entailment records whether support is direct source evidence, a validated
+  calculation, bounded reasoning, absent or inapplicable. A body's asserted
+  actor activity or causal relationship cannot be established by a calculation
+  or analytical interpretation alone. Preserve that empirical commitment and
+  withhold it even when the overall model verdict approves. Missing or invalid
+  support metadata is unavailable review, not a completed factual rejection;
+  preserve other independently approved paragraphs. This typed compatibility
+  check does not establish sentence truth: a model can still misidentify the
+  basis, so exact semantic counterexamples and legitimate paired reports remain
+  mandatory. No prose phrases or keywords classify support in the runtime.
+  The factual assessor independently records participant and causal commitments;
+  either stage's positive commitment requires the corresponding direct evidence.
+  Negative body classifications cannot exempt a statement from that assessment.
+  Missing or malformed independent commitments remain unavailable review.
+  Categorical moving-average assertions fixed before evidence retain their scope
+  and equality/inequality predicate. Publication checks the actual owned moving
+  averages using the calculation's operation, despite an optimistic model verdict.
+  Bound observations cannot be replaced by another security or date selected by
+  the assessor. Explicit period subsets do not assert the whole system's order;
+  unavailable periods or ambiguous source scope remain unknown. Preserve these
+  checks, raw verdicts and original assertions through revision and saved history.
+  Correct extraction of meaning is still a model obligation, not established by
+  an enum or a valid evidence reference; paired real-model and full-report checks
+  remain mandatory.
+  Pass the body-only operation meaning alongside the commitment type. Proposals
+  and conditional watchpoints are not completed actions or measured predictions;
+  verify their asserted premises and rule compliance without requiring execution
+  receipts or a historical observation of the proposed threshold. Assess bounded
+  research judgments through their factual premises and reasoning scope rather
+  than rejecting them solely for being subjective. None of these distinctions
+  exempts adjacent empirical, causal or participant claims from evidence review.
+  An analytical assessment of a holding rationale is not an attribution of the
+  investor's private beliefs or a completed strategy change. The time dimension
+  checks empirical observation dates, not whether a proposed future action has
+  already occurred. Pure proposals have no empirical time commitment; dated
+  factual premises remain independently applicable and cannot be waived.
+  This body-only review also identifies quantities whose units or numerical scale
+  are not established by the reader context. Evidence review cannot supply a
+  missing convention or override that finding. Explicit shared units and
+  dimensionless valuation multiples remain valid; this is a semantic assessment,
+  not a punctuation or keyword rule. A bounded revision may clarify the body.
+  Runtime-owned value-with-unit spans establish unit presence independently of
+  the model. Locating a quoted issue wholly within those spans may clear only
+  the missing-unit allegation, never sentence truth or scope. A matching quote
+  in author text cannot borrow another occurrence's binding. Persist this check
+  and still require factual entailment for the complete sentence.
+  Execution assertions concern an actor's state-changing operation (orders or
+  memory writes), not observations of price movement, returns or holdings.
+  Current execution assertions are removed from AI analysis before coverage and
+  factual review. The runtime renders actual mutation receipts separately. Without
+  current receipts, such assertions remain unconfirmed and the report incomplete;
+  model approval cannot turn empty receipts into proof of non-execution. Historical
+  statements, plans and uncertainty remain eligible for factual review.
+  Reporting an operation and performing it have different semantics. Classify the
+  business outcome the author commits to, including under confirmation; an operation
+  mentioned within a presentation rule does not itself assert a business outcome.
+  An authored prospective choice or recommendation remains a plan even when made
+  in this run. Verify its factual premises and claimed compliance with supplied
+  requirements; do not require execution receipts to prove the choice itself.
+  Independently classify and check any accompanying execution assertion.
+  Original and revised bodies share at most two body-meaning and two entailment
+  calls, making at most eight model calls in total. The parent deadline, cancellation and no-tools boundary
+  still apply. Record both review inputs/results and actual total calls. Choosing
+  a model is not certification: the exact configured path must pass semantic,
+  full-task, long-report and downstream learning acceptance before activation.
+  Pass the runtime-owned business date and scheduler timezone separately from
+  instructions, together with the renderer's display timezone. Preserve this
+  context through revision and persistence. An unknown reference date stays
+  unknown; neither retrieval time nor the latest source date establishes today.
+  Historical reuse must retain dated source meaning rather than adopt the review
+  machine's current date. Pair stale-as-current rejection with valid historical
+  wording and UTC-to-local calendar-date acceptance.
+
 - Validate typed facts against runtime-owned receipts. Preserve instrument and
   account identity, metric, sign, rounding, unit, category, period and source
   scope through nested research, dispatch, publication and persisted output.
   Agent summaries, activity previews and model-supplied reader text cannot replace
   original evidence. Receipts belong to the exact run and instrument.
 - Keep business requirements separate from execution and presentation policy.
+  Task coverage applies this distinction even when the report has no optional
+  gap: tool-use instructions do not themselves request a call transcript.
+  Explicit requests for operation state, results and reasons still require an
+  answer; empty receipts cannot establish that an operation did not occur.
+  A requested business operation is itself a task goal; its outcome remains
+  necessary even without a separate instruction to report the result.
   A report may reference raw facts, direct observation aliases and validated calculations; retain the original
   operands and resolve references independently of document order. Provenance
   does not establish semantic support, and model approval cannot clear a
@@ -36,7 +610,10 @@ in the linked regression tests, not in expanding prose exception lists.
   imply execution failure. Incomplete output must not become automatic learning.
 - Model-declared gaps are semantic claims. The existing reviewer may dismiss a
   gap only when it is outside the task or cites validated report facts/calculations
-  already providing the requested content. Preserve the original claim and review
+  already providing the requested content. Numeric value bindings inside natural
+  paragraphs count as validated report facts; identity-only bindings and bare
+  references do not establish that a value was provided. Clearing a duplicate gap
+  cannot approve unsupported prose or erase other findings. Preserve the original claim and review
   in the artifact. Missing/invalid reviews retain gaps; deterministic evidence and
   execution failures cannot be dismissed by this review.
 - Publication and correction use the same original receipts and deadline.
@@ -89,6 +666,27 @@ Regression entry points:
 
 ## Memory and learning lifecycle
 
+- Automatic learning first reopens a run-owned saved historical report and its
+  original records, checking identity/digest without rewriting it. It proposes
+  one useful lesson, then reviews only that candidate's quality against the
+  historical source: faithfulness, usefulness, scope, conditions and uncertainty.
+  Historical dates remain historical; no current-day requirement is invented.
+  A historical report with no market receipts can still contain a useful lesson.
+  Only accepted learning candidates enter the searchable insights archive.
+  Failed/unavailable learning leaves the delivered answer and source history
+  intact. Diagnostics belong under the data root, not the memory archive.
+- The historical-learning reviewer is separate from direct write tools.
+  The new all-memory factual review is removed; existing memory/knowledge/skill
+  validation is retained at its original scope. User preferences can again use
+  the pre-existing interactive write path without a market-evidence catalogue.
+- Memory compaction selects complete source records rather than rewriting their
+  factual content. Keep source paths and qualifications, exclude earlier compactions
+  from new selections, and deduplicate identical extracts. Original records remain
+  accessible. Unavailable/invalid selection may retain a bounded extract of recent
+  records, never model-supplied replacement prose. It is historical recall, not
+  fresh market/execution evidence. Indexed and fallback lookup preserve complete
+  content within the consumer budget and explicitly mark oversized results;
+  bootstrap context must not silently cut the qualifications off selected records.
 - Explicit dates constrain recall without deleting history. Exact phrase matches
   must reach the matching record before loose search matches. Repeated recalled
   content must not crowd out independent evidence; verify returned content after
@@ -143,6 +741,13 @@ Regression entry points:
 - Tool-sequence reasoning is transient operational context. Account for its input
   tokens separately from recent-source protection; exclude it from public session
   records and factual summary inputs.
+- Local context preflight counts the complete prompt, tool definitions and private
+  reasoning with the loaded model's tokenizer and actual loaded window. A byte
+  limit on a tokenizer connection is not a token limit. Use bounded read-only
+  transport that accommodates large valid prompts; never load, unload or predict
+  to obtain a count. Preserve the parent deadline, output reserve and conservative
+  fallback when measurement is unavailable. Do not omit source data or user
+  history to make a transport limitation look like a fitting request.
 
 Regression entry points:
 [budgets](../tests/test_native_budgets.py),

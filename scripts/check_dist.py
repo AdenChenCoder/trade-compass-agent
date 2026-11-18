@@ -33,6 +33,8 @@ FORBIDDEN_PARTS = {
 }
 FORBIDDEN_SUFFIXES = {".pyc", ".pyo", ".tsbuildinfo", ".apk", ".jks", ".keystore"}
 REQUIRED_WHEEL_FILES = {
+    "trade_compass_agent/runtime/report_annotation_repair.py",
+    "trade_compass_agent/runtime/report_revision.py",
     "trade_compass_agent/agent_skills.yaml",
     "trade_compass_agent/builtin_skills/investment-masters/references/buffett.md",
     "trade_compass_agent/builtin_skills/investment-masters/SKILL.md",

@@ -1,60 +1,69 @@
 import asyncio
 import json
-import sys
-from types import SimpleNamespace
 
 import pytest
 
 from trade_compass_agent.llm.lmstudio_context import ContextMeasurement, measure_context
 
 
-def fake_sdk(monkeypatch, *, loaded=True, delay=0, window=131072):
-    seen = {"closed": 0, "loads": 0}
-
-    class Model:
-        identifier = "qwen3.8-27b"
-
-        async def apply_prompt_template(self, history, opts):
-            seen["history"], seen["opts"] = history, opts
-            return json.dumps(history) + json.dumps(opts)
-
-        async def tokenize(self, texts):
-            seen["public_texts"] = texts
-            return [[1] * len(text) for text in texts]
-
-        async def count_tokens(self, text):
-            await asyncio.sleep(delay)
-            return 123
-
-        async def get_context_length(self):
-            return window
-
+def fake_rpc(monkeypatch, *, loaded=True, delay=0, window=131072, fault=None):
+    from trade_compass_agent.llm import lmstudio_context as counter
+    seen = {"closed": 0, "loads": 0, 'endpoints': [], 'public_texts': []}
     class Client:
         def __init__(self, **kwargs):
-            seen["host"] = kwargs["api_host"]
-            self.llm = self
-
+            assert kwargs == {'trust_env': False}
         async def __aenter__(self):
             return self
-
         async def __aexit__(self, *args):
             seen["closed"] += 1
-
-        async def list_loaded(self):
-            return [Model()] if loaded else []
-
-        async def model(self, *a, **k):
-            seen["loads"] += 1
-            raise AssertionError("Counting must not load a model")
-
-    monkeypatch.setitem(sys.modules, "lmstudio", SimpleNamespace(AsyncClient=Client))
+    class Websocket:
+        def __init__(self, url, **kwargs):
+            seen['host'] = url
+            assert kwargs['max_message_size_bytes'] == 8 * 1024 * 1024
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            seen['socket_closed'] = True
+        async def send_json(self, message):
+            self.message = message
+        async def receive_json(self):
+            message = self.message
+            if 'authVersion' in message:
+                return {'success': fault != 'auth'}
+            endpoint = message['endpoint']
+            seen['endpoints'].append(endpoint)
+            parameter = message.get('parameter', {})
+            if endpoint == 'listLoaded':
+                value = [{'identifier': 'qwen3.8-27b'}] if loaded else []
+            elif endpoint == 'getModelInfo':
+                value = {'contextLength': window}
+            elif endpoint == 'applyPromptTemplate':
+                seen['history'], seen['opts'] = parameter['history'], parameter['opts']
+                seen['formatted'] = json.dumps(parameter['history']) + json.dumps(parameter['opts'])
+                value = {'formatted': seen['formatted']}
+            elif endpoint == 'countTokens':
+                text = parameter['inputString']
+                if 'total' not in seen:
+                    await asyncio.sleep(delay)
+                    seen['total'] = text
+                    count = -1 if fault == 'count' else 123
+                else:
+                    seen['public_texts'].append(text)
+                    count = len(text)
+                value = {'tokenCount': count}
+            else:
+                raise AssertionError('No generation or model lifecycle operation is allowed')
+            return {'type': 'rpcError' if fault == 'error' else 'rpcResult',
+                    'callId': message['callId'] + int(fault == 'id'), 'result': value}
+    monkeypatch.setattr(counter, 'AsyncClient', Client)
+    monkeypatch.setattr(counter, 'aconnect_ws', Websocket)
     return seen
 
 
 def test_native_counter_includes_template_tools_and_private_reasoning_but_protects_public_sources(
     monkeypatch,
 ):
-    seen = fake_sdk(monkeypatch)
+    seen = fake_rpc(monkeypatch)
     tool = {"type": "function", "function": {"name": "read", "parameters": {"type": "object"}}}
     request = {
         "messages": [
@@ -79,7 +88,7 @@ def test_native_counter_includes_template_tools_and_private_reasoning_but_protec
 
 
 def test_counter_deadline_closes_client_and_returns_safe_fallback(monkeypatch):
-    seen = fake_sdk(monkeypatch, delay=0.2)
+    seen = fake_rpc(monkeypatch, delay=0.2)
     assert (
         measure_context(
             "http://localhost:1234/v1", "qwen3.8-27b", {"prompt": "facts"}, timeout=0.01
@@ -90,25 +99,97 @@ def test_counter_deadline_closes_client_and_returns_safe_fallback(monkeypatch):
 
 
 def test_missing_model_never_triggers_implicit_load(monkeypatch):
-    seen = fake_sdk(monkeypatch, loaded=False)
+    seen = fake_rpc(monkeypatch, loaded=False)
     assert measure_context("http://localhost:1234/v1", "qwen3.8-27b", {"prompt": "facts"}) is None
     assert seen["loads"] == 0 and seen["closed"] == 1
 
 
+@pytest.mark.parametrize('fault', ['auth', 'error', 'id', 'count'])
+def test_counter_protocol_failure_keeps_safe_fallback_and_closes(monkeypatch, fault):
+    seen = fake_rpc(monkeypatch, fault=fault)
+    assert measure_context('http://localhost:1234/v1', 'qwen3.8-27b', {'prompt': 'facts'}) is None
+    assert seen['closed'] == 1 and seen['socket_closed']
+    assert set(seen['endpoints']) <= {'listLoaded', 'getModelInfo', 'applyPromptTemplate', 'countTokens'}
+
+
+@pytest.mark.parametrize('frame_limit,supported', [(65536, False), (8 * 1024 * 1024, True)])
+def test_large_template_frame_uses_complete_input_without_sdk_receive_ceiling(monkeypatch, frame_limit, supported):
+    import httpx
+    from httpx_ws.transport import ASGIWebSocketTransport
+    from starlette.applications import Starlette
+    from starlette.routing import WebSocketRoute
+    from starlette.websockets import WebSocketDisconnect
+    from trade_compass_agent.llm import lmstudio_context as counter
+
+    text = 'source-data-0123456789' * 4000
+    formatted = 'native-template:' + text
+    seen = {'endpoints': [], 'counted': [], 'closed': False}
+    async def server(websocket):
+        await websocket.accept()
+        auth = await websocket.receive_json()
+        assert set(auth) == {'authVersion', 'clientIdentifier', 'clientPasskey'}
+        await websocket.send_json({'success': True})
+        try:
+            while True:
+                request = await websocket.receive_json()
+                endpoint = request['endpoint']
+                seen['endpoints'].append(endpoint)
+                parameter = request.get('parameter', {})
+                if endpoint == 'listLoaded':
+                    result = [{'identifier': 'framed-counter'}]
+                elif endpoint == 'getModelInfo':
+                    result = {'contextLength': 131072}
+                elif endpoint == 'applyPromptTemplate':
+                    assert parameter['history']['messages'][0]['content'][0]['text'] == text
+                    result = {'formatted': formatted}
+                elif endpoint == 'countTokens':
+                    seen['counted'].append(parameter['inputString'])
+                    result = {'tokenCount': 321}
+                else:
+                    raise AssertionError('This is an explicit counter double, never a model executor')
+                await websocket.send_json({'type': 'rpcResult', 'callId': request['callId'], 'result': result})
+        except WebSocketDisconnect:
+            pass
+        finally:
+            seen['closed'] = True
+    app = Starlette(routes=[WebSocketRoute('/llm', server)])
+    monkeypatch.setattr(counter, 'AsyncClient', lambda **kwargs:
+        httpx.AsyncClient(transport=ASGIWebSocketTransport(app), **kwargs))
+    connect = counter.aconnect_ws
+    def framed(*args, **kwargs):
+        assert kwargs['max_message_size_bytes'] == 8 * 1024 * 1024
+        kwargs['max_message_size_bytes'] = frame_limit
+        return connect(*args, **kwargs)
+    monkeypatch.setattr(counter, 'aconnect_ws', framed)
+    async def run():
+        try:
+            return await asyncio.wait_for(counter._measure('localhost:9', 'framed-counter', {
+                'messages': [{'role': 'user', 'content': text}]}), 2)
+        except Exception:
+            return None
+    result = asyncio.run(run())
+    assert (result is not None) is supported
+    if supported:
+        assert result == ContextMeasurement(321, 131072, (325,))
+        assert seen['counted'] == [formatted, text]
+    assert seen['closed']
+    assert set(seen['endpoints']) <= {'listLoaded', 'getModelInfo', 'applyPromptTemplate', 'countTokens'}
+
+
 def test_unknown_window_is_not_replaced_with_architectural_maximum(monkeypatch):
-    seen = fake_sdk(monkeypatch, window=-1)
+    seen = fake_rpc(monkeypatch, window=-1)
     assert measure_context("http://localhost:1234/v1", "qwen3.8-27b", {"prompt": "facts"}) is None
     assert seen["closed"] == 1 and seen["loads"] == 0
 
 
 def test_remote_keeps_safe_fallback(monkeypatch):
-    seen = fake_sdk(monkeypatch)
+    seen = fake_rpc(monkeypatch)
     assert measure_context("https://remote.example/v1", "qwen3.8-27b", {"prompt": "facts"}) is None
     assert "host" not in seen
 
 
 def test_existing_event_loop_still_uses_the_native_counter(monkeypatch):
-    seen = fake_sdk(monkeypatch)
+    seen = fake_rpc(monkeypatch)
 
     async def running():
         return measure_context("http://localhost:1234/v1", "qwen3.8-27b", {"prompt": "facts"})
@@ -120,7 +201,7 @@ def test_existing_event_loop_still_uses_the_native_counter(monkeypatch):
 
 def test_existing_loop_counter_deadline_does_not_wait_for_the_worker(monkeypatch):
     import time
-    seen = fake_sdk(monkeypatch, delay=0.2)
+    seen = fake_rpc(monkeypatch, delay=0.2)
 
     async def running():
         started = time.monotonic()
@@ -195,3 +276,15 @@ def test_multimodal_compaction_never_counts_image_encoding_as_text(monkeypatch):
     assert client.measure_input_tokens([ChatMessage(role="user", content=[
         {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * 100000}},
     ])]) is None
+
+
+def test_request_response_reserve_keeps_nested_parent_limit():
+    from trade_compass_agent.llm.providers import llm_response_contract, llm_response_token_limit
+    assert llm_response_token_limit(32768) == 32768
+    with llm_response_contract(max_tokens=4096):
+        with llm_response_contract(max_tokens=16384):
+            assert llm_response_token_limit(32768) == 4096
+    with llm_response_contract(max_tokens=16384):
+        assert llm_response_token_limit(32768) == 16384
+        assert llm_response_token_limit(8192) == 8192
+    assert llm_response_token_limit(32768) == 32768

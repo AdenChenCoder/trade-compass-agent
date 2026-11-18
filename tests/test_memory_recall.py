@@ -53,3 +53,26 @@ def test_bootstrap_includes_authority_footer(tmp_path: Path) -> None:
     store.load_from_disk()
     prompt = build_system_prompt(memory_dir=tmp_path / "vault", skills=[], memory_store=store)
     assert MEMORY_AUTHORITY_FOOTER.strip() in prompt
+
+
+def test_oversize_memory_is_explicitly_incomplete_on_index_and_fallback(tmp_path, monkeypatch):
+    from trade_compass_agent.runtime.tools.memory import tool_search_memory, tool_write_memory
+    content = "002415 " + "资料" * 4500 + "尚未执行。"
+    tool_write_memory(tmp_path, "notes", content)
+    for fallback in (False, True):
+        if fallback:
+            monkeypatch.setattr(MemorySearchIndex, "search", lambda *a, **k: [])
+        hit = json.loads(tool_search_memory(tmp_path, "002415"))["results"][0]
+        assert hit["truncated"] is True and hit["content_chars"] > 8000
+        assert len(hit["content"]) == 8000
+
+
+def test_oversize_recent_archive_does_not_hide_fitting_original_context(tmp_path):
+    from trade_compass_agent.memory.tree.storage import MemoryTreeStore
+    from trade_compass_agent.runtime.tools.memory import bootstrap_memory_context
+    store = MemoryTreeStore(tmp_path)
+    original = "观察002415，但目前尚未成交。"
+    store.write("notes", original)
+    store.write("compaction", "历史记忆摘录。" * 400)
+    context = bootstrap_memory_context(tmp_path)
+    assert original in context and len(context) < 2000

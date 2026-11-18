@@ -205,9 +205,21 @@ def test_agent_consumer_saves_only_the_corrected_memory(tmp_path, monkeypatch, a
     original = ToolRegistry.execute
 
     def stream(messages, **kwargs):
-        from report_contract_helpers import report_reply
-        if result := report_reply(messages):
-            return result
+        from report_contract_helpers import report_facts
+        try:
+            payload = json.loads(messages[-1].content)
+        except (ValueError, TypeError):
+            payload = {}
+        if isinstance(payload, dict) and 'schema' in payload:
+            refs = [f['id'] for f in report_facts(payload) if f['metric'] == 'low']
+            return ChatCompletion(content=json.dumps({'schema_version': 1, 'items': [{
+                'id': 'candidate', 'section': 'assessment', 'type': 'inference',
+                'text': payload['draft'], 'refs': refs}]}))
+        if isinstance(payload, dict) and 'inferences' in payload:
+            return ChatCompletion(content=json.dumps({'reviews': [{
+                'id': row['id'], 'supported': row['text'].endswith('8.90'),
+                'reason': 'Compare the proposed current low against the dated bars.'}
+                for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}}))
         calls.append(kwargs)
         if len(calls) == 1:
             return ChatCompletion(content=None, tool_calls=[ToolCall("read", "get_bars", '{"symbol":"601928"}')])

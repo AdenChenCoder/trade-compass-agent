@@ -83,8 +83,157 @@ def test_schema_maintenance_preserves_closed_thinking_template_and_enforces_gram
     body = json.loads(requests[0].content)
     assert body["response_format"]["json_schema"]["schema"] == ReportContentDocument.model_json_schema()
     assert body["max_tokens"] == 16384 and body["prompt"].endswith("</think>\n\n")
-    from trade_compass_agent.llm.providers import _maintenance_response_schema
-    assert _maintenance_response_schema.get() is None
+    from trade_compass_agent.llm.providers import _response_schema
+    assert _response_schema.get() is None
+
+
+@pytest.mark.parametrize("model", ["qwen3.6-35b-a3b", "qwen3.8-27b"])
+@pytest.mark.parametrize("parent_limit", [8192, 32768])
+@pytest.mark.parametrize('precise', [False, True])
+def test_bounded_natural_writing_keeps_reasoning_private_without_raw_template(monkeypatch, tmp_path, model, parent_limit, precise):
+    from trade_compass_agent.llm.providers import llm_response_contract, _response_output_limit, _precise_response
+    requests = []
+    value = '{"schema_version":1,"items":[]}'
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, text=_sse(
+            {"index": 0, "delta": {"reasoning_content": "private planning"}, "finish_reason": None},
+            {"index": 0, "delta": {"content": value}, "finish_reason": "stop"},
+        ), headers={"content-type": "text/event-stream"})
+    monkeypatch.setattr("trade_compass_agent.llm.providers._usage_http_client",
+                        lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    client = OpenAIChatClient(model=model, api_key="lmstudio", name="lmstudio",
+                             base_url="http://localhost:1234/v1", usage_db_path=tmp_path / "usage.db")
+    deltas = []
+    with llm_response_contract(max_tokens=parent_limit, precise=precise):
+        with llm_response_contract(max_tokens=16384):
+            assert _precise_response.get() is precise
+            result = client.stream_complete([ChatMessage(role="user", content="组织报告正文")], on_delta=deltas.append)
+        assert _response_output_limit.get() == parent_limit
+    assert requests[0].url.path == "/v1/chat/completions"
+    body = json.loads(requests[0].content)
+    assert "prompt" not in body and "response_format" not in body and "tools" not in body
+    assert body["max_tokens"] == min(parent_limit, 16384)
+    assert body['temperature'] == (0.6 if precise and '3.6' in model else 1.0)
+    assert body['presence_penalty'] == (0.0 if precise or '3.8' in model else 1.5)
+    assert result.content == "".join(deltas) == value
+    assert _response_output_limit.get() is None
+    assert not _precise_response.get()
+
+
+@pytest.mark.parametrize("model", ["qwen3.6-35b-a3b", "qwen3.8-27b"])
+@pytest.mark.parametrize("parent_limit", [4096, 32768])
+@pytest.mark.parametrize("complete", [True, False])
+def test_local_semantic_review_uses_private_reasoning_inside_formatting_context(
+    monkeypatch, tmp_path, model, parent_limit, complete,
+):
+    from trade_compass_agent.llm import providers
+    from trade_compass_agent.runtime.exceptions import LLMIncompleteResponseError
+    requests = []
+    value = '{"assessments":[]}'
+    def handler(request):
+        requests.append(request)
+        choices = [{"index": 0, "delta": {"reasoning_content": "private evidence comparison"}, "finish_reason": None}]
+        choices.append({"index": 0, "delta": {"content": value} if complete else {},
+                        "finish_reason": "stop" if complete else "length"})
+        return httpx.Response(200, text=_sse(*choices), headers={"content-type": "text/event-stream"})
+    monkeypatch.setattr(providers, "_usage_http_client",
+                        lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(providers, "_measure_lmstudio_context",
+                        lambda *args, **kwargs: providers.ContextMeasurement(64, 131072))
+    config = AppConfig(data_dir=tmp_path/"data", memory_dir=tmp_path/"memory",
+        llm=LLMConfig(provider="disabled", local_report_review_model=model))
+    callback = providers.create_local_report_fact_check(config)
+    outer_schema = {"type": "object", "properties": {"formatting": {"type": "string"}}}
+    with llm_request_deadline(time.monotonic()+30):
+        with llm_maintenance_mode(max_tokens=parent_limit, response_schema=outer_schema):
+            if complete:
+                assert callback("Assess supplied assertions.", "{}") == value
+            else:
+                with pytest.raises(LLMIncompleteResponseError):
+                    callback("Assess supplied assertions.", "{}")
+            assert providers._maintenance_mode.get()
+            assert providers._response_output_limit.get() == parent_limit
+            assert providers._response_schema.get() is outer_schema
+            assert not providers._precise_response.get()
+    assert not providers._maintenance_mode.get() and providers._response_output_limit.get() is None
+    assert len(requests) == 1  # No retry or second verdict after reasoning exhaustion.
+    assert requests[0].url.host == "localhost" and requests[0].url.path == "/v1/chat/completions"
+    body = json.loads(requests[0].content)
+    assert body["model"] == model and body["max_tokens"] == min(parent_limit, 16384)
+    assert body['temperature'] == (0.6 if '3.6' in model else 1.0) and body['presence_penalty'] == 0.0
+    assert "prompt" not in body and "response_format" not in body and "tools" not in body
+    assert "private evidence comparison" not in json.dumps(body)
+
+
+@pytest.mark.parametrize('model,summary_temperature,summary_penalty', [
+    ('qwen3.6-35b-a3b', 0.7, 1.5), ('qwen3.5-35b-a3b', 0.3, None),
+])
+def test_precise_sampling_does_not_leak_to_chat_or_raw_maintenance_after_failure(
+    monkeypatch, tmp_path, model, summary_temperature, summary_penalty,
+):
+    from trade_compass_agent.llm.providers import llm_response_contract, _precise_response
+    requests = []
+    def handler(request):
+        requests.append(json.loads(request.content))
+        choice = ({'index': 0, 'text': 'summary', 'finish_reason': 'stop'}
+                  if request.url.path == '/v1/completions' else
+                  {'index': 0, 'delta': {'content': '{}'}, 'finish_reason': 'stop'})
+        return httpx.Response(200, text=_sse(choice), headers={'content-type': 'text/event-stream'})
+    monkeypatch.setattr('trade_compass_agent.llm.providers._usage_http_client',
+                        lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    client = OpenAIChatClient(model=model, api_key='local', name='lmstudio',
+        base_url='http://localhost:1234/v1', usage_db_path=tmp_path/'usage.db')
+    messages = [ChatMessage(role='user', content='{}')]
+    client.stream_complete(messages)
+    with pytest.raises(RuntimeError, match='scoped failure'):
+        with llm_response_contract(max_tokens=256, precise=True):
+            with llm_response_contract(max_tokens=4096):
+                client.stream_complete(messages)
+            with llm_maintenance_mode(max_tokens=128):
+                assert client.stream_complete(messages).content == 'summary'
+            assert _precise_response.get()
+            raise RuntimeError('scoped failure')
+    assert not _precise_response.get()
+    client.stream_complete(messages)
+    assert len(requests) == 4
+    assert [(r['temperature'], r.get('presence_penalty')) for r in requests] == [
+        (1.0, 1.5), (0.6, 0.0), (summary_temperature, summary_penalty), (1.0, 1.5)]
+    assert requests[1]['max_tokens'] == 256 and requests[2]['max_tokens'] == 128
+    assert all('tools' not in row for row in requests)
+
+
+def test_concurrent_chat_does_not_inherit_another_reports_precision_scope(monkeypatch, tmp_path):
+    from trade_compass_agent.llm.providers import llm_response_contract
+    requests, errors = [], []
+    entered, release = threading.Event(), threading.Event()
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, text=_sse(
+            {'index': 0, 'delta': {'content': '{}'}, 'finish_reason': 'stop'}),
+            headers={'content-type': 'text/event-stream'})
+    monkeypatch.setattr('trade_compass_agent.llm.providers._usage_http_client',
+                        lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    client = OpenAIChatClient(model='qwen3.6-35b-a3b', api_key='local', name='lmstudio',
+        base_url='http://localhost:1234/v1', usage_db_path=tmp_path/'usage.db')
+    def report():
+        try:
+            with llm_response_contract(max_tokens=256, precise=True):
+                entered.set()
+                assert release.wait(2)
+                client.stream_complete([ChatMessage(role='user', content='report')])
+        except BaseException as exc:
+            errors.append(exc)
+    worker = threading.Thread(target=report)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        client.stream_complete([ChatMessage(role='user', content='ordinary chat')])
+    finally:
+        release.set()
+        worker.join(2)
+    assert not worker.is_alive() and not errors and len(requests) == 2
+    assert [(r['temperature'], r['presence_penalty']) for r in requests] == [(1.0, 1.5), (0.6, 0.0)]
 
 
 @pytest.mark.parametrize("value,finish", [("unstructured output", "stop"), ('{"items":[]}', "stop"),
@@ -94,7 +243,7 @@ def test_report_still_rejects_nonconforming_or_truncated_provider_output(monkeyp
     calls = []
     def handler(request):
         calls.append(request)
-        return httpx.Response(200, text=_sse({"index": 0, "text": value, "finish_reason": finish}),
+        return httpx.Response(200, text=_sse({"index": 0, "delta": {"content": value}, "finish_reason": finish}),
                               headers={"content-type": "text/event-stream"})
     monkeypatch.setattr("trade_compass_agent.llm.providers._usage_http_client",
                         lambda: httpx.Client(transport=httpx.MockTransport(handler)))
@@ -436,7 +585,7 @@ def test_execution_claim_requires_current_receipt(text, receipts, rejected):
     assert unverified_execution_claim(text, receipts) is rejected
 
 
-def test_autonomous_hallucinated_fill_is_not_published_or_learned(tmp_path, monkeypatch):
+def test_unreviewed_answer_does_not_create_a_trade_or_a_verified_claim(tmp_path, monkeypatch):
     from trade_compass_agent.llm.providers import ChatCompletion
     from trade_compass_agent.ops.agent_session import ScheduledAgentSession
     from trade_compass_agent.portfolio.trading_policy import AutonomousTradingStore
@@ -458,11 +607,15 @@ def test_autonomous_hallucinated_fill_is_not_published_or_learned(tmp_path, monk
     AutonomousTradingStore(config.data_dir).set_enabled(True)
     scheduled = ScheduledAgentSession(config, job_id="autonomous_trading")
     scheduled.run("检查并执行交易", timeout=5)
-    assert scheduled.degraded and scheduled.verification["report"] == "unavailable"
-    assert not learned and not (config.data_dir / "paper_trades.jsonl").exists()
+    assert not scheduled.degraded and scheduled.verification["status"] == "not_reviewed"
+    assert not (config.data_dir / "paper_trades.jsonl").exists()
+    assert all(row["response"].verification["status"] == "not_reviewed" for row in learned)
     session = next((config.data_dir / "agent_sessions").glob("*.jsonl"))
-    assert claim not in session.read_text()
-    assert not any(event == "delta" and claim in data.get("text", "") for event, data in events)
+    assert claim in session.read_text()
+    assert any(event == "delta" and claim in data.get("text", "") for event, data in events)
+    artifact = json.loads((config.data_dir / "report_artifacts" /
+                          (scheduled.verification["artifact_id"] + ".json")).read_text())
+    assert artifact["execution_records"] == [] and not artifact["review_valid"]
 
 
 @pytest.mark.parametrize("model", ["qwen3.5-35b-a3b", "qwen3.8-27b"])
@@ -520,10 +673,7 @@ def test_reasoning_only_finish_uses_one_readonly_finalization_without_replaying_
     AutonomousTradingStore(config.data_dir).set_enabled(True)
     reply = ScheduledAgentSession(config, job_id="autonomous_trading").run("买入000001100股", timeout=5)
     assert len(orders) == 1 and "actual-receipt" in reply
-    assert [r.url.path for r in requests] == ["/v1/chat/completions"] * 3 + ["/v1/completions", "/v1/chat/completions"]
-    composition = json.loads(requests[3].content)
-    assert composition["response_format"]["json_schema"]["schema"]["properties"]["items"]["maxItems"] == 120
-    assert composition["max_tokens"] == (8192 if model.startswith("qwen3.5") else 16384)
+    assert [r.url.path for r in requests] == ["/v1/chat/completions"] * 3
     finalization = json.loads(requests[2].content)
     assert all("tools" not in json.loads(request.content) for request in requests[2:])
     final_messages = json.dumps(finalization["messages"])

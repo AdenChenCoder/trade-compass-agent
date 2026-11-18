@@ -2,6 +2,36 @@
 
 This project follows [Semantic Versioning](https://semver.org/) and records user-visible changes here.
 
+## [0.5.10] - 2026-11-18
+
+- Deliver ordinary task reports as the agent wrote them, without mandatory
+  content review, structured rewriting or review-driven publication failures.
+  Unreviewed reports are not labelled fact-checked. Actual data failures,
+  execution limits and uncertain operation outcomes remain visible.
+- Render current execution outcomes from original operation receipts, keeping
+  confirmed trades distinct from rejections and unknown outcomes. Preserve the
+  original answer, receipts and historical records without replaying operations.
+- Review the quality of lessons learned from saved reports and records before
+  adding them to searchable memory. Retain historical dates, conditions and
+  uncertainty; unavailable or rejected learning does not retract the report.
+  Keep existing direct memory, scheduled memory, knowledge and Skill rules at
+  their previous scope, without the new blanket factual review of all writes.
+- Present scheduled task reports as natural paragraphs with expandable sources on
+  mobile. Keep original evidence, calculation results and incomplete-task status
+  available.
+- Preserve expanded sources and citation focus through mobile background refresh,
+  while retaining full-message copy and new-content updates.
+- Build memory extracts from complete selected records without rewriting them,
+  and make truncated memory search results explicit.
+- Show normal unreviewed task steps as generated reports rather than exposing
+  internal verification JSON. Keep report text and actual error messages visible.
+- Require Soup Sieve 4 or later to include its selector-performance security fix.
+- Require dnspython 2.9.2 or later to include its zone parser resource-use fix.
+- Temporarily except GHSA-fc5q-39xc-vjpf in the build/test-only picomatch
+  dependency, with user authorization while no patched version is available.
+  Remove the exception when a patched version becomes available; other dependency
+  and signature checks remain enabled.
+
 ## 0.5.9
 
 - Preserve full history when an interactive follow-up switches from a scheduled
@@ -28,8 +58,6 @@ This project follows [Semantic Versioning](https://semver.org/) and records user
 - Complete the 0.5.6 recovery with the report transport and bounded repair fixes
   from 0.5.7. Production acceptance of 0.5.7 exposed the continued-execution
   defect; existing records remain readable without replaying business actions.
-
-## [Unreleased]
 
 ## [0.5.7] - 2026-11-12
 

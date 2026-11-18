@@ -18,6 +18,24 @@ def report_facts(payload):
     return result
 
 
+
+def source_review_scope(payload):
+    """Explicit Source double declares no additional clock predicate."""
+    return {'temporal_scope': 'unspecified', 'time_evidence': []} if 'source_contexts' in payload else {}
+
+
+def source_review_rows(payload):
+    """Explicit positive SOURCE double, independent of the FACT double's label."""
+    quotations = [fact['id'] for context in payload.get('source_contexts', {}).values()
+                  for fact in context['evidence'] if fact.get('kind') == 'quotation'
+                  and fact.get('metric') in {'content', 'text', 'snippet', 'excerpt'}]
+    return [{**source_review_scope(payload), 'id': row['id'], 'supported': True, 'reason': 'Explicit independent source-review double.',
+             **({'evidence_refs': quotations if any(r['property'] == 'participant_activity'
+                  for r in row.get('source_requirements', [])) else []}
+                if row.get('source_requirements') else {})}
+            for row in payload['inferences']]
+
+
 def report_reply(messages, *, metrics=None, gap=None, inference=None, invalid_ref=False):
     """Return only publication replies; normal agent rounds remain test-owned."""
     try:
@@ -38,6 +56,6 @@ def report_reply(messages, *, metrics=None, gap=None, inference=None, invalid_re
             items.append({"id": "judgment", "type": "inference", "section": "assessment", "text": inference, "refs": [facts[0]["id"]]})
         return ChatCompletion(content=json.dumps({"schema_version": 1, "items": items}))
     if "inferences" in payload and "report" in payload:
-        return ChatCompletion(content=json.dumps({"reviews": [{"id": item["id"], "supported": True, "reason": ""}
+        return ChatCompletion(content=json.dumps({"reviews": [{**source_review_scope(payload), "id": item["id"], "supported": True, "reason": ""}
             for item in payload["inferences"]], "coverage": {"complete": True, "missing": []}}))
     return None

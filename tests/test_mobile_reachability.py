@@ -27,7 +27,10 @@ def test_real_tls_probe_checks_identity_and_keeps_security_boundaries(managed, m
     if mode != "untrusted":
         context.load_verify_locations(certs / "computer.test.ts.net.crt")
     assert context.check_hostname and context.verify_mode == ssl.CERT_REQUIRED
-    monkeypatch.setattr(implementation, "CONNECT_TIMEOUT", .3)
+    # Exercise TLS rejection, rather than accidentally accepting a connection
+    # timeout as rejection before the server sees SNI on a busy runner. The
+    # deliberately silent server still proves that the probe is bounded.
+    monkeypatch.setattr(implementation, "CONNECT_TIMEOUT", 3)
 
     async def run():
         async def serve(reader, writer):

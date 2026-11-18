@@ -39,6 +39,7 @@ def test_source_and_packaged_defaults_use_qwen38_multimodal_model() -> None:
             "vision_model": "qwen3.8-27b",
             "vision_provider": "lmstudio",
             "vision_api_key_env": "",
+            "local_report_review_model": "",
         }
 
 

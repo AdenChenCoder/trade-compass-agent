@@ -109,9 +109,9 @@ def test_plain_report_correction_gets_market_receipts_without_repeating_tools(tm
                        llm=LLMConfig(provider="disabled"), agent=AgentConfig(learning_enabled=False, llm_session_titles=False))
     agent = loop.AgentLoop.from_config(config, report_date="2026-10-26")
     response = agent.run_turn("核对当前市场", session_id="scheduler-market-correction")
-    assert correct in response.summary and wrong not in response.summary
-    assert reads == [tool] and len(calls) == 4
-    assert response.degraded and response.verification["data"] == "insufficient"
+    assert response.summary.startswith(wrong)
+    assert reads == [tool] and len(calls) == 2
+    assert not response.degraded and response.verification["status"] == "not_reviewed"
     artifact = json.loads((config.data_dir / "report_artifacts" / f"{response.verification['artifact_id']}.json").read_text())
     assert any(row["tool"] == tool and row["result"] == raw for row in artifact["receipts"])
-    assert wrong not in (config.data_dir / "agent_sessions/scheduler-market-correction.jsonl").read_text()
+    assert wrong in (config.data_dir / "agent_sessions/scheduler-market-correction.jsonl").read_text()

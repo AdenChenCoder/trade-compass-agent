@@ -10,6 +10,45 @@ let view: HTMLDivElement; let root: Root; let client: QueryClient;
 const settle = async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 15)); }); };
 async function click(selector: string) { await act(async () => view.querySelector<HTMLButtonElement>(selector)!.click()); await settle(); }
 afterEach(async () => { await act(async () => root?.unmount()); view?.remove(); client?.clear(); vi.resetAllMocks(); });
+it.each([
+  { status: "not_reviewed", stepStatus: "completed" as const, expected: "报告已生成。" },
+  { status: "complete", stepStatus: "completed" as const, expected: "报告已完成核验。" },
+  { status: "not_reviewed", stepStatus: "completed" as const, analysis: "本轮未交易，继续观察。", expected: "本轮未交易，继续观察。" },
+  { status: "incomplete", stepStatus: "degraded" as const, finding: "K线数据暂不可用", expected: "K线数据暂不可用" },
+  { status: "incomplete", stepStatus: "failed" as const, finding: "交易结果尚未确认，请核对账本", error: "连接中断", expected: "交易结果尚未确认，请核对账本" },
+])("renders $status/$stepStatus step results without internal metadata", async ({ status, stepStatus, analysis, finding, error, expected }) => {
+  const run = { id: "status-display", job_id: "close", status: stepStatus, started_at: "2026-11-18T15:10:00Z", ok: stepStatus === "completed", message: "运行结果" };
+  vi.mocked(api.fetchJobs).mockResolvedValue([]);
+  vi.mocked(api.fetchCustomJobs).mockResolvedValue([]);
+  vi.mocked(api.fetchJobRuns).mockResolvedValue([run]);
+  vi.mocked(api.fetchSchedulerConfig).mockResolvedValue({ enabled: false, timezone: "Asia/Shanghai", premarket_time: "08:50", morning_plan_time: "09:15", close_time: "15:10", eod_review_time: "15:30", postmarket_time: "16:30", weekly_day: "sat", weekly_time: "10:00" });
+  vi.mocked(api.fetchJobRunDetail).mockResolvedValue({ ...run, step_runs: [{
+    id: "trace-step", step_id: "report", status: stepStatus, error,
+    data: {
+      type: "agent", uses: "agent_close_analysis", ...(analysis ? { analysis } : {}),
+      verification: {
+        status, review_status: status === "complete" ? "completed" : "not_requested",
+        execution: stepStatus === "failed" ? "unknown" : "completed",
+        artifact_id: "private-reference", artifact_sha256: "private-digest",
+        findings: finding ? [{ code: "private-finding-code", message: finding }] : [],
+      },
+    },
+  }] });
+  view = document.createElement("div"); document.body.append(view); root = createRoot(view);
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  await act(async () => root.render(<QueryClientProvider client={client}><JobsPage /></QueryClientProvider>)); await settle();
+  await click('[role="tab"][id$="-history"]');
+  await click('.run-disclosure');
+  await click('[aria-label="步骤 report"]');
+  expect(view.textContent).toContain(expected);
+  if (error) expect(view.textContent).toContain(error);
+  for (const internal of ["private-reference", "private-digest", "private-finding-code", "review_status", "not_reviewed"]) {
+    expect(view.textContent).not.toContain(internal);
+  }
+  if (status !== "complete") expect(view.textContent).not.toContain("报告已完成核验");
+  expect(api.runJob).not.toHaveBeenCalled();
+  expect(api.runCustomJob).not.toHaveBeenCalled();
+});
 it("shows a partial report's concrete gap without exposing verification internals", async () => {
   const run = { id: "partial", job_id: "close", status: "degraded" as const, started_at: "2026-11-10T15:10:00Z", ok: false, message: "部分分析未完成" };
   vi.mocked(api.fetchJobs).mockResolvedValue([]);

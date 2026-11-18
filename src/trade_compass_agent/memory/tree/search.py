@@ -229,8 +229,9 @@ def _fallback_scan(memory_dir: Path, query: str, *, limit: int) -> list[MemorySe
         if needle not in text.lower():
             continue
         scope = path.parent.name
-        snippet = text[:500]
-        results.append(MemorySearchHit(scope=scope, content=snippet, path=str(path), rank=0.0))
+        # Apply the consumer's explicit size limit after lookup, consistently
+        # with indexed hits. A hidden preview must not discard a tail caveat.
+        results.append(MemorySearchHit(scope=scope, content=text, path=str(path), rank=0.0))
         if len(results) >= limit:
             break
     return results

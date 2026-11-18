@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from trade_compass_agent.config import AppConfig
+from trade_compass_agent.llm import providers
 from trade_compass_agent.llm.providers import (
     LLMExecutionCancelled, _remaining_request_time, check_execution_active, llm_request_deadline,
 )
@@ -64,6 +65,7 @@ def test_dispatch_retains_recoverable_specialist_errors(stack, monkeypatch, coun
 def test_dispatch_workers_share_parent_budget_and_finish_before_return(stack, monkeypatch, count, termination):
     barrier = threading.Barrier(count)
     cancelled = threading.Event()
+    expired = threading.Event()
     finished = []
     normal_returns = []
     inherited_budgets = []
@@ -77,6 +79,11 @@ def test_dispatch_workers_share_parent_budget_and_finish_before_return(stack, mo
                 if name == "expert-0":
                     cancelled.set()
                 assert cancelled.wait(timeout=1)
+            else:
+                # Expire only after every worker has entered. A short wall-clock
+                # deadline can elapse during profile loading or thread startup,
+                # which correctly prevents work but cannot test running cleanup.
+                expired.set()
             while _remaining_request_time() is not None:
                 check_execution_active()
                 threading.Event().wait(0.005)
@@ -87,7 +94,12 @@ def test_dispatch_workers_share_parent_budget_and_finish_before_return(stack, mo
 
     monkeypatch.setattr(dispatch, "run_specialist", run)
     monkeypatch.setattr(dispatch, "build_situation_summary", lambda stack: pytest.fail("Cancelled work must not be summarized"))
-    deadline = time.monotonic() + (5 if termination == "cancel" else 0.1)
+    clock_start = time.monotonic()
+    deadline = clock_start + 5
+    if termination == "deadline":
+        monkeypatch.setattr(providers, "time", SimpleNamespace(
+            monotonic=lambda: deadline + 1 if expired.is_set() else clock_start,
+        ))
     error = LLMExecutionCancelled if termination == "cancel" else TimeoutError
     started = time.monotonic()
     with llm_request_deadline(deadline, is_cancelled=cancelled.is_set if termination == "cancel" else None):

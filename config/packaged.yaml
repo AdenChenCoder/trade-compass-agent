@@ -104,6 +104,9 @@ llm:
   vision_model: "qwen3.8-27b"
   vision_provider: "lmstudio"
   vision_api_key_env: ""
+  # Optional independent factual reviewer on this machine's LM Studio endpoint.
+  # Choose and validate a local model before enabling; no cloud fallback.
+  local_report_review_model: ""
 debate:
   max_debate_rounds: 2
   enable_research_phase: true

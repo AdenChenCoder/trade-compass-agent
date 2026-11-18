@@ -1125,12 +1125,12 @@ async def write_audit_summary(ctx: StepContext) -> StepOutput:
 
 
 async def compact_memory(ctx: StepContext) -> StepOutput:
-    """Compact memory summaries using LLM."""
+    """Save selected historical memory records without rewriting their meaning."""
     from trade_compass_agent.runtime.learning import compact_memory_summary
 
     path = compact_memory_summary(ctx.config)
     if path:
-        return StepOutput(message=f"记忆已压缩至 {path.name}", data={"artifact": str(path)})
+        return StepOutput(message=f"记忆摘录已保存至 {path.name}", data={"artifact": str(path)})
     return StepOutput(message="无需压缩", data={})
 
 

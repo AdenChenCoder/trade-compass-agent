@@ -48,7 +48,7 @@ export function TaskMessages({ notices, notificationClick, readState }: { notice
         }} />
       <div className="task-meta" aria-hidden="true"><ResultBadge notice={notice} /><span className="task-open-icon"><Icon name="arrow" /></span></div>
       <div className="task-heading" aria-hidden="true"><h3>{notice.title}</h3></div>
-      <div className="task-preview" aria-hidden="true"><Markdown text={notice.message} /></div>
+      <div className="task-preview" aria-hidden="true"><Markdown text={notice.message} interactive={false} /></div>
     </article>)}</div>}
     {active ? <NoticeDetails notice={active.notice} opener={active.opener} entry={active.entry} onReturn={returnToList} onClose={close} /> : null}
   </section>;

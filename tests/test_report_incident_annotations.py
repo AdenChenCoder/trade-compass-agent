@@ -64,19 +64,19 @@ def test_publication_status_survives_workflow_persistence_and_api_reopen(tmp_pat
     verified = data["verification"]
     assert calls == ["get_bars"]
     assert verified["execution"] == "completed"
-    assert verified["status"] == ("complete" if mode == "complete" else "incomplete")
-    assert bool(result.get("degraded")) is (mode != "complete")
+    assert verified["status"] == ("incomplete" if mode == "source_failed" else "not_reviewed")
+    assert bool(result.get("degraded")) is (mode == "source_failed")
     assert "Agent 执行失败" not in data["analysis"]
-    if mode != "complete":
+    if mode == "source_failed":
         assert not learned
-    if mode == "bad_structure":
-        assert model_calls == ["compose"] * 3
+    assert model_calls == []
+    assert data["analysis"].startswith("002415当前价格35.17，一旦跌破MA5就重新评估。")
     session_id = data["session_id"]
     saved = SessionStore(config.data_dir / "agent_sessions").load(session_id)
     assert saved.messages[-1].verification == verified
     artifact = config.data_dir / "report_artifacts" / f"{verified['artifact_id']}.json"
     assert artifact.exists() and artifact.stat().st_mode & 0o777 == 0o600
-    if mode == "complete":
+    if mode != "source_failed":
         runs.complete_run(run, message=data["analysis"])
     else:
         runs.degrade_run(run, message=data["analysis"], error=result["error"])
@@ -90,7 +90,7 @@ def test_publication_status_survives_workflow_persistence_and_api_reopen(tmp_pat
     assert messages[-1]["verification"] == verified
     detail = client.get(f"/api/jobs/runs/{run.id}").json()
     public_step = next(item for item in detail["step_runs"] if item["step_id"] == step.id)
-    assert public_step["status"] == ("completed" if mode == "complete" else "degraded")
+    assert public_step["status"] == ("degraded" if mode == "source_failed" else "completed")
     assert public_step["data"]["verification"] == verified
     assert not (config.data_dir / "paper_trades.jsonl").exists()
 

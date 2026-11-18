@@ -1,4 +1,71 @@
 import { test, expect, chromium } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+
+test('published narrative retains sources, full copy and incomplete status on phones', async ({ page }, testInfo) => {
+  const notices = JSON.parse(execFileSync('../../.venv/bin/python', ['-c', `
+import sys,json
+sys.path.insert(0, '../../tests')
+from test_report_reading import example_publication
+print(json.dumps([dict(title='价格观察' + ('（资料不足）' if missing else ''),
+    message=example_publication(missing=missing).text,
+    severity='warning' if missing else 'info', task_status='degraded' if missing else 'completed')
+    for missing in (False, True)], ensure_ascii=False))
+`], { encoding: 'utf8' }));
+  const fixture = await (await page.request.get('/test/pwa')).json();
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    args: [`--ignore-certificate-errors-spki-list=${fixture.spki}`] });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, permissions: ['clipboard-read', 'clipboard-write'] });
+  let deviceId: string | undefined;
+  try {
+    const phone = await context.newPage();
+    await phone.route('**/mobile/v1/notifications?limit=100', route => route.fulfill({ json: notices }));
+    await phone.goto('https://localhost:19746/mobile/');
+    const invite = await (await page.request.post('/api/mobile/pairing/invitations')).json();
+    const claim = await phone.evaluate(async invitation => (await fetch('/mobile/v1/browser/claim', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Compass-PWA': '1' },
+      body: JSON.stringify({ invitation, name: '报告阅读测试' }),
+    })).json(), invite.invitation);
+    deviceId = claim.device_id;
+    const device = (await (await page.request.get('/api/mobile/devices')).json()).devices.find((d: any) => d.device_id === deviceId);
+    expect((await page.request.post(`/api/mobile/devices/${deviceId}/approve`, { data: { verification_code: device.verification_code } })).ok()).toBe(true);
+    await phone.reload();
+    await phone.getByRole('button', { name: '任务消息', exact: true }).click();
+    for (const notice of notices) {
+      await phone.getByRole('button', { name: `查看任务详情：${notice.title}`, exact: true }).click();
+      const sheet = phone.getByRole('dialog', { name: notice.title, exact: true });
+      await expect(sheet.locator('.result-badge')).toHaveText(notice.task_status === 'degraded' ? '结果不完整' : '任务结果');
+      await expect(sheet.locator('.markdown > p').first()).toContainText('从10元/股升至11元/股');
+      await expect(sheet.locator('table')).toHaveCount(0);
+      const sources = sheet.locator('.report-sources');
+      await expect(sources).not.toHaveAttribute('open');
+      for (const width of [320, 390]) {
+        await phone.setViewportSize({ width, height: 844 });
+        expect(await sheet.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+        await phone.screenshot({ path: testInfo.outputPath(`report-${notice.task_status}-${width}.png`), animations: 'disabled' });
+      }
+      await sheet.locator('a[data-footnote-ref]').click();
+      await expect(sources).toHaveAttribute('open');
+      // Wait for an actual background poll while reading the expanded source.
+      await phone.waitForResponse(response => response.url().includes('/notifications?limit=100'));
+      await expect(sources).toHaveAttribute('open');
+      await expect(sources).toContainText('2026-11-10');
+      await expect(sources).toContainText('2026-11-11');
+      await phone.screenshot({ path: testInfo.outputPath(`sources-${notice.task_status}.png`), animations: 'disabled' });
+      await sources.locator('a[data-footnote-backref]').click();
+      await expect(sheet.locator('a[data-footnote-ref]')).toBeFocused();
+      await expect(sheet).toContainText('10.00%');
+      await expect(sheet).toContainText('这两日收盘价上升');
+      await sheet.getByRole('button', { name: '复制内容', exact: true }).click();
+      expect(await phone.evaluate(() => navigator.clipboard.readText())).toBe(`${notice.title}\n\n${notice.message}`);
+      if (notice.task_status === 'degraded') await expect(sheet).toContainText('缺少营收资料');
+      await sheet.getByRole('button', { name: '返回列表', exact: true }).click();
+      await expect(sheet).toHaveCount(0);
+    }
+  } finally {
+    if (deviceId) await page.request.delete(`/api/mobile/devices/${deviceId}`);
+    await context.close(); await browser.close();
+  }
+});
 
 test('task cards open complete, accessible details and return to the same list', async ({ page }, testInfo) => {
   const fixture = await (await page.request.get('/test/pwa')).json();

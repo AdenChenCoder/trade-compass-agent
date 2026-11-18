@@ -1,5 +1,5 @@
 import json
-from report_contract_helpers import report_facts
+from report_contract_helpers import source_review_scope, report_facts
 from types import SimpleNamespace
 
 import pytest
@@ -12,20 +12,29 @@ RECEIPTS = [("get_bars", json.dumps({"symbol": "002415", "name": "海康威视",
     {"timestamp": "2026-11-09", "close": 6.60}, {"timestamp": "2026-11-10", "close": 7.46}]}))]
 
 
+@pytest.mark.parametrize("reader_prose", [False, True])
 @pytest.mark.parametrize("executed", [False, True])
-def test_generation_schema_allows_empty_items_only_with_owned_execution(executed):
+def test_generation_schema_allows_empty_items_only_with_owned_execution(executed, reader_prose):
     receipts = [("place_paper_trade", json.dumps({"status": "executed", "trade_id": "owned",
         "symbol": "000001", "side": "buy", "quantity": 100, "price": 10, "account": "short_stock",
         "timestamp": "2026-11-10T10:00:00+08:00"}))] if executed else RECEIPTS
     def call(system, user):
         payload = json.loads(user)
+        from trade_compass_agent.llm.providers import _precise_response
+        assert _precise_response.get() is (reader_prose or 'schema' not in payload)
         if "schema" in payload:
-            from trade_compass_agent.llm.providers import _maintenance_response_schema
-            assert _maintenance_response_schema.get() == payload["schema"]
+            from trade_compass_agent.llm.providers import _response_schema, _response_output_limit, _maintenance_mode
+            assert _response_schema.get() == (None if reader_prose else payload["schema"])
+            assert _maintenance_mode.get() is (not reader_prose)
+            assert _response_output_limit.get() == 16384
             assert payload["schema"]["properties"]["items"].get("minItems", 0) == (0 if executed else 1)
+            kinds = payload["schema"]["properties"]["items"]["items"]["discriminator"]["mapping"]
+            assert ("fact" in kinds) is (not reader_prose)
+            assert ("inference" in kinds) is (not reader_prose)
+            assert ("paragraph" in kinds) is reader_prose
             return '{"schema_version":1,"items":[]}'
         return '{"reviews":[],"coverage":{"complete":true,"missing":[]}}'
-    result = publish_report(task="报告结果", draft="", tool_results=receipts, run_scope="empty", call=call)
+    result = publish_report(task="报告结果", draft="", tool_results=receipts, run_scope="empty", call=call, reader_prose=reader_prose)
     assert (result.verification["status"] == "complete") == executed
     assert ("owned" in result.text) == executed
 
@@ -72,7 +81,7 @@ def call_model(*, inference=False, supported=True, missing=(), invalid=False, un
             return json.dumps(compose(payload, inference=inference))
         if unavailable:
             raise TimeoutError("review unavailable")
-        return json.dumps({"reviews": [{"id": "judgment", "supported": supported,
+        return json.dumps({"reviews": [{**source_review_scope(payload), "id": "judgment", "supported": supported,
                                        "reason": "" if supported else "价格不能证明上涨原因"}] if inference else [],
                            "coverage": {"complete": not missing, "missing": list(missing)}})
     return call, calls
@@ -304,12 +313,12 @@ def test_judgment_can_use_verified_calculation_without_losing_original_evidence(
         assert [f["value"] for f in judgment["evidence"]] == ["34.83", "34.25"]
         assert all(f["observed_at"] and f["pointer"] and f["receipt_id"] for f in judgment["evidence"])
         assert payload["receipts"][0]["result"] == receipts[0][1]
-        return json.dumps({"reviews": [{"id": "direction", "supported": supported,
+        return json.dumps({"reviews": [{**source_review_scope(payload), "id": "direction", "supported": supported,
                                       "reason": "" if supported else "不能据此推断后续方向"}],
                            "coverage": {"complete": True, "missing": []}})
 
     result = publish_report(task="比较两日价格变化", draft="", tool_results=receipts, run_scope="derived", call=call)
-    assert len(calls) == 2 and "-1.67%" in result.text
+    assert len(calls) == (2 if supported else 4) and "-1.67%" in result.text
     assert (result.verification["status"] == "complete") is supported
     assert ("研判：收盘价" in result.text) is supported
     assert result.artifact["calculations"]["change"]["result"].startswith("-1.665")
@@ -373,7 +382,7 @@ def test_observation_reference_retains_source_and_independent_semantic_review(fi
         assert len(evidence) == 1 and evidence[0]['value'] == '6.6'
         assert evidence[0]['pointer'] == '/bars/0/close'
         assert payload['receipts'][0]['result'] == RECEIPTS[0][1]
-        return json.dumps({'reviews': [{'id': 'judgment', 'supported': supported,
+        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': 'judgment', 'supported': supported,
                          'reason': '' if supported else '依据不足'}],
                          'coverage': {'complete': True, 'missing': []}})
     result = publish_report(task='列出价格及限制', draft='', tool_results=RECEIPTS, run_scope='observation', call=call)
@@ -424,7 +433,7 @@ def test_gap_review_checks_task_scope_without_releasing_unsupported_evidence(dec
         assert payload["gaps"] == [{"id": "gap", "text": "模型声明的资料缺口"}]
         assert payload["verified_items"][0]["id"] == "price"
         assert "2026-11-10" in payload["verified_items"][0]["rendered"]
-        review = {"reviews": [], "coverage": {"complete": True, "missing": []}}
+        review = {"reviews": [], "coverage": {"complete": True, "missing": [], "gap_answer_ids": []}}
         if decision:
             review["gap_reviews"] = [{"id": "gap", "status": decision, "refs": refs, "reason": reason}]
         return json.dumps(review)
@@ -449,7 +458,7 @@ def test_gap_review_cannot_clear_deterministic_failure_or_publish_empty_report()
             return json.dumps({"schema_version": 1, "items": [
                 {"id": "bad", "type": "fact", "section": "market", "ref": "unknown"},
                 {"id": "gap", "type": "gap", "section": "gaps", "text": "不预测未来"}]})
-        return json.dumps({"reviews": [], "coverage": {"complete": True, "missing": []},
+        return json.dumps({"reviews": [], "coverage": {"complete": True, "missing": [], "gap_answer_ids": []},
             "gap_reviews": [{"id": "gap", "status": "outside_task", "refs": [], "reason": "不属于任务目标"}]})
     result = publish_report(task="报告价格", draft="", tool_results=[], run_scope="invalid", call=call)
     assert result.verification["status"] == "incomplete"
@@ -460,7 +469,7 @@ def test_gap_review_cannot_clear_deterministic_failure_or_publish_empty_report()
         payload = json.loads(user)
         if "schema" in payload:
             return '{"schema_version":1,"items":[{"id":"gap","type":"gap","section":"gaps","text":"不预测"}]}'
-        return '{"reviews":[],"coverage":{"complete":true,"missing":[]},"gap_reviews":[{"id":"gap","status":"outside_task","refs":[],"reason":"不属于任务目标"}]}'
+        return '{"reviews":[],"coverage":{"complete":true,"missing":[],"gap_answer_ids":[]},"gap_reviews":[{"id":"gap","status":"outside_task","refs":[],"reason":"不属于任务目标"}]}'
     result = publish_report(task="报告价格", draft="", tool_results=[], run_scope="empty", call=empty_call)
     assert result.verification["report"] == "partial"
     assert any(f["code"] == "empty_report" for f in result.verification["findings"])
