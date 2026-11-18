@@ -126,6 +126,7 @@ function formatStepData(step: StepRun): string | null {
       : [];
     if (messages.length > 0) return `待核实事项：\n${[...new Set(messages)].map((message) => `- ${message}`).join("\n")}`;
     if (verification.status === "complete") return "报告已完成核验。";
+    if (verification.status === "not_reviewed") return "报告已生成。";
   }
 
   // Screening candidates
