@@ -41,6 +41,7 @@ SUITES = (
     "test_memory_recall.py",
     "test_report_scheduler_contract.py",
     "test_report_delivery_policy.py",
+    "test_history_learning_policy.py",
     "test_report_batch_contract.py",
     "test_report_incident_annotations.py",
     "test_native_agents.py",

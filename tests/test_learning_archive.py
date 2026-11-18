@@ -166,7 +166,7 @@ def test_stop_during_learning_preserves_one_published_answer(client, tmp_path, m
 
     def is_curation(messages):
         try:
-            return "schema" in json.loads(messages[-1].content)
+            return "history" in json.loads(messages[-1].content)
         except (ValueError, TypeError):
             return False
 

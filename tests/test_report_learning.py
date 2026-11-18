@@ -1,162 +1,93 @@
-"""Actual archive/search boundary with explicit composition and review doubles."""
+"""Historical learning checks quality without gating delivery or direct writes."""
+
 from dataclasses import replace
 import json
-import time
 
 import pytest
 
-from report_contract_helpers import source_review_scope, report_facts
 from trade_compass_agent.config import AppConfig
-from trade_compass_agent.llm.providers import LLMExecutionCancelled, llm_request_deadline
 from trade_compass_agent.runtime.learning import curate_turn_insight
-from trade_compass_agent.runtime.report_publication import publish_report, persist_publication
+from trade_compass_agent.runtime.report_publication import persist_publication, publish_task_report
 from trade_compass_agent.runtime.tools.memory import tool_search_memory
 from trade_compass_agent.runtime.types import TurnResponse
 
-
-RECEIPTS = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d", "bars": [
-    {"timestamp": "2026-11-10", "close": 22}, {"timestamp": "2026-11-11", "close": 23}]}))]
+RECEIPTS = [
+    (
+        "get_bars",
+        json.dumps(
+            {
+                "symbol": "002415",
+                "timeframe": "1d",
+                "bars": [
+                    {"timestamp": "2026-11-10", "close": 22},
+                    {"timestamp": "2026-11-11", "close": 23},
+                ],
+            }
+        ),
+    )
+]
+INSIGHT = "002415在2026-11-10收盘22元/股，2026-11-11收盘23元/股；这是历史观察，不能外推当前价格。"
 
 
 def reply(system, user):
     payload = json.loads(user)
-    if "schema" in payload:
-        facts = [f for f in report_facts(payload) if f["metric"] == "close"]
-        return json.dumps({"schema_version": 1, "items": [
-            *[{"id": f"price-{i}", "type": "fact", "section": "market", "ref": f["id"]}
-              for i, f in enumerate(facts)],
-            {"id": "change", "type": "calculation", "section": "market",
-             "operation": "change_pct", "refs": [f["id"] for f in facts]},
-        ]})
-    return json.dumps({"reviews": [{**source_review_scope(payload), "id": i["id"], "supported": True, "reason": ""}
-                                  for i in payload["inferences"]],
-                       "coverage": {"complete": True, "missing": []}})
+    return json.dumps(
+        {"accepted": True, "reason": "忠于历史资料并保留限制。"}
+        if "candidate" in payload
+        else {"content": INSIGHT}
+    )
 
 
 def source(tmp_path, **kwargs):
     config = AppConfig(data_dir=tmp_path / "data", memory_dir=tmp_path / "memory")
-    config = replace(config, agent=replace(config.agent, learning_enabled=True), allow_external_llm_memory=True)
-    publication = publish_report(task="比较两日收盘价", draft="", tool_results=RECEIPTS,
-        call=reply, run_scope="source", run_id="owned-run", reader_prose=False)
+    config = replace(
+        config, agent=replace(config.agent, learning_enabled=True), allow_external_llm_memory=True
+    )
+    publication = publish_task_report(
+        task="比较两日收盘价",
+        draft="历史收盘价由22元升至23元。",
+        tool_results=RECEIPTS,
+        run_scope="source",
+        run_id="owned-run",
+    )
     reference = {**publication.verification, **persist_publication(config.data_dir, publication)}
-    return config, TurnResponse(session_id="source", turn_id="turn-1", summary="收盘价由22元升至23元。",
-                                verification=reference, **kwargs)
+    return config, TurnResponse(
+        session_id="source",
+        turn_id="turn-1",
+        summary=publication.text,
+        verification=reference,
+        **kwargs,
+    )
 
 
 def learn(config, response, call=reply, run_id="owned-run"):
-    return curate_turn_insight(config=config, user_message="比较两日收盘价", response=response,
-                               report_run_id=run_id, report_call=call)
+    return curate_turn_insight(
+        config=config,
+        user_message="比较两日收盘价",
+        response=response,
+        report_run_id=run_id,
+        report_call=call,
+    )
 
 
-def test_wording_changes_do_not_change_saved_facts_after_reopen(tmp_path, monkeypatch):
+def test_quality_learning_preserves_sources_and_is_searchable_after_reopen(tmp_path):
     config, response = source(tmp_path)
-    monkeypatch.setattr("trade_compass_agent.runtime.learning.create_llm_provider",
-                        lambda **_: pytest.fail("Report learning must use the runtime's read-only client"))
-    bodies = ["收盘价由22元升至23元，涨幅4.55%。", "22元，后23元。涨了4.55%。",
-              "涨幅4.55%，两日收盘价分别是22元、23元。"]
-    paths, saved = [], []
-    for body in bodies:
-        path = learn(config, replace(response, summary=body))
-        assert path
-        paths.append(path)
-        # Search opens the persisted index again, rather than inspecting a mock.
+    original = {p: p.read_bytes() for p in (config.data_dir / "report_artifacts").glob("*.json")}
+    path = learn(config, response)
+    assert path
+    for _ in range(2):
         hits = json.loads(tool_search_memory(config.memory_dir, "002415"))["results"]
-        saved.append(next(hit["content"] for hit in hits if hit["path"] == path))
-    assert len(set(saved)) == 1 and len(set(paths)) == 3
-    assert "4.55%" in saved[0] and "22元/股" in saved[0] and "23元/股" in saved[0]
-    assert "2026-11-10" in saved[0] and "2026-11-11" in saved[0]
-    artifacts = [json.loads(p.read_text()) for p in (config.data_dir / "report_artifacts").glob("*.json")]
-    curated = [a for a in artifacts if "learning_source" in a]
-    assert len(curated) == 3
-    assert all(a["learning_source"]["verification"] == response.verification for a in curated)
-    assert all(a["model_calls"] == 2 and a["published_text"] == saved[0] for a in curated)
+        assert len(hits) == 1 and hits[0]["content"].strip().endswith(INSIGHT)
+    assert all(p.read_bytes() == content for p, content in original.items())
     assert not (config.memory_dir / "KNOWLEDGE.md").exists()
+    review = json.loads(next((config.data_dir / "learning_reviews").glob("*.json")).read_text())
+    assert (
+        review["status"] == "retained"
+        and review["source_artifact"] == response.verification["artifact_id"]
+    )
 
 
-def test_internal_learning_revises_rejected_expression_within_same_budget_then_archives(tmp_path):
-    config, response = source(tmp_path)
-    calls = []
-    def call(system, user):
-        payload = json.loads(user)
-        calls.append(payload)
-        revised = len(calls) > 2
-        if "schema" in payload:
-            assert "Paragraph" not in payload["schema"]["$defs"]
-            if revised:
-                assert payload["facts"] == calls[0]["facts"]
-                assert payload["revision"]["review"]["reviews"][0]["supported"] is False
-            doc = json.loads(reply(system, user))
-            doc['items'].append({'id': 'direction', 'type': 'inference', 'section': 'assessment',
-                'text': '两个观察日之间收盘价走高。' if revised else '基于所给两日的数据，收盘价呈上升趋势。',
-                'refs': ['change']})
-            return json.dumps(doc)
-        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': 'direction', 'supported': revised,
-            'reason': '' if revised else '模拟审查对表述范围的异议'}],
-            'coverage': {'complete': True, 'missing': []}})
-    path = learn(config, response, call)
-    assert path and len(calls) == 4
-    memory = next(row for row in json.loads(tool_search_memory(config.memory_dir, '002415'))['results'] if row['path'] == path)
-    assert '22元/股' in memory['content'] and '23元/股' in memory['content'] and '4.55%' in memory['content']
-    assert '两个观察日之间收盘价走高。' in memory['content']
-    artifacts = [json.loads(p.read_text()) for p in (config.data_dir/'report_artifacts').glob('*.json')]
-    curated = next(a for a in artifacts if 'learning_source' in a)
-    assert curated['verification']['status'] == 'complete'
-    assert curated['selected_attempt'] == 1 and curated['model_calls'] == 4
-    assert curated['revision_attempts'][0]['verification']['status'] == 'incomplete'
-    assert curated['published_text'] == memory['content']
-
-
-def test_failed_internal_revision_retains_valid_facts_without_archiving(tmp_path):
-    config, response = source(tmp_path)
-    calls = []
-    def call(system, user):
-        payload = json.loads(user)
-        calls.append(payload)
-        if 'schema' in payload:
-            if 'revision' in payload:
-                return json.dumps({'schema_version': 1, 'items': [
-                    {'id': 'gap', 'section': 'gaps', 'type': 'gap', 'text': '尚未完成整理'}]})
-            doc = json.loads(reply(system, user))
-            doc['items'].append({'id': 'unsupported', 'section': 'assessment', 'type': 'inference',
-                'text': '未来一定上涨。', 'refs': ['change']})
-            return json.dumps(doc)
-        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': False, 'reason': '缺少支持'} for row in payload['inferences']],
-            'coverage': {'complete': False, 'missing': ['可保留观察'], 'repairable': False}})
-    assert learn(config, response, call) is None and len(calls) == 4
-    assert json.loads(tool_search_memory(config.memory_dir, '002415'))['results'] == []
-    curated = next(json.loads(p.read_text()) for p in (config.data_dir/'report_artifacts').glob('*.json')
-                   if 'learning_source' in json.loads(p.read_text()))
-    assert curated['selected_attempt'] == 0
-    assert curated['verification']['status'] == 'incomplete'
-    assert '22元/股' in curated['published_text'] and '23元/股' in curated['published_text']
-    assert len(curated['revision_attempts']) == 2
-
-
-def test_unchanged_internal_body_cannot_be_archived_by_resampling_review(tmp_path):
-    config, response = source(tmp_path)
-    calls = []
-    def call(system, user):
-        payload = json.loads(user)
-        calls.append(payload)
-        revised = len(calls) > 2
-        if 'schema' in payload:
-            doc = json.loads(reply(system, user))
-            doc['items'].append({'id': 'renamed' if revised else 'original', 'type': 'inference',
-                'section': 'assessment', 'text': '收盘价上升。', 'refs': ['change']})
-            return json.dumps(doc)
-        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': revised,
-            'reason': '' if revised else '模拟首次核验未获支持'} for row in payload['inferences']],
-            'coverage': {'complete': True, 'missing': []}})
-    assert learn(config, response, call) is None and len(calls) == 4
-    assert json.loads(tool_search_memory(config.memory_dir, '002415'))['results'] == []
-    curated = next(json.loads(p.read_text()) for p in (config.data_dir/'report_artifacts').glob('*.json')
-                   if 'learning_source' in json.loads(p.read_text()))
-    assert curated['verification']['status'] == 'incomplete'
-    assert curated['revision_attempts'][1]['verification']['status'] == 'complete'
-    assert curated['selected_attempt'] == 0 and curated['revision_changed_body'] is False
-
-
-@pytest.mark.parametrize("fault", ["missing", "tampered", "owner", "partial", "absent_reference", "no_owner"])
+@pytest.mark.parametrize("fault", ["missing", "tampered", "owner", "absent_reference", "no_owner"])
 def test_untrusted_source_cannot_fall_back_to_prose(tmp_path, fault):
     config, response = source(tmp_path)
     path = config.data_dir / "report_artifacts" / (response.verification["artifact_id"] + ".json")
@@ -164,87 +95,69 @@ def test_untrusted_source_cannot_fall_back_to_prose(tmp_path, fault):
     if fault == "missing":
         path.unlink()
     elif fault == "tampered":
-        path.write_text(path.read_text().replace('"22"', '"99"'))
+        path.write_text(path.read_text() + " ")
     elif fault == "owner":
-        run_id = "another-run"
-    elif fault == "partial":
-        response = replace(response, verification={**response.verification, "status": "partial"})
+        run_id = "other-run"
     elif fault == "absent_reference":
-        response = replace(response, verification={"status": "complete"})
+        response = replace(response, verification={})
     else:
         run_id = ""
-    assert learn(config, response, lambda *_: pytest.fail("Untrusted evidence must stop before inference"), run_id) is None
+    assert (
+        learn(
+            config, response, lambda *_: pytest.fail("Untrusted history cannot be learned"), run_id
+        )
+        is None
+    )
     assert not list(config.memory_dir.rglob("*.md"))
 
 
-@pytest.mark.parametrize("fault", ["unknown_ref", "wrong_unit", "unsupported", "gap", "unavailable"])
-def test_bad_curated_memory_is_not_indexed_even_with_valid_source(tmp_path, fault):
-    config, response = source(tmp_path)
+@pytest.mark.parametrize("degraded", [False, True])
+def test_historical_quality_review_does_not_require_a_successful_market_report(tmp_path, degraded):
+    config, response = source(tmp_path, degraded=degraded)
     calls = []
-    def call(system, user):
-        payload = json.loads(user)
-        calls.append(payload)
-        if fault == "unavailable":
-            raise TimeoutError("local review unavailable")
-        if "schema" in payload:
-            doc = json.loads(reply(system, user))
-            if fault == "unknown_ref":
-                doc["items"][0]["ref"] = "not-owned"
-            elif fault == "wrong_unit":
-                doc["items"] = [{"id": "plan", "type": "condition", "section": "plan",
-                    "ref": report_facts(payload)[0]["id"], "comparison": "lt", "threshold": "5",
-                    "unit": "%", "action": "review"}]
-            elif fault == "unsupported":
-                doc["items"].append({"id": "judgment", "type": "inference", "section": "assessment",
-                    "text": "已执行买入。", "refs": [doc["items"][0]["ref"]]})
-            elif fault == "gap":
-                doc["items"] = [{"id": "gap", "type": "gap", "section": "gaps", "text": "没有可保留的研究经验。"}]
-            return json.dumps(doc)
-        review = json.loads(reply(system, user))
-        if fault == "unsupported":
-            review["reviews"] = [{**source_review_scope(payload), "id": i["id"], "supported": False, "reason": "没有执行回执"}
-                                 for i in payload["inferences"]]
-        return json.dumps(review)
-    assert learn(config, response, call) is None
-    assert len(calls) <= 4
-    assert not list(config.memory_dir.rglob("*.md"))
-    assert json.loads(tool_search_memory(config.memory_dir, "002415"))["results"] == []
-    attempts = [json.loads(p.read_text()) for p in (config.data_dir / "report_artifacts").glob("*.json")]
-    assert any(a.get("learning_source") and a["verification"]["status"] != "complete" for a in attempts)
+
+    def model(system, user):
+        calls.append(json.loads(user))
+        return reply(system, user)
+
+    assert learn(config, response, model)
+    assert len(calls) == 2
+    assert calls[0]["history"]["tool_records"] == [list(r) for r in RECEIPTS]
 
 
-def test_cancelled_review_cannot_write_memory(tmp_path):
-    config, response = source(tmp_path)
-    stopped = False
-    def call(system, user):
-        nonlocal stopped
-        answer = reply(system, user)
-        stopped = "inferences" in json.loads(user)
-        return answer
-    with llm_request_deadline(time.monotonic() + 20, is_cancelled=lambda: stopped):
-        with pytest.raises(LLMExecutionCancelled):
-            learn(config, response, call)
-    assert not list(config.memory_dir.rglob("*.md"))
-
-
-def test_scheduled_turn_passes_owned_evidence_to_real_archive_boundary(tmp_path, monkeypatch):
+def test_scheduled_turn_learns_only_after_the_answer_is_saved(tmp_path, monkeypatch):
     from trade_compass_agent.llm.providers import ChatCompletion
     from trade_compass_agent.runtime.loop import AgentLoop
-    from report_contract_helpers import report_reply
 
     config, _ = source(tmp_path)
+
     class Client:
         def stream_complete(self, messages, **kwargs):
-            return report_reply(messages, metrics={"close"}) or ChatCompletion(content="已比较两个观察日。")
+            try:
+                payload = json.loads(messages[-1].content)
+            except (ValueError, TypeError):
+                payload = {}
+            if "history" in payload:
+                store = AgentLoop.from_config(config).session_store.load("scheduler-learning-test")
+                assert store.messages[-1].content == "已比较两个观察日。"
+                return ChatCompletion(content=reply("", messages[-1].content))
+            return ChatCompletion(content="已比较两个观察日。")
+
     monkeypatch.setattr("trade_compass_agent.runtime.loop.create_chat_client", lambda _: Client())
-    monkeypatch.setattr("trade_compass_agent.runtime.learning.create_llm_provider",
-                        lambda **_: pytest.fail("Scheduled turn fell back to prose-only learning"))
+    monkeypatch.setattr(
+        "trade_compass_agent.runtime.loop.shared_consolidation_worker", lambda **_: None
+    )
     monkeypatch.setattr(AgentLoop, "_maybe_background_review", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "trade_compass_agent.llm.providers.create_local_report_fact_check",
+        lambda *a, **k: pytest.fail(
+            "Historical quality learning does not create a factual reviewer"
+        ),
+    )
     agent = AgentLoop.from_config(config, memory_actor="scheduler")
     agent.initial_evidence = RECEIPTS
     agent.report_run_id = "scheduled-run"
     response = agent.run_turn("比较两个观察日", session_id="scheduler-learning-test")
     assert response.verification["status"] == "not_reviewed"
     hits = json.loads(tool_search_memory(config.memory_dir, "002415"))["results"]
-    assert len(hits) == 1 and hits[0]["scope"] == "insights"
-    assert "22元/股" in hits[0]["content"] and "23元/股" in hits[0]["content"]
+    assert len(hits) == 1 and hits[0]["content"].strip().endswith(INSIGHT)

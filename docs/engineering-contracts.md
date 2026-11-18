@@ -20,11 +20,17 @@ Original tool failures, unavailable data and uncertain mutation outcomes retain
 their real statuses. Authorization, tool permissions, cancellation and trading
 execution controls remain at their existing execution boundaries.
 
-History stores the original answer and immutable tool receipts; this storage
-alone does not admit the prose as reusable knowledge. Content entering searchable
-memory, knowledge or skills still passes its applicable strict admission review.
-The detailed evidence/review contracts below apply to that strict path and its
-explicit validation helpers, rather than ordinary report delivery.
+History stores the original answer and immutable tool receipts. The newly added
+blanket factual-review gate on all memory writes is withdrawn: ordinary
+interactive notes and user preferences retain their previous write path rather
+than passing through the full report-review pipeline. Pre-existing scheduled
+memory checks, knowledge/skill rules, ownership, versions and storage safeguards
+are unchanged. Do not expand those rules to additional entry points.
+
+Learning from saved historical reports or records reviews the candidate's
+quality: usefulness, faithfulness, scope, conditions and uncertainty. It does not
+invoke the legacy report fact/date/participant matrix. Failed quality review or
+learning storage must not retract a delivered answer or alter source history.
 
 - Reading acceptance permits minor awkward wording, redundancy or ellipsis when
   the surrounding body makes the business meaning unambiguous. Polished prose
@@ -660,16 +666,19 @@ Regression entry points:
 
 ## Memory and learning lifecycle
 
-- Automatic learning from task reports reopens the run-owned evidence
-  artifact, checks its digest and execution state, and curates against original
-  receipts through the bounded, strictly reviewed, read-only internal report contract.
-  An unreviewed delivered answer is eligible only as context for this new review,
-  never as an admitted fact. Human prose
-  is context, never a replacement for receipts. Only complete curated results
-  enter the searchable archive; failed attempts remain report diagnostics linked
-  to the source turn. Missing evidence must not fall back to prose-only learning.
-  Interactive turns follow the same receipt-backed admission path; absent evidence
-  or review never falls back to prose-only automatic learning.
+- Automatic learning first reopens a run-owned saved historical report and its
+  original records, checking identity/digest without rewriting it. It proposes
+  one useful lesson, then reviews only that candidate's quality against the
+  historical source: faithfulness, usefulness, scope, conditions and uncertainty.
+  Historical dates remain historical; no current-day requirement is invented.
+  A historical report with no market receipts can still contain a useful lesson.
+  Only accepted learning candidates enter the searchable insights archive.
+  Failed/unavailable learning leaves the delivered answer and source history
+  intact. Diagnostics belong under the data root, not the memory archive.
+- The historical-learning reviewer is separate from direct write tools.
+  The new all-memory factual review is removed; existing memory/knowledge/skill
+  validation is retained at its original scope. User preferences can again use
+  the pre-existing interactive write path without a market-evidence catalogue.
 - Memory compaction selects complete source records rather than rewriting their
   factual content. Keep source paths and qualifications, exclude earlier compactions
   from new selections, and deduplicate identical extracts. Original records remain

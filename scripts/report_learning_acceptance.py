@@ -49,10 +49,13 @@ def worker(args):
     raw = json.dumps({"symbol": "002415", "timeframe": "1d", "bars": [
         {"timestamp": day, "close": base + i} for i, day in enumerate(dates)]})
     run_id = f"learning-acceptance-{args.case}"
-    verification = {"status": "complete"}
+    verification = {"status": "not_reviewed", "report": "complete", "execution": "completed",
+                    "data": "available", "review_status": "not_requested", "findings": []}
     # A frozen upstream record is the fixture, not evidence of model accuracy.
     original = Publication("frozen source", verification, {"schema_version": 1, "run_id": run_id,
-        "verification": verification, "receipts": [{"tool": "get_bars", "result": raw,
+        "verification": verification, "published_text": CASES[args.case],
+        "composition_input": {"task": "比较两个观察日的收盘价与变化"},
+        "receipts": [{"tool": "get_bars", "result": raw,
                                                      "sha256": hashlib.sha256(raw.encode()).hexdigest()}]})
     reference = {**verification, **persist_publication(config.data_dir, original)}
     if args.case == "missing_source":
@@ -84,22 +87,14 @@ def worker(args):
             hits = json.loads(tool_search_memory(config.memory_dir, "002415"))["results"]
             memory = next((h for h in hits if h["path"] == path), None)
             require(memory is not None, "saved memory is not searchable after reopen")
-            artifacts = [json.loads(p.read_text()) for p in (config.data_dir / "report_artifacts").glob("*.json")]
-            curated = [a for a in artifacts if a.get("learning_source", {}).get("turn_id") == args.case]
-            require(len(curated) == 1, "missing or duplicate curation artifact")
-            artifact = curated[0]
-            require(artifact["verification"]["status"] == "complete", "curation not complete")
-            require(artifact["published_text"] == memory["content"], "archive differs from verified result")
-            facts = {f["id"]: f for f in artifact["facts"]}
-            items = artifact["document"]["items"]
-            refs = [i["ref"] for i in items if i["type"] == "fact"]
-            refs += [r for i in items if i["type"] == "calculation" for r in i["refs"]]
-            require(bool(refs), "curation has no retained factual observation")
-            require(all(facts[r]["subject"] == "002415" and facts[r]["metric"] == "close"
-                        and facts[r]["unit"] == "元/股" and facts[r]["observed_at"] in dates
-                        and facts[r]["value"] == str(base + dates.index(facts[r]["observed_at"]))
-                        for r in refs), "curated facts changed identity, unit, date or value")
-            require(len(calls) <= 4, "curation exceeded call budget")
+            reviews = [json.loads(p.read_text()) for p in (config.data_dir / "learning_reviews").glob("*.json")]
+            reviews = [r for r in reviews if r["source_run_id"] == run_id]
+            require(len(reviews) == 1, "missing or duplicate learning quality record")
+            artifact = reviews[0]
+            require(artifact["status"] == "retained" and artifact["quality"]["accepted"], "learning quality not accepted")
+            from trade_compass_agent.memory.tree.storage import _strip_frontmatter
+            require(artifact["candidate"] == _strip_frontmatter(Path(path).read_text()), "archive differs from accepted candidate")
+            require(len(calls) == 2, "learning must use one proposal and one quality review")
             result["memory"] = memory
             result["artifact"] = artifact
             # Observe real local provider calls; this wrapper does not supply

@@ -161,13 +161,7 @@ def _execute_tool_calls(
                 arguments = json.loads(tc.arguments) if isinstance(tc.arguments, str) else dict(tc.arguments)
             except (ValueError, TypeError):
                 arguments = {}
-            from trade_compass_agent.memory.tree.storage import _normalize_scope
-            try:
-                _normalize_scope(arguments.get("scope", "general"))
-                valid_scope = True
-            except (ValueError, TypeError, AttributeError):
-                valid_scope = False  # Normal tool validation reports invalid arguments without a model call.
-            if valid_scope and isinstance(arguments.get("content"), str) and arguments["content"].strip():
+            if isinstance(arguments.get("content"), str) and arguments["content"].strip():
                 evidence = [*prior_tool_results, *((call.name, results[call.id]) for call in tool_calls if call.id in results)]
                 publication = memory_report(arguments["content"], evidence)
                 memory_verification = publication.verification
@@ -700,7 +694,7 @@ class AgentLoop:
             publication.verification.update(persist_publication(self.config.data_dir, publication, check_active=active))
             return publication
 
-        memory_report = validate_durable_memory
+        memory_report = validate_durable_memory if self.memory_actor == "scheduler" else None
 
         def native_tool_result(tc, result):
             self._emit("tool_end", build_tool_end_payload(tc.name, native_tool_started.pop(tc.id), result))

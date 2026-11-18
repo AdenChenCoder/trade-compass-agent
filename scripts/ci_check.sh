@@ -68,6 +68,7 @@ fi
   tests/test_report_transport.py \
   tests/test_report_scheduler_contract.py \
   tests/test_report_delivery_policy.py \
+  tests/test_history_learning_policy.py \
   tests/test_report_incident_annotations.py \
   tests/report_contract_helpers.py \
   src/trade_compass_agent/runtime/report_contract.py \

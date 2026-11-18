@@ -54,7 +54,7 @@ def test_corrected_archive_scope_is_reported_from_real_write_receipts(tmp_path, 
     hits = json.loads(tool_search_memory(config.memory_dir, saved))["results"]
     assert hits and saved in hits[0]["content"]
     assert len(list((config.memory_dir / "tree").rglob("*.md"))) == 1
-    assert reviewed == [saved]
+    assert reviewed == []
 
 
 @pytest.mark.parametrize("failure", ["runtime", "unconfirmed", "fact_check", "legacy_invalid_scope"])
