@@ -7,13 +7,68 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
 
+	"go4.org/netipx"
+	"tailscale.com/net/packet"
+	"tailscale.com/wgengine/filter"
+
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 )
+
+func TestDiagnosticsObserveRealSDKFilterDecision(t *testing.T) {
+	d := &connectionDiagnostics{}
+	var builder netipx.IPSetBuilder
+	builder.AddPrefix(netip.MustParsePrefix("100.64.0.0/10"))
+	ips, err := builder.IPSet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := packet.UDP4Header{IP4Header: packet.IP4Header{
+		Src: netip.MustParseAddr("100.64.0.1"), Dst: netip.MustParseAddr("100.64.0.2"),
+	}, SrcPort: 12345, DstPort: 443}
+	p := &packet.Parsed{}
+	p.Decode(packet.Generate(&header, []byte("private-payload")))
+	reject := filter.New(nil, nil, ips, ips, nil, d.logf)
+	if reject.RunIn(p, filter.LogDrops) != filter.Drop {
+		t.Fatal("SDK did not reject the packet without a matching rule")
+	}
+	if d.snapshot().Counters["packet_filter_no_rule_drop"] != 1 {
+		t.Fatal("actual SDK filter rejection was not observed")
+	}
+	accept := filter.NewAllowAllForTest(d.logf)
+	if accept.RunIn(p, filter.LogDrops) != filter.Accept || d.snapshot().Counters["packet_filter_drop"] != 1 {
+		t.Fatal("diagnostics changed or misclassified a legitimate packet")
+	}
+	raw, _ := json.Marshal(d.snapshot())
+	if strings.Contains(string(raw), "100.64.") || strings.Contains(string(raw), "private-payload") {
+		t.Fatal("SDK packet details escaped into diagnostics")
+	}
+}
+
+func TestDiagnosticsRecordEarlyPacketDropWithoutPacketDetails(t *testing.T) {
+	d := &connectionDiagnostics{}
+	format := "filter: %s: %s %d %s\n%s"
+	d.logf(format, "Drop", "private-packet", 80, "no rules matched", "private-payload")
+	d.logf(format, "Drop", "private-packet", 80, "unknown proto", "private-payload")
+	d.logf(format, "[v1] Accept", "private-packet", 80, "no rules matched", "private-payload")
+	d.logf(format, "Drop")
+	value := d.snapshot()
+	if value.Counters["packet_filter_drop"] != 2 || value.Counters["packet_filter_no_rule_drop"] != 1 {
+		t.Fatalf("early rejection evidence lost: %v", value.Counters)
+	}
+	if value.Counters["ingress_permission_denied"] != 0 || value.Counters["tls_handshake_failed"] != 0 {
+		t.Fatal("generic filter drops misattributed to Funnel or TLS")
+	}
+	raw, _ := json.Marshal(value)
+	if strings.Contains(string(raw), "private-") {
+		t.Fatal("packet metadata leaked")
+	}
+}
 
 func TestDiagnosticsKeepOnlyBoundedCategories(t *testing.T) {
 	d := &connectionDiagnostics{}

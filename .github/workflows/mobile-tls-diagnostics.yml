@@ -1,0 +1,21 @@
+name: Mobile TLS diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  anonymous-ingress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Probe the same public ingress from an independent network
+        env:
+          COMPASS_TLS_PROBE_TARGET: ${{ secrets.COMPASS_TLS_PROBE_TARGET }}
+        run: python scripts/mobile_ingress_diagnostics.py
