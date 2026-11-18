@@ -7,7 +7,8 @@
 ## 构建与检查
 
 当前验证平台为 macOS；状态锁实现也支持 Linux。Windows 尚未实现状态锁，会明确拒绝运行。
-固定使用 Go 1.27.1 和 `tailscale.com v1.102.4`；模块校验由 `go.sum` 和默认 Go checksum database 完成。
+固定使用 Go 1.27.4 和 `tailscale.com v1.102.4`；模块校验由 `go.sum` 和默认 Go checksum database 完成。
+Go 1.27.4 修复 TLS ClientHello 与部分网络检查设备的兼容性，保留正常证书校验及默认混合密钥交换。
 在本目录运行：
 
 ```sh
