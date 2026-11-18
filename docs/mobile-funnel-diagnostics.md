@@ -17,12 +17,16 @@
 | `control.listener_open` | 本程序仍持有监听器 | 网络或 TLS 握手正常 |
 | `control.health_issues` | 上游报告的健康问题数量 | 问题具体内容或严重性；本诊断不保存原始说明 |
 | `ingress_permission_denied` | 上游明确拒绝一次入站权限检查 | 需要重新注册账号或扩大用户访问策略 |
+| `packet_filter_drop` / `packet_filter_no_rule_drop` | 固定版本 SDK 的包过滤器记录了丢弃，其中后者为无匹配规则 | 该包一定属于本次 Funnel 请求，或一定是公网注册故障 |
 | `ingress_config_missing` / `ingress_target_missing` | 上游在处理入站连接时找不到配置或目标 | 磁盘身份文件丢失 |
 | `tls_client_hello` | TLS 证书回调收到握手请求 | 所有握手都会经过回调，或握手最终成功 |
 | `tls_certificate_failed` / `tls_handshake_failed` | 证书回调失败，或 HTTP 服务器报告 TLS 握手错误 | 手机授权失效 |
 | `http_request` | 请求已到达 Go HTTP 处理器 | Python 返回成功、手机已授权或 Agent 执行完成 |
 
 计数差值需要与实际 HTTPS 请求时间对照；公网扫描、手机轮询也会增加计数，不能把每个增量都归因于验收脚本。
+
+入口和 TLS 计数均未增加时，仍可能有流量在更早的包过滤阶段被拒绝，不能据此断言流量完全没有到达本机。
+包过滤计数只取固定 SDK 日志的裁决和原因类别，不格式化或保存报文、地址、载荷；同时对照控制／中继连接和进程网络收发量，缩小尚未送达与本机提前丢弃的范围。上游日志有地址范围限制和限流，计数为零仍不能证明没有丢弃；正常放行不增加丢弃计数。
 
 ## 隐私与生命周期
 

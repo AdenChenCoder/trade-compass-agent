@@ -98,6 +98,17 @@ func (d *connectionDiagnostics) snapshot() diagnosticSnapshot {
 // classified locally; never format or persist raw provider arguments.
 func (d *connectionDiagnostics) logf(format string, args ...any) {
 	switch {
+	// This exact record comes from the pinned SDK's filter.logRateLimit.
+	// Ignore packet and payload arguments; a filter rejection is not by itself
+	// evidence that a Funnel request reached this node.
+	case strings.HasSuffix(format, "%s: %s %d %s\n%s") && len(args) == 5:
+		verdict, _ := args[0].(string)
+		if verdict == "Drop" {
+			d.count("packet_filter_drop", true)
+			if reason, _ := args[3].(string); reason == "no rules matched" {
+				d.count("packet_filter_no_rule_drop", true)
+			}
+		}
 	case strings.Contains(format, "ingress: denied; no ingress cap from"):
 		d.count("ingress_permission_denied", true)
 	case strings.Contains(format, "got ingress conn w/o serveConfig; rejecting"):
