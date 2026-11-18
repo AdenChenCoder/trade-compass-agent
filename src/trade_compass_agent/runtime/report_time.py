@@ -72,6 +72,21 @@ def check_statement_time(statement, assessment, context, report_context):
     refs = list(dict.fromkeys([*statement['time_fact_refs'],
         *(statement.get('bound_date_refs', []) if dated_record else []),
         *(ref for ref in assessment['time_evidence'] if ref not in bound)]))
+    if dated_record:
+        date_refs = statement['bound_date_refs']
+        values = [facts[ref] for ref in statement['time_fact_refs']]
+        def record_key(fact):
+            return (fact.get('entity'), fact.get('account'),
+                    observation_date(fact['observed_at'], timezone))
+        # A displayed record date belongs to its source record. It must not be
+        # borrowed for a different sole value, or spread across other dated
+        # measurements in an analytical comparison. Their semantic date/scope
+        # checks remain independent; task-present obligations above stay strict.
+        if values and any(not any(record_key(facts[ref]) == record_key(value)
+                                  for value in values) for ref in date_refs):
+            result.update(status='unknown', reason='record_date_value_reference_mismatch')
+            return result
+        refs = date_refs
     observations = [facts[ref] for ref in refs if facts[ref]['kind'] != 'identity']
     snapshots = PORTFOLIO_OPERATIONS | {'analyze_portfolio'} | READ_RESULT_OPERATIONS
     if observations and all(fact['source'] in snapshots for fact in observations):

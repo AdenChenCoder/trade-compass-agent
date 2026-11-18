@@ -253,3 +253,32 @@ def test_anaphoric_method_source_needs_independent_owned_reference_agreement(bas
     result = check_source_properties(statement, {'evidence': [asdict(f) for f in catalog.facts.values()]},
         catalog, {'evidence_refs': [ref]}, {'time_evidence': [ref] if agreed else []})
     assert (result['status'] == 'entailed') is accepted
+
+
+@pytest.mark.parametrize('borrowed', [False, True])
+def test_record_date_keeps_its_source_in_a_mixed_measurement_comparison(borrowed):
+    receipts = [('sina_realtime_quote', json.dumps({'symbol': '600928', 'price': 3.84, 'timestamp': '2025-01-02'})),
+        ('get_chip_distribution', json.dumps({'symbol': '600928', 'as_of': '2025-01-01', 'cost_90_high': 3.84}))]
+    def writer(system, user):
+        p = json.loads(user)
+        if 'schema' in p:
+            price = next(f['id'] for f in report_facts(p) if f['metric'] == 'price')
+            chip = next(f['id'] for f in report_facts(p) if f['metric'] == 'cost_90_high')
+            parts = (['600928在', [chip, 'date'], '的记录报价为', [price, 'value_with_unit'], '。'] if borrowed else
+                ['600928筹码估算上沿为', [chip, 'value_with_unit'], '（截至', [chip, 'date'], '），与近期报价', [price, 'value_with_unit'], '相同。'])
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'record', 'type': 'paragraph',
+                'section': 'assessment', 'parts': parts, 'refs': []}]})
+        return json.dumps({'reviews': [{'id': r['id'], 'supported': True, 'reason': 'Explicit optimistic double.'}
+            for r in p['inferences']], 'coverage': {'complete': True, 'missing': []}})
+    def checker(system, user):
+        p = json.loads(user)
+        if 'paragraphs' in p:
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': r['id'], 'parts': [{
+                'through': r['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
+                'distribution_basis': 'none', 'temporal_scope': 'record_date', 'participant_scope': 'none',
+                'observation_dates': ['2025-01-01'], 'classifications': []}]} for r in p['paragraphs']]})
+        return json.dumps(assess(p))
+    report = publish_report(task='报告记录价格，并可与其他记录比较。', draft='', tool_results=receipts,
+        run_scope='mixed-bound-record', call=writer, fact_review_call=checker, reference_date='2025-01-02', max_calls=2)
+    assert (report.verification['status'] == 'complete') is (not borrowed)
+    assert report.artifact['review_valid']
