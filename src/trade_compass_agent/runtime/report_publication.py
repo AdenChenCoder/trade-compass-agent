@@ -323,6 +323,9 @@ report_context is runtime-owned temporal context, not market evidence. Relative 
 refer to reference_date in reference_timezone; a null reference_date means that anchor
 is unknown, not the latest evidence date or the review machine's date. Displayed dates
 use display_timezone, including daily bars whose UTC timestamp crosses a calendar day.
+bound_display_dates are runtime-owned dates rendered by explicit date bindings in that
+statement. They retain the display calendar; equality with reference_date alone does
+not make such a literal dated record a task-present assertion.
 Preserve source observation times; retrieval time cannot make a historical observation current.
 Assess four dimensions independently BEFORE the overall verdict. checks must contain:
 identity_scope: entity, account, metric, source coverage and population scope;
