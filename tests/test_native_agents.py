@@ -394,9 +394,9 @@ def test_native_scheduled_session_uses_same_backend(native_config):
 
     session = ScheduledAgentSession(native_config, job_id="native-check")
     result = session.run("查询行情", timeout=5)
-    # The protocol-only child returns prose, not a report document. Its tools
-    # still run through the native backend; publication is correctly incomplete.
-    assert "报告尚未完成核验" in result and session.degraded
+    # Ordinary native output is prose; no structured publication protocol is required.
+    assert "基于工具结果的回答" in result and not session.degraded
+    assert session.verification["status"] == "not_reviewed"
     assert session.verification["execution"] == "completed"
 
 

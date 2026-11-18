@@ -585,7 +585,7 @@ def test_execution_claim_requires_current_receipt(text, receipts, rejected):
     assert unverified_execution_claim(text, receipts) is rejected
 
 
-def test_autonomous_hallucinated_fill_is_not_published_or_learned(tmp_path, monkeypatch):
+def test_unreviewed_answer_does_not_create_a_trade_or_a_verified_claim(tmp_path, monkeypatch):
     from trade_compass_agent.llm.providers import ChatCompletion
     from trade_compass_agent.ops.agent_session import ScheduledAgentSession
     from trade_compass_agent.portfolio.trading_policy import AutonomousTradingStore
@@ -607,11 +607,15 @@ def test_autonomous_hallucinated_fill_is_not_published_or_learned(tmp_path, monk
     AutonomousTradingStore(config.data_dir).set_enabled(True)
     scheduled = ScheduledAgentSession(config, job_id="autonomous_trading")
     scheduled.run("检查并执行交易", timeout=5)
-    assert scheduled.degraded and scheduled.verification["report"] == "unavailable"
-    assert not learned and not (config.data_dir / "paper_trades.jsonl").exists()
+    assert not scheduled.degraded and scheduled.verification["status"] == "not_reviewed"
+    assert not (config.data_dir / "paper_trades.jsonl").exists()
+    assert all(row["response"].verification["status"] == "not_reviewed" for row in learned)
     session = next((config.data_dir / "agent_sessions").glob("*.jsonl"))
-    assert claim not in session.read_text()
-    assert not any(event == "delta" and claim in data.get("text", "") for event, data in events)
+    assert claim in session.read_text()
+    assert any(event == "delta" and claim in data.get("text", "") for event, data in events)
+    artifact = json.loads((config.data_dir / "report_artifacts" /
+                          (scheduled.verification["artifact_id"] + ".json")).read_text())
+    assert artifact["execution_records"] == [] and not artifact["review_valid"]
 
 
 @pytest.mark.parametrize("model", ["qwen3.5-35b-a3b", "qwen3.8-27b"])
@@ -669,12 +673,7 @@ def test_reasoning_only_finish_uses_one_readonly_finalization_without_replaying_
     AutonomousTradingStore(config.data_dir).set_enabled(True)
     reply = ScheduledAgentSession(config, job_id="autonomous_trading").run("买入000001100股", timeout=5)
     assert len(orders) == 1 and "actual-receipt" in reply
-    assert [r.url.path for r in requests] == ["/v1/chat/completions"] * 5
-    composition = json.loads(requests[3].content)
-    assert "response_format" not in composition
-    composition_input = json.loads(composition["messages"][-1]["content"])
-    assert composition_input["schema"]["properties"]["items"]["maxItems"] == 120
-    assert composition["max_tokens"] == (8192 if model.startswith("qwen3.5") else 16384)
+    assert [r.url.path for r in requests] == ["/v1/chat/completions"] * 3
     finalization = json.loads(requests[2].content)
     assert all("tools" not in json.loads(request.content) for request in requests[2:])
     final_messages = json.dumps(finalization["messages"])

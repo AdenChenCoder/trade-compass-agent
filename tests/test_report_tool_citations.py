@@ -38,9 +38,6 @@ def test_http_corrects_or_rejects_an_invented_tool_citation(client, monkeypatch,
                         lambda _: SimpleNamespace(stream_complete=respond))
     response = client.post("/api/agent/turn", json={"session_id": "citation-case", "message": "根据附件比较费用。",
         "attachments": [{"type": "text", "content": "甲219.65；乙174.20"}]})
-    assert len(calls) == 2
-    if corrects:
-        assert response.status_code == 200 and right in response.json()["summary"]
-        assert "functions.exec" not in response.json()["summary"]
-    else:
-        assert response.status_code == 502
+    assert len(calls) == 1
+    assert response.status_code == 200 and response.json()["summary"].startswith(wrong)
+    assert response.json()["verification"]["status"] == "not_reviewed"

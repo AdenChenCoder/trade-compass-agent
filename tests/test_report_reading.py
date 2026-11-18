@@ -1,7 +1,7 @@
 """Reader-facing publication remains faithful to the evidence and outcome."""
 import json
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import source_review_scope, report_facts
 from trade_compass_agent.runtime.report_publication import publish_report
 
 
@@ -13,7 +13,7 @@ def example_publication(*, missing=False):
     def call(system, user):
         payload = json.loads(user)
         if "schema" not in payload:
-            return json.dumps({"reviews": [{"id": "direction", "supported": True, "reason": ""}],
+            return json.dumps({"reviews": [{**source_review_scope(payload), "id": "direction", "supported": True, "reason": ""}],
                                "coverage": {"complete": True, "missing": []}})
         facts = [f for f in report_facts(payload) if f["metric"] == "close"]
         return json.dumps({"schema_version": 1, "items": [
@@ -75,7 +75,7 @@ def test_grouped_report_keeps_identity_dates_scope_and_invalid_outcomes():
             assert "2026-11-10" in payload["report"]
             assert "数据来源与口径" not in payload["report"]
             assert "2026-11-10T07:00:00+00:00" in payload["receipts"][0]["result"]
-            return json.dumps({"reviews": [{"id": "bad", "supported": False, "reason": "价格不能证明业绩改善"}],
+            return json.dumps({"reviews": [{**source_review_scope(payload), "id": "bad", "supported": False, "reason": "价格不能证明业绩改善"}],
                                "coverage": {"complete": True, "missing": []}})
         facts = [f for f in report_facts(payload) if f["metric"] == "close"]
         return json.dumps({"schema_version": 1, "items": [

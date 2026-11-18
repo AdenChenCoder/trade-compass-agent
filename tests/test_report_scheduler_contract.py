@@ -4,7 +4,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from report_contract_helpers import report_facts, report_reply
+from report_contract_helpers import report_reply
 from trade_compass_agent.config import AgentConfig, AppConfig
 from trade_compass_agent.llm.providers import ChatCompletion, ToolCall
 from trade_compass_agent.ops.agent_session import SCHEDULER_OUTPUT_RULES
@@ -14,43 +14,23 @@ from trade_compass_agent.ops.run_store import SqliteRunStore
 
 @pytest.mark.parametrize("missing", [False, True])
 @pytest.mark.parametrize("derived", [False, True])
-def test_job_coverage_uses_business_task_and_preserves_real_gaps(tmp_path, monkeypatch, missing, derived):
+def test_job_delivers_business_answer_without_a_publication_review(tmp_path, monkeypatch, missing, derived):
     task = "列出原始收盘价。" + ("计算价格变动并说明方向。" if derived else "") + ("还需比较营收。" if missing else "")
     execution_prompts, publication_tasks = [], []
+    monkeypatch.setattr("trade_compass_agent.llm.providers.create_local_report_fact_check",
+                        lambda *a, **k: pytest.fail("Ordinary delivery must not create a factual reviewer"))
 
     class Client:
         name = model = "mock"
 
         def stream_complete(self, messages, *, tools=None, **kwargs):
-            result = report_reply(messages, metrics={"close"})
-            if result:
-                payload = json.loads(messages[-1].content)
-                publication_tasks.append(payload["task"])
-                if derived and "schema" in payload:
-                    document = json.loads(result.content)
-                    refs = [f["id"] for f in report_facts(payload) if f["metric"] == "close"]
-                    document["items"].extend([
-                        {"id": "direction", "type": "inference", "section": "assessment", "text": "两日收盘价上升。", "refs": ["change"]},
-                        {"id": "change", "type": "calculation", "section": "market", "operation": "change_pct", "refs": refs},
-                    ])
-                    result = ChatCompletion(content=json.dumps(document))
-                if "inferences" in payload:
-                    # A reviewer must not receive execution/presentation policy
-                    # as an additional business requirement, regardless of wording.
-                    polluted = SCHEDULER_OUTPUT_RULES in payload["task"]
-                    if derived:
-                        assert payload["inferences"][0]["calculations"][0]["result"].startswith("13.0303")
-                        assert len(payload["inferences"][0]["evidence"]) == 2
-                    result = ChatCompletion(content=json.dumps({"reviews": [
-                        {"id": "direction", "supported": True, "reason": ""}] if derived else [], "coverage": {
-                        "complete": not (polluted or missing),
-                        "missing": ["缺少营收依据"] if missing else ["执行提示混入业务任务"] if polluted else [],
-                    }}))
-                return result
+            # Ordinary delivery must not invoke composition, classification or review.
             execution_prompts.extend(m.content for m in messages if m.role == "user")
             if not any(m.role == "tool" for m in messages):
                 return ChatCompletion(content="", tool_calls=[ToolCall("bars", "get_bars", '{"symbol":"002415","limit":1}')])
-            return ChatCompletion(content="已取得收盘价。")
+            return ChatCompletion(content="收盘价由6.60元/股升至7.46元/股。"
+                + ("价格上涨13.03%。" if derived else "")
+                + ("营收资料未取得，暂不能比较。" if missing else ""))
 
         complete = stream_complete
 
@@ -72,10 +52,9 @@ def test_job_coverage_uses_business_task_and_preserves_real_gaps(tmp_path, monke
     runs = SqliteRunStore(config.data_dir / "scheduler.db")
     PromptJobExecutor(config, runs).execute(job)
     run = runs.recent_runs(job_id=f"custom:{job.id}")[0]
-    assert run.status == ("degraded" if missing else "completed")
+    assert run.status == "completed"
     assert calls == ["get_bars"]
-    assert publication_tasks and all(p.endswith(task) and SCHEDULER_OUTPUT_RULES not in p for p in publication_tasks)
-    assert all("本次任务日期：" in p and config.scheduler.timezone in p for p in publication_tasks)
+    assert publication_tasks == []
     assert any(SCHEDULER_OUTPUT_RULES in p and task in p for p in execution_prompts)
 
     monkeypatch.setattr("trade_compass_agent.web.api.load_app_config", lambda: config)
@@ -84,15 +63,17 @@ def test_job_coverage_uses_business_task_and_preserves_real_gaps(tmp_path, monke
     verification = detail["step_runs"][0]["data"]["verification"]
     assert detail["status"] == run.status
     assert verification["execution"] == "completed"
-    assert verification["status"] == ("incomplete" if missing else "complete")
+    assert verification["status"] == "not_reviewed"
+    assert verification["review_status"] == "not_requested"
     artifact = json.loads((config.data_dir / "report_artifacts" / (verification["artifact_id"] + ".json")).read_text())
     assert artifact["published_text"] == detail["analysis"]
     assert "7.46" in detail["analysis"]
     if derived:
-        assert "13.03%" in detail["analysis"] and "研判：两日收盘价上升。" in detail["analysis"]
-    assert bool(verification["findings"]) is missing
+        assert "13.03%" in detail["analysis"]
+    assert not verification["findings"]
     if missing:
-        assert run.error == "缺少营收依据"
+        assert "营收资料未取得" in detail["analysis"]
+    assert not run.error
 
 
 def test_repeated_job_reacquires_evidence_and_keeps_complete_history(tmp_path, monkeypatch):
@@ -105,7 +86,8 @@ def test_repeated_job_reacquires_evidence_and_keeps_complete_history(tmp_path, m
             if result:
                 return result
             if any(m.role == "tool" for m in messages):
-                return ChatCompletion(content="已取得收盘价。")
+                raw = json.loads(next(m.content for m in reversed(messages) if m.role == "tool"))
+                return ChatCompletion(content=f"本次收盘价为{raw['bars'][-1]['close']}元/股。")
             return ChatCompletion(content="", tool_calls=[ToolCall(
                 "bars", "get_bars", '{"symbol":"002415","limit":1}')])
 

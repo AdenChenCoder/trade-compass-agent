@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from trade_compass_agent.runtime.report_contract import PORTFOLIO_OPERATIONS, READ_RESULT_OPERATIONS, observation_date
 
-
 def temporal_evidence_context(context, contexts):
     """Source ownership belongs to the run, not the writer's paragraph selection.
 
@@ -18,6 +17,18 @@ def temporal_evidence_context(context, contexts):
     return {**context, 'evidence': list(facts.values())}
 
 
+def positive_temporal_scope(statement, scope):
+    """Union an independent positive clock obligation; never erase an earlier one."""
+    if scope in {'task_present', 'record_and_present', 'unresolved'}:
+        dates = list(statement.get('observation_dates', []))
+        anchor = 'unresolved' if scope == 'unresolved' else 'task_now'
+        if anchor not in dates:
+            dates.append(anchor)
+        statement['observation_dates'] = dates
+        if anchor == 'task_now':
+            statement['time_scope'] = 'reference_date'
+    return statement
+
 def is_current_observation(statement, report_context):
     """Resolve positive typed anchors without changing the saved interpretation."""
     expected = report_context['reference_date']
@@ -29,13 +40,11 @@ def is_current_observation(statement, report_context):
         return False
     return statement['time_scope'] == 'reference_date' or bool(expected) and dates == [expected]
 
-
 def _record_observation(statement):
     return (len(statement.get('observation_dates', [])) == 1
             and 'task_now' not in statement['observation_dates']
             and any(c['property'] == 'observation_scope' and c['value'] == 'record_date'
                     for c in statement.get('classifications', [])))
-
 
 def check_statement_time(statement, assessment, context, report_context):
     expected = report_context['reference_date']
@@ -115,7 +124,6 @@ def check_statement_time(statement, assessment, context, report_context):
     else:
         result.update(status='entailed', reason='matched_observation_date')
     return result
-
 
 def unavailable_bound_observation_dates(statement, assessment, timing):
     """Identify a sole date-availability failure; never approve its claim.

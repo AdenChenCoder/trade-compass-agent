@@ -246,11 +246,10 @@ def test_flow_guard_checks_publication_without_replaying_tools(tmp_path, monkeyp
                        llm=LLMConfig(provider="disabled"), agent=AgentConfig(learning_enabled=False, llm_session_titles=False))
     agent = loop.AgentLoop.from_config(config, verify_report_grounding=True, report_date="2026-10-26")
     result = agent.run_turn("复核行业资金快照，不把未知时点当作当前行情", session_id="scheduler-flow-check")
-    assert result.degraded is not recover
-    if recover:
-        assert "18.44亿元" in result.summary and "时点未提供" in result.summary
+    assert not result.degraded and result.verification["status"] == "not_reviewed"
+    assert result.summary.startswith(wrong) and len(calls) == 2
     assert reads == ["get_fund_flow"]
-    assert wrong not in (config.data_dir / "agent_sessions/scheduler-flow-check.jsonl").read_text()
+    assert wrong in (config.data_dir / "agent_sessions/scheduler-flow-check.jsonl").read_text()
 
 
 def test_autonomous_task_reads_full_exact_day_plan_and_keeps_failure_visible(tmp_path, monkeypatch):

@@ -20,15 +20,10 @@ def _config(tmp_path):
 
 
 def _learn(config, kind):
-    if kind == "insights":
-        return curate_turn_insight(
-            config=config, user_message="记住研究偏好",
-            response=TurnResponse(session_id="test", summary="风险偏好需要持续复核。", sections=[]),
-        )
     return compact_memory_summary(config)
 
 
-@pytest.mark.parametrize("kind", ["insights", "compaction"])
+@pytest.mark.parametrize("kind", ["compaction"])
 def test_learning_archive_is_searchable_beside_existing_hits_after_reopen(tmp_path, monkeypatch, kind):
     config = _config(tmp_path)
     old = json.loads(tool_write_memory(config.memory_dir, "notes", "风险偏好：旧的研究备注。"))
@@ -52,7 +47,7 @@ def test_learning_archive_is_searchable_beside_existing_hits_after_reopen(tmp_pa
     assert not (config.memory_dir / "KNOWLEDGE.md").exists()
 
 
-@pytest.mark.parametrize("kind", ["insights", "compaction"])
+@pytest.mark.parametrize("kind", ["compaction"])
 @pytest.mark.parametrize("termination", ["cancel", "deadline"])
 def test_late_learning_response_cannot_publish_archive(tmp_path, monkeypatch, kind, termination):
     config = _config(tmp_path)
@@ -150,7 +145,7 @@ def test_compaction_empty_selection_does_not_write(tmp_path, monkeypatch):
 @pytest.mark.parametrize("backend", ["api", "native"])
 def test_stop_during_learning_preserves_one_published_answer(client, tmp_path, monkeypatch, backend):
     from trade_compass_agent.llm.native import NativeAgentClient
-    from trade_compass_agent.llm.providers import ChatCompletion, check_execution_active
+    from trade_compass_agent.llm.providers import ChatCompletion, ToolCall, check_execution_active
     from trade_compass_agent.runtime.market_stack import MarketStack
 
     config = _config(tmp_path)
@@ -160,8 +155,27 @@ def test_stop_during_learning_preserves_one_published_answer(client, tmp_path, m
     monkeypatch.setattr("trade_compass_agent.web.agent_api._get_cached_stack", lambda: (config, stack))
     summary = "已完成本轮研究，保留这个用户可见结论。"
 
+    preparing = threading.Event()
+    cleanup = threading.Event()
+
+    def curate():
+        preparing.set()
+        while not cleanup.wait(.01):
+            check_execution_active()
+        raise RuntimeError("test cleanup")
+
+    def is_curation(messages):
+        try:
+            return "schema" in json.loads(messages[-1].content)
+        except (ValueError, TypeError):
+            return False
+
     class Reply:
-        def stream_complete(self, *a, on_delta=None, **kw):
+        def stream_complete(self, messages, on_delta=None, **kw):
+            if is_curation(messages):
+                return curate()
+            if not any(m.role == "tool" for m in messages):
+                return ChatCompletion(content="", tool_calls=[ToolCall("bars", "get_bars", '{"symbol":"002415"}')])
             if on_delta:
                 on_delta(summary)
             return ChatCompletion(content=summary)
@@ -170,22 +184,16 @@ def test_stop_during_learning_preserves_one_published_answer(client, tmp_path, m
         def __init__(self):
             pass
 
-        def run_agent(self, *a, on_delta=None, **kw):
-            return Reply().stream_complete(on_delta=on_delta)
+        def run_agent(self, messages, *, execute_tool, on_delta=None, **kw):
+            if is_curation(messages):
+                return curate()
+            execute_tool(ToolCall("bars", "get_bars", '{"symbol":"002415"}'))
+            return ChatCompletion(content=summary)
 
     monkeypatch.setattr("trade_compass_agent.runtime.loop.create_chat_client",
                         lambda _: NativeReply() if backend == "native" else Reply())
-    preparing = threading.Event()
-    cleanup = threading.Event()
-
-    def curate(_):
-        preparing.set()
-        while not cleanup.wait(.01):
-            check_execution_active()
-        raise RuntimeError("test cleanup")
-
-    monkeypatch.setattr("trade_compass_agent.runtime.learning.create_llm_provider",
-                        lambda **_: SimpleNamespace(name="test", complete=curate))
+    monkeypatch.setattr("trade_compass_agent.runtime.tools.registry.ToolRegistry.execute",
+                        lambda *a: '{"symbol":"002415","bars":[{"timestamp":"2026-11-12","close":22}]}')
     monkeypatch.setattr("trade_compass_agent.runtime.loop.spawn_background_review",
                         lambda **kw: pytest.fail("Stopped turn must not start another review"))
     responses = []
@@ -207,11 +215,20 @@ def test_stop_during_learning_preserves_one_published_answer(client, tmp_path, m
         assert not worker.is_alive() and not errors
         assert responses[0].status_code == 200
         assert responses[0].json()["interrupted"] is True
-        assert responses[0].json()["summary"] == summary
+        assert responses[0].json()["summary"].startswith(summary)
         visible = client.get("/api/agent/sessions/learning-stop/messages").json()
-        answers = [m["content"] for m in visible["messages"] if m["role"] == "assistant"]
-        assert answers == [summary]
+        answers = [m["content"] for m in visible["messages"] if m["role"] == "assistant" and m["content"]]
+        assert answers == [responses[0].json()["summary"]]
         assert not list((config.memory_dir / "tree" / "insights").glob("*.md"))
     finally:
         cleanup.set()
         worker.join(5)
+
+
+def test_prose_only_turn_cannot_become_searchable_memory(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    monkeypatch.setattr("trade_compass_agent.runtime.learning.create_llm_provider",
+                        lambda **_: pytest.fail("No evidence means no prose-only fallback"))
+    assert curate_turn_insight(config=config, user_message="研究一下",
+        response=TurnResponse(session_id="legacy", summary="未经证实的经验")) is None
+    assert json.loads(tool_search_memory(config.memory_dir, "未经证实"))["results"] == []

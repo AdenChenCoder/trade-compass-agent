@@ -4,7 +4,7 @@ from __future__ import annotations
 from trade_compass_agent.runtime.report_assessments import assessments_with_availability
 
 
-ANNOTATION_REPAIR = """The annotation_conflicts are unresolved disagreements about the exact reader text, not proof that its claims are true. Resolve them independently using the original paragraphs, source contexts and receipts. Do not rewrite prose, change observations or satisfy a task by changing its meaning.
+ANNOTATION_REPAIR = """For judgment_clock, independently declare assessment.temporal_scope: no_observation only for a research assessment introducing no empirical measurement. A real current qualitative observation retains task_present and its owned time witnesses. For bound_clock, resolve only a conflicting unresolved anchor beside a declared task-present predicate. task_present with owned references to the actual bound observations can repair the annotation; the runtime still verifies their real dates. Run-owned account state retains its snapshot contract, while a missing or stale market-observation date cannot become current. Preserve explicit historical anchors and all market-value dates. Every assessment of either clock conflict must declare temporal_scope. The annotation_conflicts are unresolved disagreements about the exact reader text, not proof that its claims are true. Resolve them independently using the original paragraphs, source contexts and receipts. Do not rewrite prose, change observations or satisfy a task by changing its meaning.
 For each listed conflict return annotation_resolutions entries with id, empirical_present (boolean), and assessment. An assessment contains id, comparison (source comparison), verdict (entailed|contradicted|unknown), support_basis (direct|calculated|reasoned|unknown|not_applicable), commitments ({participant_activity:boolean,causal_relation:boolean}), time_evidence (owned fact IDs), and checks ({identity_scope,time,quantity,support}, each entailed|contradicted|unknown|not_applicable). Return [] for conflicts you cannot resolve. Use only supplied statement IDs and owned fact references. Every assessment is a fresh source review; no prior interpretation or verdict is supplied as authority. Do not assume that a selected statement is an opinion or that it is supported.
 A current research opinion is not automatically a new current market measurement. An opinion's actual empirical premises, even qualitative or embedded ones, still require their real dates. empirical_present=false only if the exact statement adds no present empirical observation; an assessment of holding rationale is distinct from an investor's actual beliefs/actions. Do not erase explicit current values or qualitative observations by calling them opinions.
 Distinguish analytical use of an evidenced event from a claim that it actually caused price action. A reasoned interpretation may be supported without asserting causation or observed participant activity. Preserve all actual actor/causal predicates, including negation; aggregate volume cannot prove absence of an actor. Explain the reader's actual commitment and its source support in comparison. A previous positive verdict or a named source never establishes truth.
@@ -16,7 +16,12 @@ For a time_evidence conflict, preserve the original empirical time commitment: e
 """
 
 
-def annotation_conflicts(statements, assessments, errors):
+def _bound_clock_refs(statement, contexts):
+    facts = (contexts or {}).get(statement['context_id'], {}).get('evidence', [])
+    return {fact['id'] for fact in facts if fact['id'] in statement['bound_fact_refs']
+            and fact['kind'] not in {'identity', 'quotation'}}
+
+def annotation_conflicts(statements, assessments, errors, contexts=None):
     """Select narrowly attributable annotation faults, not arbitrary failures."""
     by_id = {row['id']: row for row in statements}
     result = {}
@@ -33,6 +38,32 @@ def annotation_conflicts(statements, assessments, errors):
         valid_report = (isinstance(reported, dict)
             and all(value in {'entailed', 'not_applicable'} for value in reported.values())
             and row.get('reported_verdict', row['verdict']) == 'entailed')
+        # Resolve applicability only when two independently declared clock
+        # interpretations disagree; real values, dates and actor predicates
+        # still retain their separate evidence obligations.
+        if (statement['assertion_kind'] == 'judgment' and statement['meaning_kind'] == 'other'
+                and statement['time_scope'] == 'reference_date'
+                and row.get('temporal_scope') == 'no_observation'
+                and not statement['bound_fact_refs'] and not statement['time_fact_refs']
+                and not statement.get('classifications') and not row['time_evidence']
+                and not set(statement.get('observation_dates', [])) - {'task_now'}
+                and row.get('support_basis') == 'reasoned' and not any(commitments.values())
+                and row.get('reported_verdict', row['verdict']) in {'entailed', 'unknown'}
+                and reported['identity_scope'] in {'entailed', 'not_applicable'}
+                and reported['quantity'] == 'not_applicable' and reported['support'] == 'entailed'
+                and reported['time'] in {'unknown', 'not_applicable'}):
+            result[row['id']] = 'judgment_clock'
+            continue
+        if (statement.get('body_temporal_scope') == 'task_present'
+                and row.get('temporal_scope') == 'task_present'
+                and 'unresolved' in statement.get('observation_dates', [])
+                and not set(statement['observation_dates']) - {'task_now', 'unresolved'}
+                and row.get('reported_verdict', row['verdict']) != 'contradicted'
+                and all(row['checks'][key] in {'entailed', 'not_applicable'}
+                        for key in ('identity_scope', 'quantity', 'support'))
+                and _bound_clock_refs(statement, contexts)):
+            result[row['id']] = 'bound_clock'
+            continue
         pure_opinion = (statement['assertion_kind'] == 'judgment' and statement['meaning_kind'] == 'other'
             and not statement['bound_fact_refs'] and not statement['time_fact_refs']
             and not statement.get('classifications') and row.get('support_basis') == 'reasoned'
@@ -94,8 +125,7 @@ def annotation_conflicts(statements, assessments, errors):
             result[row['id']] = 'opinion_time'
     return result
 
-
-def resolved_annotations(value, candidates, statements, decode):
+def resolved_annotations(value, candidates, statements, decode, contexts=None):
     """Invalid optional repairs leave original failures and usable siblings intact."""
     if not isinstance(value, list) or len(value) > len(candidates):
         raise ValueError('invalid annotation resolutions')
@@ -113,6 +143,21 @@ def resolved_annotations(value, candidates, statements, decode):
             continue
         assessment = rows[0]
         statement = dict(by_id[identifier])
+        if candidates[identifier] == 'bound_clock':
+            if (not entry['empirical_present'] or assessment.get('temporal_scope') != 'task_present'
+                    or not set(assessment['time_evidence']) & _bound_clock_refs(statement, contexts)):
+                continue
+            statement['observation_dates'] = [d for d in statement['observation_dates'] if d != 'unresolved']
+            result[identifier] = (statement, assessment)
+            continue
+        if candidates[identifier] == 'judgment_clock':
+            if entry['empirical_present']:
+                if assessment.get('temporal_scope') not in {'task_present', 'record_and_present', 'unresolved'} or not assessment['time_evidence']:
+                    continue
+                result[identifier] = (statement, assessment)
+                continue
+            if assessment.get('temporal_scope') != 'no_observation':
+                continue
         if candidates[identifier] == 'temporal_witness':
             if not entry['empirical_present'] or not assessment['time_evidence']:
                 continue

@@ -3,14 +3,14 @@ import json
 
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import source_review_scope, source_review_rows, report_facts
 from test_report_factual_role import assess
 from trade_compass_agent.runtime.report_body import BodyMeaningError, validate_body_meaning
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
 
 
 @pytest.mark.parametrize('basis', ['direct', 'reasoned'])
-@pytest.mark.parametrize('flag_owner', ['body_scope', 'body_kind', 'fact'])
+@pytest.mark.parametrize('flag_owner', ['body_scope', 'body_kind', 'fact', 'fact_enum'])
 @pytest.mark.parametrize('witness', ['activity', 'classified', 'foreign', 'title', 'industry_flow'])
 def test_participant_exclusion_needs_owned_group_source_despite_first_approval(tmp_path, basis, witness, flag_owner):
     receipts = [('compute_volume_ratio', json.dumps({'symbol': '300406', 'as_of': '2026-11-12', 'volume_ratio': 0.594}))]
@@ -36,7 +36,7 @@ def test_participant_exclusion_needs_owned_group_source_despite_first_approval(t
                 if f['metric'] == {'activity': 'volume_ratio', 'industry_flow': 'net_inflow_yi', 'title': 'title'}.get(witness, 'content')]
         # Deliberately optimistic SOURCE and FACT. Anonymous numeric evidence or
         # another instrument cannot meet the runtime source-family requirement.
-        return json.dumps({'reviews': [{'id': r['id'], 'supported': True, 'reason': 'Explicit optimistic double.',
+        return json.dumps({'reviews': [{**source_review_scope(p), 'id': r['id'], 'supported': True, 'reason': 'Explicit optimistic double.',
             **({'evidence_refs': refs} if r.get('source_requirements') else {})} for r in p['inferences']],
             'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):
@@ -50,8 +50,8 @@ def test_participant_exclusion_needs_owned_group_source_despite_first_approval(t
         value = assess(p)
         for r in value['assessments']:
             r['support_basis'] = basis
-            if r['id'] == 'c1' and flag_owner == 'fact':
-                r['commitments']['participant_activity'] = True
+            if r['id'] == 'c1' and flag_owner in {'fact', 'fact_enum'}:
+                r['commitments']['participant_activity'] = 'excluded' if flag_owner == 'fact_enum' else True
         return json.dumps(value)
     report = publish_report(task='说明量比及参与者统计所能支持的结论。', draft='', tool_results=receipts,
         run_scope='empirical-scope-controls', call=writer, fact_review_call=checker,
@@ -94,7 +94,7 @@ def test_author_stated_utc_record_is_not_relabelled_as_display_calendar():
             ref = next(f['id'] for f in report_facts(p) if f['metric'] == 'price')
             return json.dumps({'schema_version': 1, 'items': [{'id': 'q', 'section': 'market',
                 'type': 'paragraph', 'parts': ['002415在UTC日历2025-01-01的记录报价为', [ref, 'value_with_unit'], '。'], 'refs': []}]})
-        return json.dumps({'reviews': [{'id': r['id'], 'supported': True, 'reason': 'Explicit UTC observation matches.'}
+        return json.dumps({'reviews': [{**source_review_scope(p), 'id': r['id'], 'supported': True, 'reason': 'Explicit UTC observation matches.'}
             for r in p['inferences']], 'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):
         p = json.loads(user)
@@ -125,7 +125,7 @@ def test_comparison_retains_declared_prior_date_and_needs_a_current_witness(late
             return json.dumps({'schema_version': 1, 'items': [{'id': 'comparison', 'section': 'market',
                 'type': 'paragraph', 'parts': ['002415较2025-01-01收盘价', [refs[0], 'value_with_unit'],
                     '，今天收盘价为', [refs[1], 'value_with_unit'], '，价格走高。'], 'refs': []}]})
-        return json.dumps({'reviews': [{'id': r['id'], 'supported': True, 'reason': 'Explicit optimistic source double.'}
+        return json.dumps({'reviews': [{**source_review_scope(p), 'id': r['id'], 'supported': True, 'reason': 'Explicit optimistic source double.'}
             for r in p['inferences']], 'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):
         p = json.loads(user)
@@ -153,7 +153,7 @@ def test_current_research_horizon_is_separate_from_empirical_current_time(empiri
             ref = next(f['id'] for f in report_facts(p) if f['metric'] == 'pb')
             return json.dumps({'schema_version': 1, 'items': [{'id': 'opinion', 'section': 'assessment',
                 'type': 'paragraph', 'parts': [text], 'refs': [ref]}]})
-        return json.dumps({'reviews': [{'id': r['id'], 'supported': True, 'reason': 'Explicit independent double.'}
+        return json.dumps({'reviews': [{**source_review_scope(p), 'id': r['id'], 'supported': True, 'reason': 'Explicit independent double.'}
             for r in p['inferences']], 'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):
         p = json.loads(user)
@@ -199,7 +199,7 @@ def test_observed_account_position_is_not_market_participant_classification(grou
             return json.dumps({'schema_version': 1, 'items': [{'id': 'position', 'type': 'paragraph',
                 'section': 'positions', 'parts': parts, 'refs': []}]})
         refs = [f['id'] for c in p['source_contexts'].values() for f in c['evidence'] if f['metric'] == 'quantity']
-        return json.dumps({'reviews': [{'id': r['id'], 'supported': True, 'reason': 'Explicit optimistic double.',
+        return json.dumps({'reviews': [{**source_review_scope(p), 'id': r['id'], 'supported': True, 'reason': 'Explicit optimistic double.',
             'evidence_refs': refs} for r in p['inferences']], 'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):
         p = json.loads(user)
@@ -268,7 +268,7 @@ def test_record_date_keeps_its_source_in_a_mixed_measurement_comparison(borrowed
                 ['600928筹码估算上沿为', [chip, 'value_with_unit'], '（截至', [chip, 'date'], '），与近期报价', [price, 'value_with_unit'], '相同。'])
             return json.dumps({'schema_version': 1, 'items': [{'id': 'record', 'type': 'paragraph',
                 'section': 'assessment', 'parts': parts, 'refs': []}]})
-        return json.dumps({'reviews': [{'id': r['id'], 'supported': True, 'reason': 'Explicit optimistic double.'}
+        return json.dumps({'reviews': [{**source_review_scope(p), 'id': r['id'], 'supported': True, 'reason': 'Explicit optimistic double.'}
             for r in p['inferences']], 'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):
         p = json.loads(user)
@@ -282,3 +282,147 @@ def test_record_date_keeps_its_source_in_a_mixed_measurement_comparison(borrowed
         run_scope='mixed-bound-record', call=writer, fact_review_call=checker, reference_date='2025-01-02', max_calls=2)
     assert (report.verification['status'] == 'complete') is (not borrowed)
     assert report.artifact['review_valid']
+
+
+@pytest.mark.parametrize('body_scope,fact_scope', [('source_limit', 'source_limit'), ('none', 'source_limit'),
+    ('source_limit', 'attributed'), ('excluded', 'source_limit')])
+@pytest.mark.parametrize('witness', ['method', 'price', 'foreign'])
+def test_evidence_capability_is_distinct_from_actual_participant_absence(body_scope, fact_scope, witness):
+    receipts = [('sina_realtime_quote', json.dumps({'symbol': '300406', 'price': 22, 'timestamp': '2025-01-02'})),
+        ('compute_volume_ratio', json.dumps({'symbol': '300406', 'as_of': '2025-01-02', 'volume_ratio': 0.594})),
+        ('compute_volume_ratio', json.dumps({'symbol': '600928', 'as_of': '2025-01-02', 'volume_ratio': 0.7}))]
+    def writer(system, user):
+        p = json.loads(user)
+        if 'schema' in p:
+            ref = next(f['id'] for f in report_facts(p) if f['metric'] == 'price')
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'limit', 'type': 'paragraph',
+                'section': 'assessment', 'parts': ['300406报价为', [ref, 'value_with_unit'],
+                    '，所给总量指标不能确定卖方的参与者分类。'], 'refs': []}]})
+        refs = [f['id'] for c in p['source_contexts'].values() for f in c['evidence']
+            if (f['metric'] == ('price' if witness == 'price' else 'volume_ratio')
+                and f['subject'] == ('600928' if witness == 'foreign' else '300406'))]
+        return json.dumps({'reviews': [{**source_review_scope(p), 'id': r['id'], 'supported': True, 'reason': 'Explicit optimistic double.',
+            'evidence_refs': refs} for r in p['inferences']], 'coverage': {'complete': True, 'missing': []}})
+    def checker(system, user):
+        p = json.loads(user)
+        if 'paragraphs' in p:
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': r['id'], 'parts': [{
+                'through': r['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'judgment',
+                'distribution_basis': 'none', 'temporal_scope': 'record_date', 'participant_scope': body_scope,
+                'observation_dates': ['2025-01-02'], 'classifications': []}]} for r in p['paragraphs']]})
+        value = assess(p)
+        for row in value['assessments']:
+            row['commitments']['participant_activity'] = fact_scope
+        return json.dumps(value)
+    report = publish_report(task='说明所给资料的能力边界。', draft='', tool_results=receipts,
+        run_scope='source-capability-predicate', call=writer, fact_review_call=checker,
+        reference_date='2025-01-02', max_calls=2)
+    accepted = body_scope != 'excluded' and fact_scope != 'attributed' and witness == 'method'
+    assert report.artifact['review_valid']
+    assert (report.verification['status'] == 'complete') is accepted
+    assert ('不能确定卖方' in report.text) is accepted
+
+
+@pytest.mark.parametrize('clock_owner', ['fact', 'source'])
+@pytest.mark.parametrize('current', [False, True])
+@pytest.mark.parametrize('stamp', ['2025-01-02T02:30:00+00:00', '2025-01-02T16:30:00+00:00'])
+def test_independent_positive_clock_cannot_be_erased_by_record_only_review(clock_owner, current, stamp):
+    def writer(system, user):
+        p = json.loads(user)
+        if 'schema' in p:
+            ref = next(f['id'] for f in report_facts(p) if f['metric'] == 'price')
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'quote', 'type': 'paragraph',
+                'section': 'market', 'parts': ['002415' + ('当前报价为' if current else '记录报价为'),
+                    [ref, 'value_with_unit'], '（记录于', [ref, 'date'], '）。'], 'refs': []}]})
+        rows = []
+        for r in p['inferences']:
+            refs = [f['id'] for c in p['source_contexts'].values() for f in c['evidence'] if f['metric'] == 'price']
+            rows.append({'id': r['id'], 'supported': True, 'reason': 'Explicit optimistic double.',
+                'temporal_scope': 'task_present' if current and clock_owner == 'source' else 'record_date',
+                'time_evidence': refs})
+        return json.dumps({'reviews': rows, 'coverage': {'complete': True, 'missing': []}})
+    def checker(system, user):
+        p = json.loads(user)
+        if 'paragraphs' in p:
+            # Freeze the exact former failure: BODY overlooks the current claim.
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': r['id'], 'parts': [{
+                'through': r['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
+                'distribution_basis': 'none', 'temporal_scope': 'record_date', 'participant_scope': 'none',
+                'observation_dates': ['2025-01-03' if '16:30' in stamp else '2025-01-02'],
+                'classifications': []}]} for r in p['paragraphs']]})
+        value = assess(p)
+        for r in value['assessments']:
+            r['temporal_scope'] = 'task_present' if current and clock_owner == 'fact' else 'record_date'
+        return json.dumps(value)
+    report = publish_report(task='报告记录报价和日期。', draft='', tool_results=[('sina_realtime_quote',
+        json.dumps({'symbol': '002415', 'price': 22, 'timestamp': stamp}))], run_scope='independent-positive-clock',
+        call=writer, fact_review_call=checker, reference_date='2025-01-02', reference_timezone='America/New_York', max_calls=2)
+    accepted = not current or '16:30' in stamp
+    assert report.artifact['review_valid']
+    assert (report.verification['status'] == 'complete') is accepted
+    assert ('22元/股' in report.text) is accepted
+
+
+def test_archived_scope_omission_is_readable_but_not_a_fresh_review():
+    from trade_compass_agent.runtime.report_assessments import assessments_with_availability
+    row = {'id': 'c0', 'comparison': 'Legacy structured assessment.', 'verdict': 'entailed',
+        'support_basis': 'direct', 'commitments': {'participant_activity': False, 'causal_relation': False},
+        'time_evidence': [], 'checks': {k: 'entailed' for k in ['identity_scope', 'time', 'quantity', 'support']}}
+    legacy, errors = assessments_with_availability({'assessments': [row]}, ['c0'])
+    assert not errors and legacy[0]['verdict'] == 'entailed'
+    fresh, errors = assessments_with_availability({'assessments': [row]}, ['c0'], require_temporal_scope=True)
+    assert errors['c0']['fields'] == ['temporal_scope']
+    assert fresh[0]['validation_status'] == 'unavailable'
+    assert 'temporal_scope' not in row
+
+
+@pytest.mark.parametrize('fault', [None, 'missing_fact_scope', 'missing_source_scope', 'foreign_source_clock'])
+def test_fresh_clock_protocol_does_not_turn_missing_review_into_publication(fault):
+    def writer(system, user):
+        p = json.loads(user)
+        if 'schema' in p:
+            ref = next(f['id'] for f in report_facts(p) if f['metric'] == 'price')
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'quote', 'type': 'paragraph', 'section': 'market',
+                'parts': ['002415在', [ref, 'date'], '的记录报价为', [ref, 'value_with_unit'], '。'], 'refs': []}]})
+        rows = source_review_rows(p)
+        if rows and fault == 'missing_source_scope':
+            rows[0].pop('temporal_scope')
+        if rows and fault == 'foreign_source_clock':
+            rows[0]['time_evidence'] = ['not-owned']
+        return json.dumps({'reviews': rows, 'coverage': {'complete': True, 'missing': []}})
+    def checker(system, user):
+        p = json.loads(user)
+        if 'paragraphs' in p:
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': r['id'], 'parts': [{
+                'through': r['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
+                'distribution_basis': 'none', 'temporal_scope': 'record_date', 'participant_scope': 'none',
+                'observation_dates': ['2025-01-02'], 'classifications': []}]} for r in p['paragraphs']]})
+        value = assess(p)
+        if fault == 'missing_fact_scope':
+            value['assessments'][0].pop('temporal_scope')
+        return json.dumps(value)
+    report = publish_report(task='说明记录价格。', draft='', tool_results=[('sina_realtime_quote',
+        json.dumps({'symbol': '002415', 'price': 22, 'timestamp': '2025-01-02'}))],
+        run_scope='fresh-clock-wire', call=writer, fact_review_call=checker, reference_date='2025-01-02', max_calls=2)
+    assert (report.verification['status'] == 'complete') is (fault is None)
+    if fault:
+        assert not report.artifact['review_valid']
+        assert report.artifact['factual_assessment_errors'] or any(
+            f['code'] == 'review_unavailable' for f in report.verification['findings'])
+
+
+def test_activity_definition_matches_the_actual_producer_without_creating_actor_evidence(monkeypatch):
+    import pandas as pd
+    from trade_compass_agent.runtime.tools import ta
+    from trade_compass_agent.runtime.report_contract import EvidenceCatalog
+    bars = pd.DataFrame({'volume': [10, 10, 10, 10, 5]})
+    monkeypatch.setattr(ta, '_bars_to_df', lambda *args: bars)
+    raw = ta.tool_compute_volume_ratio(None, symbol='300406', timeframe='1d', period=5)
+    data = json.loads(raw)
+    method, = EvidenceCatalog.build([('compute_volume_ratio', raw)], run_scope='method-definition').source_semantics()
+    definition = method['quantity_definition']
+    assert data['volume_ratio'] == round(data['current_volume'] / data['avg_volume'], 3)
+    assert data['volume_ratio'] < definition['reference_multiple'] == 1
+    assert method['permitted_inference'][0] == 'relative_total_trading_intensity'
+    assert 'trader_group_composition_or_absence' in method['not_established']
+    assert 'realized_causation' in method['not_established']

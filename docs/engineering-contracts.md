@@ -7,6 +7,25 @@ in the linked regression tests, not in expanding prose exception lists.
 
 ## Report and market evidence
 
+Ordinary task answers are delivered as written by the agent. They do not pass
+through mandatory structured composition, blind classification, factual review,
+coverage review or corrective rewrites. A report's phrasing, dates, participant
+interpretation or a review protocol failure cannot withhold its text. This is a
+user-requested delivery policy, not a certification of every statement.
+
+The saved verification status is `not_reviewed` with
+`review_status=not_requested` when delivery/execution has no actual failure.
+Do not label it fact-checked or let a workflow aggregate promote it to verified.
+Original tool failures, unavailable data and uncertain mutation outcomes retain
+their real statuses. Authorization, tool permissions, cancellation and trading
+execution controls remain at their existing execution boundaries.
+
+History stores the original answer and immutable tool receipts; this storage
+alone does not admit the prose as reusable knowledge. Content entering searchable
+memory, knowledge or skills still passes its applicable strict admission review.
+The detailed evidence/review contracts below apply to that strict path and its
+explicit validation helpers, rather than ordinary report delivery.
+
 - Reading acceptance permits minor awkward wording, redundancy or ellipsis when
   the surrounding body makes the business meaning unambiguous. Polished prose
   is not a completion gate. Preserve factual identity, dates, values, units,
@@ -366,6 +385,15 @@ in the linked regression tests, not in expanding prose exception lists.
   declare temporal_scope and participant_scope before the broad claim kind.
   Record dates do not stand in for current-observation commitments, and a
   judgment label cannot remove an actual participant attribution or exclusion.
+  Complete participant predicates distinguish actual attribution/exclusion,
+  named actor records and source-capability limits. New factual reviews use
+  that scoped predicate; legacy booleans remain readable. A source-capability
+  assertion requires an owned method record and explicit source references; it
+  does not cancel any separate positive market-participant obligation.
+  FACT and independent Source reviews also declare temporal scope before their
+  truth verdict. Any additional task-present obligation reaches the runtime
+  calendar check even when an earlier reader saw only a record date. Fresh
+  reviews require those declarations; legacy saved reviews remain readable.
   The runtime combines positive obligations; absence or invalid metadata is an
   unavailable review. Historical responses remain readable without being valid
   fresh declarations. A runtime date binding has the display calendar; an
@@ -382,6 +410,11 @@ in the linked regression tests, not in expanding prose exception lists.
   Composition and revision receive those same source-method constraints.
   Cross-date comparisons retain their declared baseline and a current witness;
   a research opinion naming a security is not itself a newly observed price.
+  An unresolved anchor beside an independently declared current predicate may
+  be reconciled only with actual bound observation references; source dates
+  and account-snapshot ownership are still checked. A pure research-clock
+  disagreement needs a fresh explicit temporal interpretation and preserves
+  every actual market-value, actor and categorical requirement.
   An exclusively temporal opinion conflict may be independently reconciled,
   preserving scalar, actor, explicit-date and categorical obligations.
   Coverage measures requested answers rather than an unrequested presentation
@@ -627,13 +660,16 @@ Regression entry points:
 
 ## Memory and learning lifecycle
 
-- Automatic learning from verified task reports reopens the run-owned evidence
-  artifact, checks its digest and completion state, and curates against original
-  receipts through the bounded, read-only internal report contract. Human prose
+- Automatic learning from task reports reopens the run-owned evidence
+  artifact, checks its digest and execution state, and curates against original
+  receipts through the bounded, strictly reviewed, read-only internal report contract.
+  An unreviewed delivered answer is eligible only as context for this new review,
+  never as an admitted fact. Human prose
   is context, never a replacement for receipts. Only complete curated results
   enter the searchable archive; failed attempts remain report diagnostics linked
   to the source turn. Missing evidence must not fall back to prose-only learning.
-  This does not certify legacy interactive learning.
+  Interactive turns follow the same receipt-backed admission path; absent evidence
+  or review never falls back to prose-only automatic learning.
 - Memory compaction selects complete source records rather than rewriting their
   factual content. Keep source paths and qualifications, exclude earlier compactions
   from new selections, and deduplicate identical extracts. Original records remain

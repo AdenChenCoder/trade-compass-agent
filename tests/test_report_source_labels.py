@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import source_review_scope, report_facts
 from test_report_factual_role import assess, body_reply
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
 
@@ -28,7 +28,7 @@ def test_same_empirical_claim_keeps_source_obligations_when_basis_label_changes(
                 {'id': 'target', 'section': 'assessment', 'type': 'paragraph',
                  'parts': ['300406量比为', [volume, 'value_with_unit'], ending], 'refs': []}]})
         source_inputs.append(payload)
-        return json.dumps({'reviews': [{'id': r['id'], 'supported': supported if r['id'] == 'c1' else True,
+        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': r['id'], 'supported': supported if r['id'] == 'c1' else True,
             'reason': '匿名量比不能证明参与者行为或实际因果。' if r['id'] == 'c1' and not supported
                 else '原始量比与所述范围一致。'} for r in payload['inferences']],
             'coverage': {'complete': True, 'missing': []}})

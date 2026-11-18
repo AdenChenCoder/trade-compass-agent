@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from report_contract_helpers import report_facts, source_review_rows
+from report_contract_helpers import source_review_scope, report_facts, source_review_rows
 from test_report_factual_role import assess, body_reply
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
 
@@ -20,7 +20,7 @@ def test_no_first_classifier_or_support_label_can_exempt_exact_prose_from_review
                 'section': 'assessment', 'parts': [text], 'refs': []}]})
         calls.append(payload)
         assert [(row['id'], row['text']) for row in payload['inferences']] == [('c0', text)]
-        return json.dumps({'reviews': [{'id': 'c0', 'supported': legitimate,
+        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': 'c0', 'supported': legitimate,
             'reason': '纯观察安排无需额外观测。' if legitimate else '匿名量比不能证明机构没有卖出。'}],
             'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):
@@ -61,7 +61,7 @@ def test_body_collection_groups_preserve_complete_owned_records_without_acceptin
                 {'id': name, 'type': 'paragraph', 'section': 'market',
                  'parts': ['002415在2025-01-02的收盘价为', [ref, 'value_with_unit'], '。'], 'refs': []}
                 for name in ('one', 'two')]})
-        return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': '所给日期价格一致。'}
+        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': True, 'reason': '所给日期价格一致。'}
             for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
@@ -138,7 +138,7 @@ def test_independent_review_keeps_unbound_owned_sources_and_their_reference_name
         available.update(row[0] for source in payload['source_fact_references']['sources']
                          for observation in source['observations'] for row in observation['rows'])
         assert all(set(source['fact_refs']) <= available for source in payload['source_semantics'])
-        return json.dumps({'reviews': [{'id': row['id'], 'supported': estimated,
+        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': estimated,
             'reason': '已有相应筹码估算。' if estimated else '仅有价格高点，没有分布依据。'}
             for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):
@@ -226,7 +226,7 @@ def test_empirical_claim_needs_independent_source_support_regardless_of_first_ba
             audit_inputs.append(payload)
             assert {row['id'] for row in rows} == ({'c0', 'c1'} if first_supported and scene != 'stale' else {'c0'})
             assert payload['source_contexts'][rows[0]['context_id']]['evidence'] and payload['receipts']
-        return json.dumps({'reviews': [{'id': row['id'], 'supported': row['id'] == 'c0' or second_supported,
+        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': row['id'] == 'c0' or second_supported,
             'reason': '匿名总量资料不能证明具体参与者或实际因果。' if not second_supported else '所述范围与原始资料相符。'}
             for row in rows], 'coverage': {'complete': True, 'missing': []}})
 
@@ -282,8 +282,8 @@ def test_first_direct_label_cannot_publish_without_its_required_source_review(tm
         assert [row['id'] for row in payload['inferences']] == ['c0', 'c1']
         if fault == 'unavailable':
             raise TimeoutError('explicit independent source review timeout')
-        row = {'id': 'c1', 'supported': fault != 'valid_false', 'reason': '核对来源范围。'}
-        rows = [{'id': 'c0', 'supported': True, 'reason': '量比测量与原始来源一致。'}, row]
+        row = {**source_review_scope(payload), 'id': 'c1', 'supported': fault != 'valid_false', 'reason': '核对来源范围。'}
+        rows = [{**source_review_scope(payload), 'id': 'c0', 'supported': True, 'reason': '量比测量与原始来源一致。'}, row]
         if fault == 'missing':
             rows = []
         elif fault == 'duplicate':
@@ -414,3 +414,52 @@ def test_missing_temporal_link_can_be_repaired_but_current_scope_and_source_date
     saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
     assert saved['receipts'][0]['result'] == raw and saved['published_text'] == report.text
     assert all(f['observed_at'] == day for f in saved['facts'] if f['kind'] != 'identity')
+
+
+@pytest.mark.parametrize('extra', ['none', 'known_negative', 'known_positive', 'foreign_negative',
+                                  'duplicate_negative', 'missing_required', 'unavailable_negative'])
+def test_redundant_completed_rejection_preserves_siblings_without_relaxing_identity_coverage(extra):
+    def writer(system, user):
+        p = json.loads(user)
+        if 'schema' in p:
+            ref = next(f['id'] for f in report_facts(p) if f['metric'] == 'close')
+            return json.dumps({'schema_version': 1, 'items': [
+                {'id': 'good', 'type': 'paragraph', 'section': 'market',
+                    'parts': ['002415在2025-01-02的收盘价为', [ref, 'value_with_unit'], '。'], 'refs': []},
+                {'id': 'bad', 'type': 'paragraph', 'section': 'assessment',
+                    'parts': ['这些统计证明当日非主力出货。'], 'refs': [ref]}]})
+        rows = source_review_rows(p)
+        if extra != 'none':
+            row = {**source_review_scope(p), 'id': 'foreign' if extra == 'foreign_negative' else 'c1',
+                   'supported': extra == 'known_positive', 'reason': 'Explicit additional verdict.'}
+            rows.append(row)
+            if extra == 'duplicate_negative':
+                rows.append(dict(row))
+            if extra == 'missing_required':
+                rows = [row]
+        return json.dumps({'reviews': rows, 'coverage': {'complete': True, 'missing': []}})
+    def checker(system, user):
+        p = json.loads(user)
+        if 'paragraphs' in p:
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': r['id'], 'parts': [{
+                'through': r['source_units'][-1]['id'], 'operation_code': 0,
+                'claim_kind': 'observation' if r['id'] == 'good' else 'actor_activity',
+                'distribution_basis': 'none', 'temporal_scope': 'record_date', 'participant_scope': 'none',
+                'observation_dates': ['2025-01-02'], 'classifications': []}]} for r in p['paragraphs']]})
+        value = assess(p)
+        bad = value['assessments'][1]
+        bad.update(verdict='unknown')
+        bad['checks']['support'] = 'unknown'
+        bad['commitments']['participant_activity'] = True
+        if extra == 'unavailable_negative':
+            bad.pop('temporal_scope')
+        return json.dumps(value)
+    report = publish_report(task='说明记录价格及参与者依据。', draft='',
+        tool_results=[('get_bars', json.dumps({'symbol': '002415', 'bars': [{'timestamp': '2025-01-02', 'close': 23}]}))],
+        run_scope='extra-source-rejection', call=writer, fact_review_call=checker,
+        reference_date='2025-01-02', max_calls=2)
+    valid = extra in {'none', 'known_negative'}
+    assert report.artifact['review_valid'] is valid
+    assert ('收盘价为23元/股' in report.artifact['reader_body']) is valid
+    assert '非主力出货' not in report.artifact['reader_body']
+    assert report.verification['status'] == 'incomplete'

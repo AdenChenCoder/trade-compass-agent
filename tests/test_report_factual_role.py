@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from report_contract_helpers import report_facts, source_review_rows
+from report_contract_helpers import source_review_scope, report_facts, source_review_rows
 from trade_compass_agent.config import AppConfig, LLMConfig, invalidate_config_cache, load_app_config
 from trade_compass_agent.llm import providers
 from trade_compass_agent.runtime.exceptions import AgentTurnError, TurnInterruptedError
@@ -27,7 +27,7 @@ def compose(payload):
 
 
 def assess(payload, verdict="entailed"):
-    return {"assessments": [{"id": row["id"], "comparison": "比较最终陈述与原始资料。", "verdict": verdict,
+    return {"assessments": [{'temporal_scope': 'unspecified', "id": row["id"], "comparison": "比较最终陈述与原始资料。", "verdict": verdict,
                             "support_basis": "direct",
                             "commitments": {"participant_activity": False, "causal_relation": False},
                             "time_evidence": [],
@@ -147,7 +147,7 @@ def test_support_feedback_repairs_body_once_and_survives_saved_publication(tmp_p
             document['items'].append({'id': 'claim', 'type': 'paragraph', 'section': 'assessment',
                 'parts': [text], 'refs': [f['id'] for f in report_facts(payload)]})
             return json.dumps(document)
-        return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': '来源仅支持所述资料局限。'}
+        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': True, 'reason': '来源仅支持所述资料局限。'}
             for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):
         payload = json.loads(user)
@@ -1489,7 +1489,7 @@ def test_review_model_configuration_survives_reload_without_changing_main_model(
 
 
 @pytest.mark.parametrize("verdict", ["entailed", "unknown", "unavailable"])
-def test_scheduled_api_uses_configured_factual_role_and_never_replays_business_tools(tmp_path, monkeypatch, verdict):
+def test_ordinary_scheduled_api_does_not_use_configured_factual_role(tmp_path, monkeypatch, verdict):
     from fastapi.testclient import TestClient
     from trade_compass_agent.config import AgentConfig
     from trade_compass_agent.llm.providers import ChatCompletion, ToolCall
@@ -1552,16 +1552,16 @@ def test_scheduled_api_uses_configured_factual_role_and_never_replays_business_t
     monkeypatch.setattr("trade_compass_agent.web.api.load_app_config", lambda: config)
     detail = TestClient(create_app()).get(f"/api/jobs/runs/{run.id}").json()
     verification = detail["step_runs"][0]["data"]["verification"]
-    assert queries == ["get_bars"] and len(factory_configs) == 1
-    assert len(checks) == (2 if verdict == "unknown" else 0 if verdict == "unavailable" else 1)
-    assert len(body_checks) == (2 if verdict == "unknown" else 1)
-    assert detail["status"] == ("completed" if verdict == "entailed" else "degraded")
-    assert ("22元/股升至23元/股" in detail["analysis"]) is (verdict == "entailed")
+    assert queries == ["get_bars"] and factory_configs == []
+    assert checks == []
+    assert body_checks == []
+    assert detail["status"] == "completed"
+    assert detail["analysis"].startswith("已读取收盘资料。")
+    assert verification["status"] == "not_reviewed"
     assert verification["execution"] == "completed"
     artifact = json.loads((config.data_dir/"report_artifacts"/(verification["artifact_id"]+".json")).read_text())
     assert artifact["published_text"] == detail["analysis"]
-    assert artifact["factual_model_calls"] == len(checks)
-    assert artifact["body_review_model_calls"] == len(body_checks)
+    assert artifact["model_calls"] == 0
     assert artifact["report_context"]["reference_date"] == detail["step_runs"][0]["data"]["session_id"][-10:]
     assert all(row["report_context"] == artifact["report_context"] for row in checks)
 
@@ -1571,7 +1571,7 @@ def test_scheduled_api_uses_configured_factual_role_and_never_replays_business_t
     (125000, 4096, 0, True), (128000, 4096, 0, False),
     (None, 16384, 0, False), (110000, 16384, 50000, False),
 ])
-def test_scheduled_report_uses_native_count_and_actual_response_reserve(
+def test_ordinary_delivery_needs_no_additional_report_context_budget(
         tmp_path, monkeypatch, measured, cap, configured, accepted):
     from fastapi.testclient import TestClient
     from trade_compass_agent.config import AgentConfig, CompressionConfig
@@ -1635,9 +1635,9 @@ def test_scheduled_report_uses_native_count_and_actual_response_reserve(
     run = runs.recent_runs(job_id='custom:'+job.id)[0]
     detail = TestClient(create_app()).get('/api/jobs/runs/'+run.id).json()
     assert queries == ['get_bars']
-    assert detail['status'] == ('completed' if accepted else 'degraded')
-    assert requests == (['compose', 'review'] if accepted else [])
-    assert ('22元/股' in detail['analysis']) is accepted
+    assert detail['status'] == 'completed'
+    assert requests == []
+    assert detail['analysis'].startswith('已取得所给收盘记录。')
 
 
 @pytest.mark.parametrize("ambiguous", [True, False])
@@ -1864,7 +1864,7 @@ def test_gap_removal_cannot_complete_a_different_reader_answer(
         # check requires the fallback answer, while gap review calls it unrelated.
         complete = not requires_revenue or gap_text in payload['report']
         return json.dumps({
-            'reviews': [{'id': row['id'], 'supported': True, 'reason': '收盘价与来源一致。'}
+            'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': True, 'reason': '收盘价与来源一致。'}
                         for row in payload['inferences']],
             'coverage': {'complete': complete, 'missing': [] if complete else ['尚未说明无法比较年度收入。'],
                          'repairable': False, 'gap_answer_ids': ['gap'] if requires_revenue else []},
@@ -1903,7 +1903,7 @@ def test_unrelated_gap_does_not_turn_missing_prose_into_missing_data(local_revie
             document['items'].append({'id': 'gap', 'type': 'gap', 'section': 'gaps', 'text': gap_text})
             return json.dumps(document)
         return json.dumps({
-            'reviews': [{'id': row['id'], 'supported': True, 'reason': '历史价格与来源一致。'}
+            'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': True, 'reason': '历史价格与来源一致。'}
                         for row in payload['inferences']],
             'coverage': {'complete': False, 'missing': ['正文未提供两日变动百分比。'],
                          'repairable': True, 'gap_answer_ids': ['gap'] if requires_revenue else []},

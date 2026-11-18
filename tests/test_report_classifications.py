@@ -2,7 +2,7 @@
 import json
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import source_review_scope, report_facts
 from test_report_factual_role import assess
 from trade_compass_agent.runtime.indicator_values import moving_average_alignment
 from trade_compass_agent.runtime.report_contract import EvidenceCatalog
@@ -20,7 +20,7 @@ def publication(*, values, prose='均线呈多头排列。', operator='eq', peri
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return json.dumps({'reviews': [{'id': row['id'], 'supported': True,
+            return json.dumps({'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': True,
                 'reason': '独立的乐观来源替身；程序仍须核对实际分类。'} for row in payload['inferences']],
                 'coverage': {'complete': True, 'missing': []}})
         selected = [f for f in report_facts(payload) if f['kind'] == ('classification' if category_only else 'moving_average') and f['subject'] == '600928']

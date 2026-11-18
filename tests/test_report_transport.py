@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from report_contract_helpers import report_facts, source_review_rows
+from report_contract_helpers import source_review_scope, report_facts, source_review_rows
 from trade_compass_agent.runtime.compression.budget import estimate_tokens
 from trade_compass_agent.runtime.report_contract import EvidenceCatalog
 from trade_compass_agent.runtime.report_publication import publish_report
@@ -90,7 +90,7 @@ def test_review_aliases_touch_only_reference_slots_and_preserve_invalid_metadata
     assert spans == [{'id': 'c0', 'text': fact.id, 'bound_fact_refs': [alias], 'time_fact_refs': [alias]}]
     assert refs['sources'][0]['observations'][0]['rows'] == [[alias, fact.pointer]]
     assert (context, statements, references) == before
-    raw = {'assessments': [{'id': 'c0', 'comparison': 'strict protocol fixture',
+    raw = {'assessments': [{'temporal_scope': 'unspecified', 'id': 'c0', 'comparison': 'strict protocol fixture',
         'verdict': 'entailed', 'time_evidence': [alias, fact.id],
         'checks': dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed')}]}
     decoded = transport.decode_factual_review(raw)
@@ -247,7 +247,7 @@ def test_writer_date_example_is_the_actual_reader_binding_without_rewriting_sour
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': ''}
+            return json.dumps({'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': True, 'reason': ''}
                 for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
         example = payload.get('date_rendering_example')
         seen.append(example)
@@ -299,7 +299,7 @@ def test_composer_retains_non_numeric_tool_context_without_a_second_fact_namespa
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': ''}
+            return json.dumps({'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': True, 'reason': ''}
                 for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
         source = payload['source_records'][0]
         assert source['tool'] == 'compute_ma' and source['data'] == raw
@@ -323,7 +323,7 @@ def test_full_large_composition_includes_original_tool_context_with_response_roo
     def writer(system, user):
         payload = json.loads(user)
         if 'schema' not in payload:
-            return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': ''}
+            return json.dumps({'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': True, 'reason': ''}
                 for row in payload['inferences']], 'coverage': {'complete': True, 'missing': []}})
         assert estimate_tokens(user) < 131072 - 16384
         for source, (_, raw) in zip(payload['source_records'], receipts, strict=True):

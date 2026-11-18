@@ -14,6 +14,16 @@ from trade_compass_agent.runtime.tools.memory import tool_search_memory, tool_wr
 
 @pytest.mark.parametrize("same_note", [True, False])
 def test_corrected_archive_scope_is_reported_from_real_write_receipts(tmp_path, monkeypatch, same_note):
+    # This scene exercises real scope recovery and storage. The separate durable
+    # admission scenes cover the strict reviewer; keep it an explicit double here.
+    from trade_compass_agent.runtime.report_publication import Publication
+    from trade_compass_agent.runtime.report_contract import verification_result
+    reviewed = []
+    def admit(**kwargs):
+        reviewed.append(kwargs["draft"])
+        return Publication(kwargs["draft"], verification_result([]),
+            {"schema_version": 1, "run_id": kwargs["run_id"]})
+    monkeypatch.setattr("trade_compass_agent.runtime.report_publication.review_durable_content", admit)
     original = "紫鹭合成笔记：样例材料不用于投资判断。"
     saved = original if same_note else "另一条合成笔记：每份资料独立标注来源。"
     completions = [
@@ -44,6 +54,7 @@ def test_corrected_archive_scope_is_reported_from_real_write_receipts(tmp_path, 
     hits = json.loads(tool_search_memory(config.memory_dir, saved))["results"]
     assert hits and saved in hits[0]["content"]
     assert len(list((config.memory_dir / "tree").rglob("*.md"))) == 1
+    assert reviewed == [saved]
 
 
 @pytest.mark.parametrize("failure", ["runtime", "unconfirmed", "fact_check", "legacy_invalid_scope"])

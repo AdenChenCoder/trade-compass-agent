@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import source_review_scope, report_facts
 from trade_compass_agent.runtime.report_publication import publish_report, persist_publication
 
 RECEIPTS = [("get_bars", json.dumps({"symbol": "002415", "timeframe": "1d",
@@ -49,7 +49,7 @@ def publish(*, reverse=False, mutate=None, verdict=True, unavailable=False, rece
             return json.dumps(doc, ensure_ascii=False)
         if unavailable:
             raise TimeoutError("review unavailable")
-        return json.dumps({"reviews": [{"id": p["id"], "supported": verdict,
+        return json.dumps({"reviews": [{**source_review_scope(payload), "id": p["id"], "supported": verdict,
                            "reason": "" if verdict else reason} for p in payload["inferences"]],
                            "coverage": {"complete": True, "missing": []}})
     return publish_report(task="比较两日收盘价", draft="", tool_results=receipts,
@@ -276,7 +276,7 @@ def test_source_notes_cannot_substitute_for_answering_the_task_in_the_body():
         assert "reader_body" not in payload  # One authoritative body, not two competing views.
         assert "[^source-1]:" not in payload["report"]
         assert payload["inferences"][0]["calculations"][0]["unit"] == "%"
-        return json.dumps({"reviews": [{"id": "answer", "supported": True, "reason": ""}],
+        return json.dumps({"reviews": [{**source_review_scope(payload), "id": "answer", "supported": True, "reason": ""}],
                            "coverage": {"complete": False, "missing": ["正文未回答收盘价变动比例"]}})
     result = publish_report(task="比较收盘价并给出变动比例", draft="", tool_results=RECEIPTS,
                             run_scope="body-coverage", call=call)
@@ -342,7 +342,7 @@ def revision_case(*, gap=False, unavailable=False, cancel=False, max_calls=4):
             raise TimeoutError("second review unavailable")
         if cancel:
             cancelled[0] = True
-        response = {"reviews": [{"id": "answer", "supported": True, "reason": ""}],
+        response = {"reviews": [{**source_review_scope(payload), "id": "answer", "supported": True, "reason": ""}],
                     "coverage": {"complete": revised, "missing": [] if revised else ["正文未写日期、收盘价及比例"],
                                  "repairable": not revised}}
         if gap:
@@ -407,7 +407,7 @@ def test_real_data_gap_does_not_retry_or_discard_an_independently_valid_body(inv
             doc = document(payload)
             doc["items"].append({"id": "revenue", "type": "gap", "section": "gaps", "text": "缺少营收资料"})
             return json.dumps(doc)
-        return json.dumps({"reviews": [{"id": "answer", "supported": True, "reason": ""}],
+        return json.dumps({"reviews": [{**source_review_scope(payload), "id": "answer", "supported": True, "reason": ""}],
             "coverage": {"complete": False, "missing": ["缺少营收"], "repairable": False},
             "gap_reviews": [{"id": "revenue", "status": "already_present" if invalid_gap_decision else "required",
                              "refs": [], "reason": ""}]})
@@ -478,7 +478,7 @@ def test_bound_report_fact_can_resolve_duplicate_gap_without_approving_prose(tmp
                  "text": "缺少营收资料。" if genuine_gap else "缺少002415在2026年11月10日的收盘价。"}]})
         reviews.append(payload)
         fact_id = payload["inferences"][0]["evidence"][0]["id"]
-        return json.dumps({"reviews": [{"id": "answer", "supported": supported,
+        return json.dumps({"reviews": [{**source_review_scope(payload), "id": "answer", "supported": supported,
             "reason": "资料支持所写内容。" if supported else "句子中的含义尚不能支持。"}],
             "coverage": {"complete": True, "missing": [], "gap_answer_ids": ['gap'] if genuine_gap else []},
             "gap_reviews": [{"id": "gap", "status": "required" if genuine_gap else "already_present",

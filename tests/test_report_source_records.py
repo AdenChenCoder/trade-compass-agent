@@ -5,7 +5,7 @@ from dataclasses import asdict
 
 import pytest
 
-from report_contract_helpers import report_facts, source_review_rows
+from report_contract_helpers import source_review_scope, report_facts, source_review_rows
 from trade_compass_agent.runtime.report_contract import Calculation, EvidenceCatalog, calculate
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
 from trade_compass_agent.runtime.report_transport import review_receipts, source_record_context, composition_source_records, source_reference_view
@@ -66,7 +66,7 @@ def test_estimate_contract_preserves_independent_dates_and_persisted_sources(tmp
         seen.append(payload)
         # Deliberately optimistic date approval, with the witness omitted: the
         # original bound observation must remain mandatory independently.
-        return json.dumps({'assessments': [{'id': s['id'], 'commitments': {
+        return json.dumps({'assessments': [{'temporal_scope': 'unspecified', 'id': s['id'], 'commitments': {
             'participant_activity': False, 'causal_relation': False}, 'time_evidence': [],
             'comparison': 'optimistic explicit model double', 'support_basis': 'direct',
             'checks': dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed'),
@@ -192,7 +192,7 @@ def test_only_numeric_binding_is_not_a_filter_on_review_sources_or_saved_reader(
         seen.append(payload)
         assert [(r['tool'], r['result']) for r in payload['receipts']] == receipts
         assert ''.join(s['text'] for s in payload['statements']) == expected
-        return json.dumps({'assessments': [{'id': s['id'], 'commitments': {
+        return json.dumps({'assessments': [{'temporal_scope': 'unspecified', 'id': s['id'], 'commitments': {
             'participant_activity': False, 'causal_relation': False}, 'time_evidence': s['bound_fact_refs'],
             'comparison': 'explicit transport double', 'support_basis': 'direct',
             'checks': dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed'),
@@ -224,7 +224,7 @@ def test_an_unselected_newer_receipt_cannot_replace_the_bound_observation_date()
                 'through': p['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
                 'observation_dates': ['task_now'], 'classifications': []}]} for p in payload['paragraphs']]})
         assert len(payload['receipts']) == 2
-        return json.dumps({'assessments': [{'id': s['id'], 'commitments': {
+        return json.dumps({'assessments': [{'temporal_scope': 'unspecified', 'id': s['id'], 'commitments': {
             'participant_activity': False, 'causal_relation': False}, 'time_evidence': [],
             'comparison': 'explicit optimistic double', 'support_basis': 'direct',
             'checks': dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed'),
@@ -259,7 +259,7 @@ def test_same_run_scan_record_can_anchor_unbound_prose_and_survive_reopening(tmp
         quote = next(f for ctx in payload['contexts'].values() for f in ctx['evidence'] if f['metric'] == 'read_result')
         assert quote['kind'] == 'quotation' and quote['value'] == receipts[0][1]
         assert quote['observed_at'] is None and quote['observed_date'] is None
-        return json.dumps({'assessments': [{'id': s['id'], 'commitments': {
+        return json.dumps({'assessments': [{'temporal_scope': 'unspecified', 'id': s['id'], 'commitments': {
             'participant_activity': False, 'causal_relation': False}, 'time_evidence': [quote['id']],
             'comparison': 'explicit transport double: this run scan result, not market-risk absence',
             'support_basis': 'direct', 'checks': dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed'),
@@ -450,7 +450,7 @@ def test_unselected_indicator_remains_addressable_without_changing_body_or_origi
         elif not 30 < float(rsi['value']) < 70:
             checks['support'] = 'contradicted'
         verdict = 'entailed' if set(checks.values()) == {'entailed'} else 'unknown'
-        return json.dumps({'assessments': [{'id': s['id'], 'commitments': {
+        return json.dumps({'assessments': [{'temporal_scope': 'unspecified', 'id': s['id'], 'commitments': {
             'participant_activity': False, 'causal_relation': False},
             'time_evidence': [rsi['id']] if rsi else [], 'comparison': 'explicit source-identity/value double',
             'support_basis': 'direct', 'checks': checks, 'verdict': verdict} for s in payload['statements']]})
@@ -490,7 +490,7 @@ def test_positive_current_qualitative_observation_needs_its_own_date_witness(
     def writer(system, user):
         p = json.loads(user)
         if 'schema' not in p:
-            return json.dumps({'reviews': [{'id': row['id'], 'supported': True,
+            return json.dumps({'reviews': [{**source_review_scope(p), 'id': row['id'], 'supported': True,
                 'reason': '乐观来源替身；原始日期约束仍独立适用。'} for row in p['inferences']],
                 'coverage': {'complete': True, 'missing': []}})
         return json.dumps({'schema_version': 1, 'items': [{'id': 'answer', 'type': 'paragraph',
@@ -506,7 +506,7 @@ def test_positive_current_qualitative_observation_needs_its_own_date_witness(
                 if row[1] == '/current_rsi'] if witness else []
         checks = dict.fromkeys(('identity_scope', 'time', 'quantity', 'support'), 'entailed')
         checks.update(time=reported_time, quantity='not_applicable')
-        return json.dumps({'assessments': [{'id': s['id'], 'commitments': {
+        return json.dumps({'assessments': [{'temporal_scope': 'unspecified', 'id': s['id'], 'commitments': {
             'participant_activity': False, 'causal_relation': False}, 'time_evidence': refs,
             'comparison': 'optimistic date/applicability double', 'support_basis': 'reasoned',
             'checks': checks, 'verdict': 'entailed'} for s in p['statements']]})

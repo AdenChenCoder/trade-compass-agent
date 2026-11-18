@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import source_review_scope, report_facts
 from trade_compass_agent.config import AppConfig
 from trade_compass_agent.llm.providers import LLMExecutionCancelled, llm_request_deadline
 from trade_compass_agent.runtime.learning import curate_turn_insight
@@ -28,7 +28,7 @@ def reply(system, user):
             {"id": "change", "type": "calculation", "section": "market",
              "operation": "change_pct", "refs": [f["id"] for f in facts]},
         ]})
-    return json.dumps({"reviews": [{"id": i["id"], "supported": True, "reason": ""}
+    return json.dumps({"reviews": [{**source_review_scope(payload), "id": i["id"], "supported": True, "reason": ""}
                                   for i in payload["inferences"]],
                        "coverage": {"complete": True, "missing": []}})
 
@@ -90,7 +90,7 @@ def test_internal_learning_revises_rejected_expression_within_same_budget_then_a
                 'text': '两个观察日之间收盘价走高。' if revised else '基于所给两日的数据，收盘价呈上升趋势。',
                 'refs': ['change']})
             return json.dumps(doc)
-        return json.dumps({'reviews': [{'id': 'direction', 'supported': revised,
+        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': 'direction', 'supported': revised,
             'reason': '' if revised else '模拟审查对表述范围的异议'}],
             'coverage': {'complete': True, 'missing': []}})
     path = learn(config, response, call)
@@ -120,7 +120,7 @@ def test_failed_internal_revision_retains_valid_facts_without_archiving(tmp_path
             doc['items'].append({'id': 'unsupported', 'section': 'assessment', 'type': 'inference',
                 'text': '未来一定上涨。', 'refs': ['change']})
             return json.dumps(doc)
-        return json.dumps({'reviews': [{'id': row['id'], 'supported': False, 'reason': '缺少支持'} for row in payload['inferences']],
+        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': False, 'reason': '缺少支持'} for row in payload['inferences']],
             'coverage': {'complete': False, 'missing': ['可保留观察'], 'repairable': False}})
     assert learn(config, response, call) is None and len(calls) == 4
     assert json.loads(tool_search_memory(config.memory_dir, '002415'))['results'] == []
@@ -144,7 +144,7 @@ def test_unchanged_internal_body_cannot_be_archived_by_resampling_review(tmp_pat
             doc['items'].append({'id': 'renamed' if revised else 'original', 'type': 'inference',
                 'section': 'assessment', 'text': '收盘价上升。', 'refs': ['change']})
             return json.dumps(doc)
-        return json.dumps({'reviews': [{'id': row['id'], 'supported': revised,
+        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': revised,
             'reason': '' if revised else '模拟首次核验未获支持'} for row in payload['inferences']],
             'coverage': {'complete': True, 'missing': []}})
     assert learn(config, response, call) is None and len(calls) == 4
@@ -202,7 +202,7 @@ def test_bad_curated_memory_is_not_indexed_even_with_valid_source(tmp_path, faul
             return json.dumps(doc)
         review = json.loads(reply(system, user))
         if fault == "unsupported":
-            review["reviews"] = [{"id": i["id"], "supported": False, "reason": "没有执行回执"}
+            review["reviews"] = [{**source_review_scope(payload), "id": i["id"], "supported": False, "reason": "没有执行回执"}
                                  for i in payload["inferences"]]
         return json.dumps(review)
     assert learn(config, response, call) is None
@@ -244,7 +244,7 @@ def test_scheduled_turn_passes_owned_evidence_to_real_archive_boundary(tmp_path,
     agent.initial_evidence = RECEIPTS
     agent.report_run_id = "scheduled-run"
     response = agent.run_turn("比较两个观察日", session_id="scheduler-learning-test")
-    assert response.verification["status"] == "complete"
+    assert response.verification["status"] == "not_reviewed"
     hits = json.loads(tool_search_memory(config.memory_dir, "002415"))["results"]
     assert len(hits) == 1 and hits[0]["scope"] == "insights"
     assert "22元/股" in hits[0]["content"] and "23元/股" in hits[0]["content"]

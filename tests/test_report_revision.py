@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from report_contract_helpers import report_facts, source_review_rows
+from report_contract_helpers import source_review_scope, report_facts, source_review_rows
 from trade_compass_agent.runtime.report_body import reader_source_units
 from trade_compass_agent.runtime.report_contract import EvidenceCatalog, ReportDocument, paragraph_text
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
@@ -44,7 +44,7 @@ def test_publisher_preserves_correct_observation_when_neighbor_is_repaired(tmp_p
                 'parts': ['002415在2025-01-02的收盘价为', [fact['id'], 'value_with_unit'],
                           '。' + original_error], 'refs': []}]})
         complete = price in payload['report']
-        return json.dumps({'reviews': [{'id': row['id'], 'supported': True, 'reason': '价格资料不足以识别交易主体。'}
+        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': True, 'reason': '价格资料不足以识别交易主体。'}
             for row in payload['inferences']], 'coverage': {'complete': complete,
             'missing': [] if complete else ['缺少日期及收盘价。'], 'repairable': not complete}})
 
@@ -74,7 +74,7 @@ def test_publisher_preserves_correct_observation_when_neighbor_is_repaired(tmp_p
         for statement in payload['statements']:
             observation = bool(statement['bound_fact_refs'])
             supported = observation or (len(reviews) == 2 and repair_status != 'unsupported')
-            row = {'id': statement['id'], 'verdict': 'entailed' if supported else 'unknown',
+            row = {'temporal_scope': 'unspecified', 'id': statement['id'], 'verdict': 'entailed' if supported else 'unknown',
                 'comparison': '与本轮价格资料核对。', 'support_basis': 'direct' if observation else 'reasoned',
                 'commitments': {'participant_activity': not observation and not supported, 'causal_relation': False},
                 'time_evidence': [], 'checks': {axis: 'entailed' if supported else 'unknown'
@@ -275,7 +275,7 @@ def test_retaining_a_failed_span_needs_fresh_consumer_review_even_beside_a_real_
             is_retained = s['text'] == retained
             supported = s['text'] != wrong and (not is_retained or len(factual) == 2)
             refs = [f['id'] for f in payload['contexts'][s['context_id']]['evidence'] if f['metric'] == 'close']
-            rows.append({'id': s['id'], 'comparison': '逐项核对所给价格及其支持范围。',
+            rows.append({'temporal_scope': 'unspecified', 'id': s['id'], 'comparison': '逐项核对所给价格及其支持范围。',
                 'verdict': 'entailed' if supported else 'unknown',
                 'support_basis': 'reasoned' if is_retained else 'direct',
                 # The final double optimistically approves the retained actor
@@ -329,7 +329,7 @@ def test_incomplete_coverage_uses_bounded_edits_and_separate_answer_addition(tmp
                 {'id': 'second-day', 'type': 'paragraph', 'section': 'market',
                  'parts': ['002415在2025-01-02收盘价为', [refs[1], 'value_with_unit'], '。'], 'refs': []}]})
         complete = '2025-01-02收盘价' in p['report']
-        return json.dumps({'reviews': [{'id': r['id'], 'supported': True, 'reason': 'Explicit source double.'}
+        return json.dumps({'reviews': [{**source_review_scope(p), 'id': r['id'], 'supported': True, 'reason': 'Explicit source double.'}
             for r in p['inferences']], 'coverage': {'complete': complete,
             'missing': [] if complete else ['第二日收盘价'], 'repairable': not complete}})
     def checker(system, user):

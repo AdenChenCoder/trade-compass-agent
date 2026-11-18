@@ -525,6 +525,15 @@ class EvidenceCatalog:
         records.extend({
             'status': 'runtime_business_contract_not_source_evidence',
             'source_method': 'relative_total_trading_activity',
+            'quantity_definition': {
+                'numerator': 'current_bar_volume',
+                'denominator': 'rolling_mean_volume_for_tool_comparison_window',
+                'reference_multiple': 1,
+                'comparison': {'below_reference': 'less_aggregate_volume_than_comparison_mean',
+                               'above_reference': 'more_aggregate_volume_than_comparison_mean'},
+                'nonpositive_denominator_fallback': 1,
+                'window': 'use_supplied_period_and_timeframe_never_invent_a_fixed_window',
+            },
             'permitted_inference': ['relative_total_trading_intensity',
                                    'bounded_price_volume_interpretation_with_owned_price_observations'],
             'not_established': ['trader_group_composition_or_absence', 'measured_buy_sell_side_volumes',
@@ -748,22 +757,27 @@ def render_document(document, rendered, findings):
     return "\n".join(lines).strip()
 
 
-def verification_result(findings, *, report="complete", execution="completed", data="available"):
+def verification_result(findings, *, report="complete", execution="completed", data="available",
+                        review_status="completed"):
     rows = [asdict(f) if isinstance(f, Finding) else f for f in findings]
     rows = [{**row, "sources": list(row.get("sources", []))} for row in rows]
     return {"schema_version": 1, "report": report, "execution": execution, "data": data,
-            "status": "complete" if not rows and report == "complete" and execution == "completed" and data == "available" else "incomplete",
+            "status": (("not_reviewed" if review_status == "not_requested" else "complete")
+                       if not rows and report == "complete" and execution == "completed" and data == "available"
+                       else "incomplete"),
+            "review_status": review_status,
             "findings": rows}
 
 
 def incomplete(result):
-    return bool(result) and result.get("status") != "complete"
+    return bool(result) and result.get("status") not in {"complete", "not_reviewed"}
 
 
 def combine_verifications(steps):
     """Aggregate typed outcomes without interpreting exception message text."""
     findings, children = [], {}
     report, execution, data = "complete", "completed", "available"
+    review_status = "completed"
     for step, output in steps.items():
         payload = output.get("data") if isinstance(output.get("data"), dict) else output
         verified = payload.get("verification") or output.get("verification")
@@ -775,6 +789,8 @@ def combine_verifications(steps):
             else:
                 continue
         children[step] = verified
+        if verified.get("review_status") == "not_requested" or verified.get("status") == "not_reviewed":
+            review_status = "not_requested"
         findings.extend({**row, "step_id": step} for row in verified.get("findings", []))
         if verified.get("report") != "complete":
             report = "partial"
@@ -784,4 +800,5 @@ def combine_verifications(steps):
             data = "insufficient"
     if not children:
         return {}
-    return {**verification_result(findings, report=report, execution=execution, data=data), "steps": children}
+    return {**verification_result(findings, report=report, execution=execution, data=data,
+                                   review_status=review_status), "steps": children}

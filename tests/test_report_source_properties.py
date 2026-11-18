@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import source_review_scope, report_facts
 from test_report_factual_role import assess
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
 
@@ -61,8 +61,8 @@ def test_source_property_is_checked_at_published_and_persisted_consumer(tmp_path
                     if f['metric'] == 'high']
         elif scene == 'foreign_ref':
             refs = ['not-owned']
-        return json.dumps({'reviews': [{'id': 'c0', 'supported': True, 'reason': '显式价格与来源一致。'},
-            {'id': 'c1', 'supported': scene != 'source_veto',
+        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': 'c0', 'supported': True, 'reason': '显式价格与来源一致。'},
+            {**source_review_scope(payload), 'id': 'c1', 'supported': scene != 'source_veto',
             'reason': '故意乐观的审查替身不能豁免来源种类与对象要求。', 'evidence_refs': refs}],
             'coverage': {'complete': True, 'missing': []}})
     def checker(system, user):

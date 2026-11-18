@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from report_contract_helpers import report_facts, source_review_rows
+from report_contract_helpers import source_review_scope, report_facts, source_review_rows
 from trade_compass_agent.runtime.report_contract import Calculation, EvidenceCatalog, calculate
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
 from trade_compass_agent.runtime.tools import stock_structure
@@ -27,7 +27,7 @@ def test_real_producer_cost_fields_reach_writer_and_saved_reader_without_becomin
         payload = json.loads(user)
         if 'schema' not in payload:
             assert payload['inferences'][0]['text'] == expected
-            return json.dumps({'reviews': [{'id': 'answer', 'supported': True, 'reason': 'explicit double'}],
+            return json.dumps({'reviews': [{**source_review_scope(payload), 'id': 'answer', 'supported': True, 'reason': 'explicit double'}],
                                'coverage': {'complete': True, 'missing': []}})
         facts = report_facts(payload)
         upper = next(f for f in facts if f['metric'] == 'cost_90_high')
@@ -116,7 +116,7 @@ def test_current_estimate_uses_its_source_date_despite_an_optimistic_model(monke
             return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': p['id'], 'parts': [{'temporal_scope': 'unspecified', 'participant_scope': 'none', 'distribution_basis': 'none',
                 'through': p['source_units'][-1]['id'], 'operation_code': 0, 'claim_kind': 'observation',
                 'observation_dates': ['task_now'], 'classifications': []}]} for p in payload['paragraphs']]})
-        return json.dumps({'assessments': [{'id': s['id'], 'commitments': {
+        return json.dumps({'assessments': [{'temporal_scope': 'unspecified', 'id': s['id'], 'commitments': {
             'participant_activity': False, 'causal_relation': False}, 'time_evidence': s['bound_fact_refs'],
             'comparison': 'explicit optimistic double', 'support_basis': 'direct',
             'checks': {k: 'entailed' for k in ('identity_scope', 'time', 'quantity', 'support')},

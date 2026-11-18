@@ -133,7 +133,7 @@ def test_scheduled_agent_session_fails_on_tool_round_limit(
 
     text = session.run("请复盘今天表现", timeout=5)
     assert session.degraded and session.verification["status"] == "incomplete"
-    assert "报告尚未完成核验" in text
+    assert "分析轮次上限" in text
 
 
 def test_scheduled_agent_session_forces_summary_on_tool_round_limit(
@@ -188,7 +188,8 @@ def test_scheduled_agent_session_forces_summary_on_tool_round_limit(
     text = session.run("请复盘今天表现", timeout=5)
 
     assert "盘后复盘结论" in text
-    assert chat_client.calls == 2 and session.degraded
+    assert chat_client.calls == 2 and not session.degraded
+    assert session.verification["status"] == "not_reviewed"
 
 
 def test_scheduled_agent_session_uses_extended_llm_timeout(
@@ -229,7 +230,7 @@ def test_scheduled_agent_session_uses_extended_llm_timeout(
 
     text = ScheduledAgentSession(config, job_id="morning_plan").run("生成计划", timeout=5)
 
-    assert "尚无本轮事实依据" in text
+    assert "定时任务分析完成。" in text
     assert captured_configs
     assert all(item.llm.timeout == 900.0 for item in captured_configs)
     assert config.llm.timeout == 60.0

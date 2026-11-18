@@ -17,11 +17,11 @@ def _curate_report_insight(*, config, user_message, response, run_id, call):
     from trade_compass_agent.ops.job_definition import StepOutput
     from trade_compass_agent.llm.providers import create_local_report_fact_check
     from trade_compass_agent.runtime.report_publication import (
-        persist_publication, publish_report, upstream_evidence,
+        persist_publication, review_durable_content, upstream_evidence,
     )
 
     if (not call or not run_id or response.degraded or response.interrupted
-            or response.verification.get("status") != "complete"
+            or response.verification.get("status") not in {"complete", "not_reviewed"}
             or not response.verification.get("artifact_id")):
         return None
     evidence, findings = upstream_evidence(config.data_dir, {
@@ -40,7 +40,7 @@ def _curate_report_insight(*, config, user_message, response, run_id, call):
             )
         return call(system, user)
 
-    publication = publish_report(
+    publication = review_durable_content(
         task="保留本轮资料中的一项有依据的研究观察或经验。",
         draft=f"用户问题：{user_message}\n本轮正文：{response.summary}",
         tool_results=evidence, current_tool_results=[],
@@ -86,39 +86,10 @@ def curate_turn_insight(
     if not config.allow_external_llm_memory:
         return None
 
-    # Scheduled/report turns must never fall back to free-text curation when
-    # evidence is unavailable. Ordinary interactive learning retains its contract.
-    if response.verification or report_run_id:
-        return _curate_report_insight(config=config, user_message=user_message,
-            response=response, run_id=report_run_id, call=report_call)
-
-    api_key_env = config.llm.api_key_env
-    provider = create_llm_provider(
-        provider=config.llm.provider,
-        model=config.llm.model,
-        api_key_env=api_key_env,
-        enabled=config.llm.provider not in {"", "disabled"},
-        data_dir=config.data_dir,
-        usage_timezone=config.scheduler.timezone,
-        config=config,
-    )
-    if provider.name == "disabled":
-        return None
-
-    prompt = (
-        "Summarize one notable trading insight from this agent turn in <=3 bullet points in Chinese. "
-        "If nothing worth remembering, reply with exactly: SKIP\n\n"
-        f"User: {user_message[:800]}\n\nAssistant: {response.summary[:1200]}"
-    )
-    try:
-        llm_response = provider.complete(LLMRequest(prompt=prompt, purpose="learning_curator", allow_memory=True))
-    except Exception:
-        return None
-    text = llm_response.text.strip()
-    if not text or text.upper() == "SKIP":
-        return None
-
-    return str(_write_summary(config, "insights", text))
+    # All automatic searchable memory requires a newly reviewed candidate from
+    # owned receipts. Conversation prose alone is never the fallback evidence.
+    return _curate_report_insight(config=config, user_message=user_message,
+        response=response, run_id=report_run_id, call=report_call)
 
 
 def compact_memory_summary(config: AppConfig) -> Path | None:

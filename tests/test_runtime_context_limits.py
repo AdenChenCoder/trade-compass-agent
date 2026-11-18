@@ -40,6 +40,10 @@ def test_context_error_never_restarts_a_turn_or_replays_completed_mutations(tmp_
             "id": f"old-{index}", "function": {"name":"search_memory", "arguments":"{}"}}]))
         agent.session_store.append(session, SessionMessageRecord(role="tool", name="search_memory",
             tool_call_id=f"old-{index}", content=json.dumps({"text":"old evidence "*500})))
+    from trade_compass_agent.runtime.report_publication import Publication
+    from trade_compass_agent.runtime.report_contract import verification_result
+    monkeypatch.setattr("trade_compass_agent.runtime.report_publication.review_durable_content",
+        lambda **kw: Publication(kw["draft"], verification_result([]), {"run_id": kw["run_id"]}))
     effects=[]
 
     def execute(name, arguments):

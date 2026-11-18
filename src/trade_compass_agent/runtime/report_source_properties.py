@@ -13,7 +13,12 @@ def distribution_requirements(statement):
 
 def source_requirements(statement, assessment=None):
     claims = [c for c in statement.get('classifications', [])
-            if c['property'] in {'distribution_basis', 'participant_activity'}]
+            if c['property'] in {'distribution_basis', 'participant_activity', 'source_capability'}]
+    scope = (assessment or {}).get('participant_scope')
+    if scope == 'source_limit' and not any(c['property'] == 'source_capability' for c in claims):
+        claims.append({'property': 'source_capability', 'value': 'participant_attribution_not_established'})
+    elif scope in {'attributed', 'excluded'} and not any(c['property'] == 'participant_activity' for c in claims):
+        claims.append({'property': 'participant_activity', 'value': scope})
     commitments = (assessment or {}).get('commitments', {})
     if (statement.get('assertion_kind') == 'actor_activity'
             or isinstance(commitments, dict) and commitments.get('participant_activity') is True):
@@ -53,6 +58,19 @@ def check_source_properties(statement, context, catalog, source_review, assessme
         result['claims'].append(check)
         if invalid:
             check.update(status='unavailable', reason='source_property_reference_unavailable')
+            continue
+        if requirement['property'] == 'source_capability':
+            # This is a positive proposition about an actually supplied method,
+            # not a negative proposition about market participants. A fresh
+            # source review must still support that exact reader proposition.
+            eligible = [m for m in methods if set(m['fact_refs']) & set(refs)
+                and set(m['not_established']) & {
+                    'trader_group_composition_or_absence', 'specific_participant_attribution'}]
+            witnessed = {m['entity'] for m in eligible}
+            check.update(reason='source_capability_witness_missing')
+            if entities and entities <= witnessed:
+                check.update(status='entailed', reason='owned_method_capability_admissible_not_semantic_approval',
+                    evidence=list(dict.fromkeys(ref for m in eligible for ref in m['fact_refs'] if ref in refs)))
             continue
         if requirement['property'] == 'participant_activity':
             # Anonymous activity/price observations are not group observations.

@@ -8,7 +8,9 @@ DIMENSIONS = ('identity_scope', 'time', 'quantity', 'support')
 DIMENSION_RESULTS = {'entailed', 'contradicted', 'unknown', 'not_applicable'}
 VERDICTS = {'entailed', 'contradicted', 'unknown'}
 CORE_FIELDS = {'id', 'comparison', 'checks', 'time_evidence', 'verdict'}
-OPTIONAL_FIELDS = ('support_basis', 'commitments')
+TEMPORAL_SCOPES = {'no_observation', 'unspecified', 'record_date', 'task_present',
+                   'record_and_present', 'unresolved'}
+OPTIONAL_FIELDS = ('support_basis', 'commitments', 'participant_scope', 'temporal_scope')
 
 
 def approved_source_review_ids(assessments, errors):
@@ -23,7 +25,7 @@ def approved_source_review_ids(assessments, errors):
             and row['verdict'] == 'entailed'}
 
 
-def assessments_with_availability(value, statement_ids):
+def assessments_with_availability(value, statement_ids, *, require_temporal_scope=False):
     """An invalid envelope/identity cannot be attributed; row faults can.
 
     Unavailable rows receive no semantic approval or completed rejection.
@@ -42,7 +44,25 @@ def assessments_with_availability(value, statement_ids):
     result, errors = [], {}
     for original in rows:
         row = deepcopy(original)
+        commitments = row.get('commitments')
+        if isinstance(commitments, dict) and isinstance(commitments.get('participant_activity'), str):
+            scope = commitments['participant_activity']
+            if scope in {'none', 'recorded_actor', 'attributed', 'excluded', 'source_limit'}:
+                row['participant_scope'] = scope
+                commitments['participant_activity'] = scope not in {'none', 'source_limit'}
         faults = []
+        if 'participant_scope' in row:
+            scope = row['participant_scope']
+            if (not isinstance(scope, str) or scope not in {
+                    'none', 'recorded_actor', 'attributed', 'excluded', 'source_limit'}
+                    or not isinstance(commitments, dict)
+                    or commitments.get('participant_activity') is not (scope not in {'none', 'source_limit'})):
+                faults.append('participant_scope')
+        if require_temporal_scope and 'temporal_scope' not in row:
+            faults.append('temporal_scope')
+        if 'temporal_scope' in row and (not isinstance(row['temporal_scope'], str)
+                or row['temporal_scope'] not in TEMPORAL_SCOPES):
+            faults.append('temporal_scope')
         if not CORE_FIELDS <= row.keys() or row.keys() - (CORE_FIELDS | set(OPTIONAL_FIELDS)):
             faults.append('fields')
         if (not isinstance(row.get('comparison'), str) or not row['comparison'].strip()

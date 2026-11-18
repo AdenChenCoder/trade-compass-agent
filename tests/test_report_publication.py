@@ -1,5 +1,5 @@
 import json
-from report_contract_helpers import report_facts
+from report_contract_helpers import source_review_scope, report_facts
 from types import SimpleNamespace
 
 import pytest
@@ -81,7 +81,7 @@ def call_model(*, inference=False, supported=True, missing=(), invalid=False, un
             return json.dumps(compose(payload, inference=inference))
         if unavailable:
             raise TimeoutError("review unavailable")
-        return json.dumps({"reviews": [{"id": "judgment", "supported": supported,
+        return json.dumps({"reviews": [{**source_review_scope(payload), "id": "judgment", "supported": supported,
                                        "reason": "" if supported else "价格不能证明上涨原因"}] if inference else [],
                            "coverage": {"complete": not missing, "missing": list(missing)}})
     return call, calls
@@ -313,7 +313,7 @@ def test_judgment_can_use_verified_calculation_without_losing_original_evidence(
         assert [f["value"] for f in judgment["evidence"]] == ["34.83", "34.25"]
         assert all(f["observed_at"] and f["pointer"] and f["receipt_id"] for f in judgment["evidence"])
         assert payload["receipts"][0]["result"] == receipts[0][1]
-        return json.dumps({"reviews": [{"id": "direction", "supported": supported,
+        return json.dumps({"reviews": [{**source_review_scope(payload), "id": "direction", "supported": supported,
                                       "reason": "" if supported else "不能据此推断后续方向"}],
                            "coverage": {"complete": True, "missing": []}})
 
@@ -382,7 +382,7 @@ def test_observation_reference_retains_source_and_independent_semantic_review(fi
         assert len(evidence) == 1 and evidence[0]['value'] == '6.6'
         assert evidence[0]['pointer'] == '/bars/0/close'
         assert payload['receipts'][0]['result'] == RECEIPTS[0][1]
-        return json.dumps({'reviews': [{'id': 'judgment', 'supported': supported,
+        return json.dumps({'reviews': [{**source_review_scope(payload), 'id': 'judgment', 'supported': supported,
                          'reason': '' if supported else '依据不足'}],
                          'coverage': {'complete': True, 'missing': []}})
     result = publish_report(task='列出价格及限制', draft='', tool_results=RECEIPTS, run_scope='observation', call=call)

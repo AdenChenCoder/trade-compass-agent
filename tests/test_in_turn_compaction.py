@@ -205,7 +205,7 @@ def test_live_turn_compacts_after_tools_without_replaying_order_or_losing_histor
         "买入000001一百股，只执行一次，然后查询市场四次", session_id="scheduler-live-compaction"
     )
     assert "exec-once" in reply.summary and client.calls == 6 and len(summaries) == 1
-    assert client.publication_calls == 2 and reply.verification['report'] == 'complete'
+    assert client.publication_calls == 0 and reply.verification['status'] == 'not_reviewed'
     assert seen.count("place_paper_trade") == 1 and seen.count("get_market_pulse") == 4
     session = agent.session_store.load("scheduler-live-compaction")
     assert sum(m.role == "user" for m in session.messages) == 1

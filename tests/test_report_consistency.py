@@ -149,8 +149,7 @@ def test_next_agent_reads_execution_quantity_and_persists_receipt_table(valued_s
     else:
         agent = AgentLoop(config=valued_stack.config, stack=valued_stack, session_store=store)
         text = agent.run_turn("核对今天的成交与持仓").summary
-    receipt_text = ("**515220 · 卖出**  \n  数量：1500；成交价：1.283" if scheduled
-                    else "| 1500 | 1.283 | trade-2 |")
+    receipt_text = "| 1500 | 1.283 | trade-2 |"
     assert receipt_text in text
     assert text.count("trade-2") == 1
     assert "数据覆盖不足" not in text  # A factual receipt is not a new recommendation.

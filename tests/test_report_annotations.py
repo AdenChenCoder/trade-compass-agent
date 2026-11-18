@@ -3,8 +3,9 @@ import json
 
 import pytest
 
-from report_contract_helpers import report_facts, source_review_rows
+from report_contract_helpers import source_review_scope, report_facts, source_review_rows
 from trade_compass_agent.runtime.report_publication import publish_report, persist_publication
+from test_report_factual_role import assess
 
 
 @pytest.mark.parametrize('scene,accepted', [('plan', True), ('named_plan', True), ('opinion', True), ('observation', False),
@@ -29,7 +30,7 @@ def test_time_only_annotation_disagreement_preserves_empirical_requirements(scen
         if scene == 'explicit_date':
             # The explicit source double compares the authored historical day
             # with the supplied prior-day record; no annotation may erase it.
-            result['reviews'] = [{'id': row['id'], 'supported': False,
+            result['reviews'] = [{**source_review_scope(payload), 'id': row['id'], 'supported': False,
                 'reason': '所给资料为2025-01-01，不能确认原文声称的2025-01-02观察。'}
                 for row in payload['inferences']]
         if 'annotation_review' in payload:
@@ -101,7 +102,7 @@ def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obliga
 
     def row(identifier, *, target=False, repaired=False):
         pure = target and scene in {'opinion', 'actor_na', 'evidence_limit'}
-        return {'id': identifier, 'comparison': '独立核对原文承诺与原始资料。', 'verdict': 'entailed',
+        return {'temporal_scope': 'unspecified', 'id': identifier, 'comparison': '独立核对原文承诺与原始资料。', 'verdict': 'entailed',
             'support_basis': 'not_applicable' if target and scene in {'actor_na', 'evidence_limit'} and not repaired else 'reasoned' if target else 'direct', 'time_evidence': [],
             'commitments': {'participant_activity': target and (scene in {'actor', 'actor_na'} or scene == 'evidence_limit' and not repaired),
                 'causal_relation': target and scene in {'cause', 'event_interpretation'} and not (repaired and accepted)},
@@ -187,3 +188,89 @@ def test_annotation_repair_preserves_supported_prose_and_actual_empirical_obliga
     saved = json.loads((tmp_path/'report_artifacts'/(reference['artifact_id']+'.json')).read_text())
     assert saved['document'] == result.artifact['document'] and saved['published_text'] == result.text
     assert saved['receipts'] == result.artifact['receipts']
+
+
+@pytest.mark.parametrize('empirical', [False, True])
+@pytest.mark.parametrize('resolved_scope', ['no_observation', 'task_present', None])
+def test_explicit_clock_disagreement_requires_fresh_semantics_not_a_blanket_approval(empirical, resolved_scope):
+    text = '002415当前收盘价偏低。' if empirical else '依据所给资料，我倾向继续持有002415。'
+    seen = []
+    def writer(system, user):
+        p = json.loads(user)
+        if 'schema' in p:
+            price = next(f['id'] for f in report_facts(p) if f['metric'] == 'close')
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'view', 'type': 'paragraph',
+                'section': 'assessment', 'parts': [text], 'refs': [price]}]})
+        result = {'reviews': source_review_rows(p), 'coverage': {'complete': True, 'missing': []}}
+        if 'annotation_review' in p:
+            seen.append(p['annotation_review'])
+            fresh = assess(p['annotation_review'])['assessments'][0]
+            fresh.update(temporal_scope=resolved_scope or 'unspecified', support_basis='reasoned')
+            fresh['checks'].update(identity_scope='entailed', quantity='not_applicable', time='entailed' if empirical else 'not_applicable')
+            if resolved_scope is None:
+                fresh.pop('temporal_scope')
+            if empirical:
+                fresh['time_evidence'] = [f['id'] for c in p['annotation_review']['contexts'].values()
+                    for f in c['evidence'] if f['metric'] == 'close']
+            result['annotation_resolutions'] = [{'id': fresh['id'], 'empirical_present': empirical, 'assessment': fresh}]
+        return json.dumps(result)
+    def checker(system, user):
+        p = json.loads(user)
+        if 'paragraphs' in p:
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': r['id'], 'parts': [{
+                'through': r['source_units'][-1]['id'], 'distribution_basis': 'none', 'temporal_scope': 'task_present',
+                'participant_scope': 'none', 'operation_code': 0, 'claim_kind': 'judgment',
+                'observation_dates': ['task_now'], 'classifications': []}]} for r in p['paragraphs']]})
+        assert all('body_temporal_scope' not in r for r in p['statements'])
+        value = assess(p, 'unknown')
+        for row in value['assessments']:
+            row.update(temporal_scope='no_observation', support_basis='reasoned')
+            row['checks'].update(identity_scope='entailed', quantity='not_applicable', support='entailed', time='unknown')
+        return json.dumps(value)
+    report = publish_report(task='给出研究判断。', draft='', tool_results=[('get_bars', json.dumps({'symbol': '002415', 'bars': [{'timestamp': '2025-01-02', 'close': 22}]}))],
+        run_scope='judgment-clock-disagreement', call=writer, fact_review_call=checker,
+        reference_date='2025-01-03', max_calls=2)
+    assert seen
+    accepted = not empirical and resolved_scope == 'no_observation'
+    assert (report.verification['status'] == 'complete') is accepted
+    assert (text in report.text) is accepted
+
+
+@pytest.mark.parametrize('source', ['snapshot', 'fresh_market', 'stale_market', 'undated_market'])
+@pytest.mark.parametrize('proof', ['valid', 'foreign'])
+def test_current_bound_clock_repair_keeps_actual_source_dates(source, proof):
+    snapshot = source == 'snapshot'
+    receipts = [('analyze_portfolio', json.dumps({'account': 'paper', 'positions': [{'symbol': '002415', 'quantity': 100}]}))] if snapshot else [
+        ('sina_realtime_quote', json.dumps({'symbol': '002415', 'price': 22,
+            **({'timestamp': '2025-01-02' if source == 'fresh_market' else '2025-01-01'} if source != 'undated_market' else {})}))]
+    def writer(system, user):
+        p = json.loads(user)
+        if 'schema' in p:
+            ref = next(f['id'] for f in report_facts(p) if f['metric'] == ('quantity' if snapshot else 'price'))
+            return json.dumps({'schema_version': 1, 'items': [{'id': 'current', 'type': 'paragraph', 'section': 'market',
+                'parts': ['本轮账户002415持仓为' if snapshot else '002415当前报价为', [ref, 'value_with_unit'], '。'], 'refs': []}]})
+        result = {'reviews': source_review_rows(p), 'coverage': {'complete': True, 'missing': []}}
+        if 'annotation_review' in p:
+            fresh = assess(p['annotation_review'])['assessments'][0]
+            refs = [f['id'] for c in p['annotation_review']['contexts'].values() for f in c['evidence']
+                    if f['metric'] == ('quantity' if snapshot else 'price')]
+            fresh.update(temporal_scope='task_present', time_evidence=refs if proof == 'valid' else ['not-owned'])
+            result['annotation_resolutions'] = [{'id': fresh['id'], 'empirical_present': True, 'assessment': fresh}]
+        return json.dumps(result)
+    def checker(system, user):
+        p = json.loads(user)
+        if 'paragraphs' in p:
+            return json.dumps({'quantity_issues': [], 'paragraphs': [{'id': r['id'], 'parts': [{
+                'through': r['source_units'][-1]['id'], 'distribution_basis': 'none', 'temporal_scope': 'task_present',
+                'participant_scope': 'none', 'operation_code': 0, 'claim_kind': 'observation',
+                'observation_dates': ['task_now', 'unresolved'], 'classifications': []}]} for r in p['paragraphs']]})
+        value = assess(p)
+        for row in value['assessments']:
+            row['temporal_scope'] = 'task_present'
+        return json.dumps(value)
+    report = publish_report(task='核对本轮账户快照与当前记录。', draft='', tool_results=receipts,
+        run_scope='bound-clock-disagreement', call=writer, fact_review_call=checker,
+        reference_date='2025-01-02', max_calls=2)
+    accepted = source in {'snapshot', 'fresh_market'} and proof == 'valid'
+    assert (report.verification['status'] == 'complete') is accepted
+    assert ('100股' in report.artifact['reader_body'] if snapshot else '22元/股' in report.artifact['reader_body']) is accepted

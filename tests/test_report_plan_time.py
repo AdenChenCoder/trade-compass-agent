@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from report_contract_helpers import report_facts
+from report_contract_helpers import source_review_scope, report_facts
 from trade_compass_agent.runtime.report_publication import persist_publication, publish_report
 
 
@@ -50,7 +50,7 @@ def _publish(tmp_path, text, *, fault=None, premise=None):
              'distribution': '以后关注前期成交密集区附近的压力。'}
     text = texts.get(premise, text)
     def assessment(identifier, *, target=False, repaired=False):
-        return {'id': identifier, 'comparison': '显式模型替身，逐项核对原文承诺。',
+        return {'temporal_scope': 'unspecified', 'id': identifier, 'comparison': '显式模型替身，逐项核对原文承诺。',
             'verdict': 'unknown' if repaired and fault == 'unknown' else 'entailed',
             'support_basis': 'reasoned' if target else 'direct',
             'commitments': {'participant_activity': target and premise == 'actor', 'causal_relation': False},
@@ -73,7 +73,7 @@ def _publish(tmp_path, text, *, fault=None, premise=None):
                 {'id': 'good', 'section': 'market', 'type': 'paragraph',
                  'parts': ['002415在2025-01-01的收盘价为', [price, 'value_with_unit'], '。'], 'refs': []},
                 {'id': 'plan', 'section': 'assessment', 'type': 'paragraph', 'parts': parts, 'refs': []}]})
-        value = {'reviews': [{'id': row['id'], 'supported': True, 'reason': '冻结的历史价格与原始资料一致。'}
+        value = {'reviews': [{**source_review_scope(payload), 'id': row['id'], 'supported': True, 'reason': '冻结的历史价格与原始资料一致。'}
                              for row in payload['inferences']],
                  'coverage': {'complete': True, 'missing': []}}
         if 'annotation_review' in payload:

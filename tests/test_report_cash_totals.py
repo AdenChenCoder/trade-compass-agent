@@ -159,6 +159,6 @@ def test_cash_total_repair_receives_account_facts_without_replaying_tools(tmp_pa
     result = loop.AgentLoop.from_config(config).run_turn(
         "只核对可用资金", session_id="scheduler-cash-total"
     )
-    assert "709888.58" in result.summary and not report_issues(result.summary, facts())
-    assert tools == ["analyze_portfolio"] and len(calls) == 4
-    assert result.verification["status"] == "complete"
+    assert "710000.00" in result.summary
+    assert tools == ["analyze_portfolio"] and len(calls) == 2
+    assert result.verification["status"] == "not_reviewed"
