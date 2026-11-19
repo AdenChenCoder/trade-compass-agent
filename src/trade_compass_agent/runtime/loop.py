@@ -390,7 +390,7 @@ class AgentLoop:
         # Extract stock symbols (6-digit codes)
         all_text = final_text + " ".join(r for _, r in tool_calls_log[:10])
         symbols = list(dict.fromkeys(_re.findall(r"\b[036]\d{5}\b", all_text)))[:20]
-        turn_count = sum(1 for m in session.messages if m.role == "user")
+        turn_count = sum(1 for m in session.messages if m.role == "user" and m.name != SESSION_STATE_NAME)
         preview = final_text[:300] if final_text else ""
 
         self._session_summaries.upsert(
@@ -741,7 +741,9 @@ class AgentLoop:
                     messages[-1] = replace(messages[-1], image_paths=list(user_record.image_paths))
                 pending_state = messages[-2] if len(messages) >= 2 and messages[-2].name == SESSION_STATE_NAME else None
                 if pending_state is not None and not any(pending_state is item for item in history):
-                    self.session_store.append_model_context(session, SessionMessageRecord(
+                    # Keep the public transcript and model checkpoint aligned so a
+                    # legacy native cursor can resume. The chat API hides this record.
+                    self.session_store.append(session, SessionMessageRecord(
                         role="user", content=pending_state.content, timestamp=datetime.now(),
                         name=SESSION_STATE_NAME,
                     ))
@@ -758,7 +760,7 @@ class AgentLoop:
                 self.session_store.append(session, user_record)
             _check_cancelled()
             if not session.title:
-                user_count = sum(1 for item in session.messages if item.role == "user")
+                user_count = sum(1 for item in session.messages if item.role == "user" and item.name != SESSION_STATE_NAME)
                 if user_count == 1:
                     if self.config.agent.llm_session_titles:
                         self.session_store.set_title(session, suggest_session_title(message, self.config))

@@ -601,7 +601,7 @@ def get_agent_session(session_id: str) -> SessionDetailPayload:
         messages=[
             _session_message_payload(message)
             for message in session.messages
-            if message.role in {"user", "assistant"}
+            if message.role in {"user", "assistant"} and message.name != "session_state"
         ],
     )
 
@@ -651,7 +651,7 @@ def update_agent_session(session_id: str, body: SessionUpdateRequest) -> Session
         messages=[
             _session_message_payload(message)
             for message in session.messages
-            if message.role in {"user", "assistant"}
+            if message.role in {"user", "assistant"} and message.name != "session_state"
         ],
     )
 

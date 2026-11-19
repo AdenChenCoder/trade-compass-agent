@@ -49,7 +49,7 @@ def test_uploaded_images_reach_native_turn_and_survive_restart(native_config, mo
     sid = first.json()["session_id"]
     loop = AgentLoop.from_config(native_config)
     session = loop.session_store.load(sid)
-    paths = session.messages[0].image_paths
+    paths = next(m for m in session.messages if m.role == "user" and m.name != "session_state").image_paths
     assert len(set(paths)) == 2
     first_turn = next(f["params"] for f in frames(protocol) if f.get("method") == "turn/start")
     assert [v["path"] for v in first_turn["input"] if v["type"] == "localImage"] == paths
@@ -73,7 +73,7 @@ def test_uploaded_images_reach_native_turn_and_survive_restart(native_config, mo
     turns = [f["params"] for f in frames(protocol) if f.get("method") == "turn/start"]
     assert turns[0]["threadId"] != turns[-1]["threadId"]
     assert [v["path"] for v in turns[-1]["input"] if v["type"] == "localImage"] == paths
-    assert loop.session_store.load(sid).messages[0].image_paths == paths
+    assert next(m.image_paths for m in loop.session_store.load(sid).messages if m.role == "user" and m.image_paths) == paths
     page = client.get(f"/api/agent/sessions/{sid}/messages").json()
     assert page["messages"][0]["content"].startswith("比较两张图") and "[附件·图片 2]" in page["messages"][0]["content"]
 
@@ -242,5 +242,5 @@ def test_native_chat_images_do_not_require_auxiliary_vision(native_config, monke
     monkeypatch.setattr(AgentLoop, "_maybe_background_review", lambda *a, **kw: None)
     loop = AgentLoop.from_config(config)
     result = loop.run_turn("看图，不调用工具", attachments=[{"type": "image", "content": encoded_image()}])
-    assert loop.session_store.load(result.session_id).messages[0].image_paths
+    assert any(m.image_paths for m in loop.session_store.load(result.session_id).messages if m.role == "user")
     assert config.llm.vision_provider == "lmstudio" and config.llm.vision_model == "qwen3.8-27b"

@@ -208,7 +208,7 @@ def test_live_turn_compacts_after_tools_without_replaying_order_or_losing_histor
     assert client.publication_calls == 0 and reply.verification['status'] == 'not_reviewed'
     assert seen.count("place_paper_trade") == 1 and seen.count("get_market_pulse") == 4
     session = agent.session_store.load("scheduler-live-compaction")
-    assert sum(m.role == "user" for m in session.messages) == 1
+    assert sum(m.role == "user" and m.name != "session_state" for m in session.messages) == 1
     assert latest_persisted_summary(
         [m.to_chat_message() for m in agent.session_store.load_context(session)]
     )

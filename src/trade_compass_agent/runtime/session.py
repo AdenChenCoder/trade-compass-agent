@@ -245,7 +245,7 @@ class SessionStore:
                     if isinstance(meta_title, str) and meta_title.strip():
                         title = meta_title.strip()
                     continue
-                if raw.get("role") not in {"user", "assistant"}:
+                if raw.get("role") not in {"user", "assistant"} or raw.get("name") == "session_state":
                     continue
 
                 timestamp_raw = raw.get("timestamp")
@@ -527,7 +527,7 @@ class SessionStore:
     def maybe_set_title_from_first_message(self, session: AgentSession, message: str) -> None:
         if session.title:
             return
-        user_messages = [m for m in session.messages if m.role == "user"]
+        user_messages = [m for m in session.messages if m.role == "user" and m.name != "session_state"]
         if len(user_messages) != 1:
             return
         self.set_title(session, derive_session_title(message))
@@ -557,7 +557,7 @@ class SessionStore:
             if before is not None and (session.updated_at.isoformat(), session_id) >= before:
                 continue
             display_messages = [m for m in session.messages if m.role in {"user", "assistant"}]
-            preview = next((m.content[:120] for m in display_messages if m.role == "user"), None)
+            preview = next((m.content[:120] for m in display_messages if m.role == "user" and m.name != "session_state"), None)
             summaries.append(
                 SessionSummary(
                     session_id=session.session_id,

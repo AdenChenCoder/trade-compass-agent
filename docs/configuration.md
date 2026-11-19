@@ -305,8 +305,9 @@ default reasoning effort is retained.
 The session freezes its system instructions and tool definitions on first use.
 User rules, the skills catalog, memory and the simulated-trading flag are
 appended as later session-state messages when they change, so those updates do
-not rewrite the cached beginning. A new session picks up edits to that frozen
-prefix. The final tool round and the no-tool closing answer still send the same
+not rewrite the cached beginning. Those records stay in the transcript so a
+native cursor can resume, and the chat history hides them. A new session picks
+up edits to that frozen prefix. The final tool round and the no-tool closing answer still send the same
 tool definitions, with tool choice set so the model must answer. Multiple
 specialists on LM Studio or Ollama run one after another; every specialist still
 runs. Other providers keep parallel dispatch. Serial local experts take longer
