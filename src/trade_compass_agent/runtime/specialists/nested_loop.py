@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from trade_compass_agent.llm.providers import ChatClient, ChatMessage, check_execution_active
+from trade_compass_agent.llm.providers import ChatClient, ChatMessage, check_execution_active, llm_tool_choice
 from trade_compass_agent.runtime.activity_events import (
     build_tool_end_payload,
     build_tool_start_payload,
@@ -66,7 +66,8 @@ def run_react_loop(
     for _round in range(max_rounds):
         try:
             is_last = (_round == max_rounds - 1)
-            completion = client.complete(messages, tools=None if is_last else tool_schemas)
+            with llm_tool_choice("none" if is_last else None):
+                completion = client.complete(messages, tools=tool_schemas)
         except TurnInterruptedError:
             raise
         except Exception as exc:
@@ -75,7 +76,7 @@ def run_react_loop(
                 {"error": f"LLM call failed: {type(exc).__name__}: {exc}"},
                 ensure_ascii=False,
             )
-        if completion.tool_calls:
+        if completion.tool_calls and not is_last:
             assistant_tool_calls = [
                 {
                     "id": tc.id,
@@ -89,6 +90,7 @@ def run_react_loop(
                     role="assistant",
                     content=completion.content or "",
                     tool_calls=assistant_tool_calls,
+                    reasoning_content=getattr(completion, "reasoning_content", "") or "",
                 )
             )
             for tc in completion.tool_calls:

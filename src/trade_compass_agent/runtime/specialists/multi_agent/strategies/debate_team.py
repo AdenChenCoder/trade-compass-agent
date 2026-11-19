@@ -11,7 +11,10 @@ from typing import Any
 
 from trade_compass_agent.config import AppConfig
 from trade_compass_agent.domain.signals import SignalRating, TradingSignal, parse_signal_rating
-from trade_compass_agent.llm.providers import ChatClient, ChatMessage, LLMExecutionCancelled, check_execution_active, create_chat_client
+from trade_compass_agent.llm.providers import (
+    ChatClient, ChatMessage, LLMExecutionCancelled, check_execution_active,
+    create_chat_client, is_local_model_provider,
+)
 from trade_compass_agent.runtime.exceptions import AgentUnavailableError, TurnInterruptedError
 from trade_compass_agent.runtime.specialists.multi_agent.assets import (
     MultiAgentPlanAsset,
@@ -281,7 +284,11 @@ def _run_research_stage(
         )
         return agent.role or agent.id, output
 
-    with ThreadPoolExecutor(max_workers=max(1, min(len(agents), 4))) as pool:
+    local_provider = is_local_model_provider(
+        getattr(getattr(getattr(state, "config", None), "llm", None), "provider", "")
+    )
+    worker_limit = 1 if local_provider else max(1, min(len(agents), 4))
+    with ThreadPoolExecutor(max_workers=worker_limit) as pool:
         futures = [pool.submit(copy_context().run, _run, agent) for agent in agents]
         for future in as_completed(futures):
             try:

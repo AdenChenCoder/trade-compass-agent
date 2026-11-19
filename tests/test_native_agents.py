@@ -162,7 +162,7 @@ def test_native_turn_uses_business_tools_and_retains_history_after_restart(nativ
     latest = prompts[-1]["input"][0]["text"]
     assert "查询茅台行情" not in latest and "解释刚才的结果" in latest
     assert "基于工具结果" in latest
-    assert len([m for m in restarted.session_store.load(result.session_id).messages if m.role == "user"]) == 2
+    assert len([m for m in restarted.session_store.load(result.session_id).messages if m.role == "user" and m.name != "session_state"]) == 2
     assert not list((native_config.data_dir / "native_agents").glob("turn-*"))
 
 

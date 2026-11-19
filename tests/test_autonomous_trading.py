@@ -280,7 +280,7 @@ def test_agent_receives_failed_trade_and_retries_in_existing_session(stack, monk
                 return result
             self.count += 1
             if self.count == 1:
-                assert "全局 Agent 自主交易：开启" in messages[0].content
+                assert any("全局 Agent 自主交易：开启" in (message.content or "") for message in messages)
                 quantity = 200
             elif self.count == 2:
                 assert json.loads(messages[-1].content)["code"] == "insufficient_funds"

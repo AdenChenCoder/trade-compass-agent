@@ -179,7 +179,7 @@ def test_compression_change_reaches_next_api_turn_without_changing_history(clien
         assert second.status_code == 200
         assert second.json()["summary"] == "98304"
         stored = agent_api._session_store().load(session_id)
-        assert [m.content for m in stored.messages if m.role == "user"] == [
+        assert [m.content for m in stored.messages if m.role == "user" and m.name != "session_state"] == [
             "Check context allocation.", "Check it again.",
         ]
     finally:

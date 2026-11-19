@@ -13,9 +13,12 @@ from trade_compass_agent.runtime.activity_events import (
     build_tool_end_payload,
     build_tool_start_payload,
 )
-from trade_compass_agent.llm.providers import ChatMessage, LLMExecutionCancelled, create_chat_client, is_lmstudio_qwen
+from trade_compass_agent.llm.providers import (
+    ChatMessage, LLMExecutionCancelled, create_chat_client, is_lmstudio_qwen, llm_tool_choice,
+)
 from trade_compass_agent.llm.usage import llm_usage_context
-from trade_compass_agent.runtime.context import ContextBuilder, _sanitize_tool_calls
+from trade_compass_agent.runtime.bootstrap import build_stable_system_prompt
+from trade_compass_agent.runtime.context import SESSION_STATE_NAME, ContextBuilder, _sanitize_tool_calls
 from trade_compass_agent.runtime.compression.budget import TokenBudget
 from trade_compass_agent.runtime.compression.summarizer import (
     latest_persisted_summary,
@@ -387,7 +390,7 @@ class AgentLoop:
         # Extract stock symbols (6-digit codes)
         all_text = final_text + " ".join(r for _, r in tool_calls_log[:10])
         symbols = list(dict.fromkeys(_re.findall(r"\b[036]\d{5}\b", all_text)))[:20]
-        turn_count = sum(1 for m in session.messages if m.role == "user")
+        turn_count = sum(1 for m in session.messages if m.role == "user" and m.name != SESSION_STATE_NAME)
         preview = final_text[:300] if final_text else ""
 
         self._session_summaries.upsert(
@@ -458,6 +461,12 @@ class AgentLoop:
         from trade_compass_agent.runtime.bootstrap import build_trading_policy
 
         autonomous_trading_enabled = AutonomousTradingStore(self.config.data_dir).read()
+        session = self.session_store.get_or_create(session_id)
+        frozen_system, tool_schemas = self.session_store.frozen_prompt_prefix(
+            session.session_id,
+            system=build_stable_system_prompt(),
+            tools=self._tools.schemas,
+        )
         context = ContextBuilder(
             memory_dir=self.config.memory_dir,
             skills=skills,
@@ -470,8 +479,8 @@ class AgentLoop:
                 autonomous_trading_enabled,
                 interactive=self.memory_actor == "agent",
             ),
+            frozen_system=frozen_system,
         )
-        session = self.session_store.get_or_create(session_id)
         context_start = len(session.messages)
         report_run_id = self.report_run_id or uuid4().hex
         from trade_compass_agent.llm.native_session import NativeConversation
@@ -507,7 +516,9 @@ class AgentLoop:
             message, attachments=enriched[len(message.strip()):].strip() if attachments else "",
             previous_reply=next((m.content for m in reversed(history) if m.role == "assistant" and m.content), ""),
         )
-        messages = context.build_messages(history, enriched)
+        messages = context.build_messages(
+            history, enriched, session_state=context.current_session_state(),
+        )
 
         # Phase 0: token budget check — Phase 1 trim (in ContextBuilder) + Phase 2 summarize
         window = getattr(client, "context_window", None)
@@ -565,6 +576,7 @@ class AgentLoop:
                                     name=item.name,
                                     tool_calls=list(item.tool_calls or []),
                                     image_paths=list(item.image_paths),
+                                    reasoning_content=item.reasoning_content,
                                 )
                                 for item in (compacted_messages[1:] if in_turn else compacted_messages[1:-1])
                             ]
@@ -602,6 +614,7 @@ class AgentLoop:
 
         sections: list[TurnSection] = []
         final_text = ""
+        final_reasoning = ""
         published_response = None
         max_rounds = self.config.agent.max_tool_rounds
         incomplete_reason = ""
@@ -726,7 +739,15 @@ class AgentLoop:
                     from trade_compass_agent.llm.native_images import save_image
                     user_record.image_paths = [save_image(att.content, att.url, self.config) for att in native_images]
                     messages[-1] = replace(messages[-1], image_paths=list(user_record.image_paths))
-                compact_context(in_turn=False, request_tools=None if self.config.agent.max_tool_rounds == 1 else self._tools.schemas)
+                pending_state = messages[-2] if len(messages) >= 2 and messages[-2].name == SESSION_STATE_NAME else None
+                if pending_state is not None and not any(pending_state is item for item in history):
+                    # Keep the public transcript and model checkpoint aligned so a
+                    # legacy native cursor can resume. The chat API hides this record.
+                    self.session_store.append(session, SessionMessageRecord(
+                        role="user", content=pending_state.content, timestamp=datetime.now(),
+                        name=SESSION_STATE_NAME,
+                    ))
+                compact_context(in_turn=False, request_tools=tool_schemas)
                 if native:
                     # A rewritten application checkpoint must reach the next
                     # native turn instead of retaining stale vendor history.
@@ -739,7 +760,7 @@ class AgentLoop:
                 self.session_store.append(session, user_record)
             _check_cancelled()
             if not session.title:
-                user_count = sum(1 for item in session.messages if item.role == "user")
+                user_count = sum(1 for item in session.messages if item.role == "user" and item.name != SESSION_STATE_NAME)
                 if user_count == 1:
                     if self.config.agent.llm_session_titles:
                         self.session_store.set_title(session, suggest_session_title(message, self.config))
@@ -748,7 +769,7 @@ class AgentLoop:
             if native:
                 self._emit("status", {"text": "思考中…"})
                 completion = client.run_agent(
-                    messages, tools=self._tools.schemas, execute_tool=native_tool,
+                    messages, tools=tool_schemas, execute_tool=native_tool,
                     on_delta=native_delta, is_cancelled=is_cancelled,
                     on_tool_interrupted=native_tool_result,
                     conversation=native_conversation,
@@ -759,7 +780,7 @@ class AgentLoop:
                 _check_cancelled()
                 is_last_round = (_round == max_rounds - 1)
                 if _round:
-                    compact_context(in_turn=True, request_tools=None if is_last_round else self._tools.schemas)
+                    compact_context(in_turn=True, request_tools=tool_schemas)
                     _check_cancelled()
                 self._emit("status", {"text": "思考中…"})
 
@@ -770,12 +791,13 @@ class AgentLoop:
                         self._emit("delta", {"text": chunk})
 
                 try:
-                    completion = client.stream_complete(
-                        messages,
-                        tools=None if is_last_round else self._tools.schemas,
-                        on_delta=_on_delta,
-                        is_cancelled=is_cancelled,
-                    )
+                    with llm_tool_choice("none" if is_last_round else None):
+                        completion = client.stream_complete(
+                            messages,
+                            tools=tool_schemas,
+                            on_delta=_on_delta,
+                            is_cancelled=is_cancelled,
+                        )
                 except LLMIncompleteResponseError:
                     final_text = ""
                     break
@@ -798,7 +820,7 @@ class AgentLoop:
                             **({"reasoning_content": completion.reasoning_content}
                                if getattr(completion, "reasoning_content", "") else {}),
                         )
-                if effective_tool_calls:
+                if effective_tool_calls and not is_last_round:
                     assistant_tool_calls = [
                         {
                             "id": tc.id,
@@ -821,6 +843,7 @@ class AgentLoop:
                             content=completion.content or "",
                             timestamp=datetime.now(),
                             tool_calls=assistant_tool_calls,
+                            reasoning_content=getattr(completion, "reasoning_content", "") or "",
                         ),
                     )
                     final_text = ""
@@ -869,6 +892,7 @@ class AgentLoop:
 
                 raw_final = (completion.content or "").strip()
                 final_text, _leftover = _parse_dsml_tool_calls(raw_final)
+                final_reasoning = getattr(completion, "reasoning_content", "") or ""
                 if _leftover:
                     logger.warning("Stripped %d unparsable DSML tool call(s) from final text", len(_leftover))
                 break
@@ -895,31 +919,27 @@ class AgentLoop:
                 try:
                     if is_lmstudio_qwen(getattr(client, "name", ""), getattr(client, "model", "")):
                         from trade_compass_agent.runtime.report_quality import report_portfolio_facts
-                        summary_messages = [
-                            ChatMessage(role="system", content=(
-                                "你是执行报告整理器。仅依据给定任务和真实工具结果生成最终报告。"
-                                "没有成交回执时必须明确本轮未成交，不得编造工具调用、交易或trade_id。"
-                                "分别报告账户本金和当前可用现金；可用现金合计以portfolio_facts.total_available_cash为准，不得用本金额度替代。"
-                                "该现金合计为null时须标注未确认，不能填零或其他确定金额。"
-                                "数据不足则明确缺口；遵守原系统规则。\n" + messages[0].content
-                            )),
-                            ChatMessage(role="user", content=json.dumps({
-                                "task": message, "tool_results": tool_calls_log,
+                        force_prompt = ChatMessage(role="user", content=(
+                            "你是执行报告整理器。仅依据已有上下文和真实工具结果生成最终报告。"
+                            "没有成交回执时必须明确本轮未成交，不得编造工具调用、交易或trade_id。"
+                            "分别报告账户本金和当前可用现金；可用现金合计以portfolio_facts.total_available_cash为准，不得用本金额度替代。"
+                            "该现金合计为null时须标注未确认，不能填零或其他确定金额。"
+                            "数据不足则明确缺口；遵守原系统规则。\n"
+                            + json.dumps({
+                                "task": message,
                                 "portfolio_facts": report_portfolio_facts(tool_calls_log),
                                 "instruction": force_prompt.content,
-                            }, ensure_ascii=False)),
-                        ]
+                            }, ensure_ascii=False)
+                        ))
+                    with llm_tool_choice(None if native else "none"):
                         completion = client.stream_complete(
-                            summary_messages, tools=None, on_delta=_on_forced_delta, is_cancelled=is_cancelled,
-                        )
-                    else:
-                        completion = client.stream_complete(
-                            [*messages, force_prompt], tools=None,
+                            [*messages, force_prompt], tools=None if native else tool_schemas,
                             on_delta=_on_forced_delta, is_cancelled=is_cancelled,
                         )
                     _check_cancelled()
                     raw_forced = (completion.content or forced_text).strip()
                     final_text, _leftover = _parse_dsml_tool_calls(raw_forced)
+                    final_reasoning = getattr(completion, "reasoning_content", "") or ""
                     if _leftover:
                         logger.warning(
                             "Stripped %d unparsable DSML tool call(s) from forced final text",
@@ -999,6 +1019,7 @@ class AgentLoop:
                     timestamp=datetime.now(),
                     sections=section_payload or None,
                     verification=verification or None,
+                    reasoning_content=final_reasoning,
                 ),
             )
             response = TurnResponse(

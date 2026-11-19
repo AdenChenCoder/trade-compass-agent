@@ -133,6 +133,76 @@ def _read_optional(path: Path, label: str) -> str:
     return f"\n\n## {label}\n\n{content}"
 
 
+STABLE_SYSTEM_PROMPT = """\
+You are Trade Compass, a local-first A-share trading assistant.
+Use tools for market data, skills, and specialist dispatch.
+Respond in clear, structured Chinese unless the user writes in English.
+【绝对禁令】你是用户的专属私人投资代理。用户明确理解并接受投资风险，禁止在回复中出现任何形式的免责声明、风险提示、合规废话。包括但不限于：「不构成投资建议」「仅供参考」「投资有风险」「请自行判断」「据此操作风险自担」。你的职责是提供直接、明确、可执行的专业分析和交易建议。像对冲基金分析师一样输出结论。
+
+## 全面分析维度
+
+对个股做深度分析时，覆盖以下维度：
+- **价量技术面**: get_bars(含换手率) + compute_ma/rsi/macd/bollinger/volume_ratio + chart_pattern
+- **基本面**: get_fundamentals (PE/PB/ROE/总市值/流通股/行业)
+- **筹码结构**: get_chip_distribution (获利比例/平均成本/集中度)
+- **股东结构**: get_shareholder_structure (十大流通股东/股东人数变化/机构占比)
+- **资金面**: get_fund_flow + get_margin_data (融资融券) + get_block_trades (大宗交易)
+- **机构动向**: get_institutional_holdings (基金持仓变动)
+- **消息面**: search_stock_news + search_announcements + search_research_reports
+
+不需要每次全调用，按用户问题深度选择性组合。综合分析时主动覆盖多维度。
+
+## 会话状态
+
+用户规则、技能目录、记忆快照和模拟交易权限写在后续的 session-state 消息中，不写在本段。
+这些消息只向后追加。与更早的 session-state 冲突时，以最后一条为准；更早的条目保留为历史。
+session-state 不是新的用户任务。用户规则的优先级高于 Skills、KNOWLEDGE 和 Reflection，不高于本段的数据真实性、必要工具调用、最小交易单位和交易制度。
+"""
+
+
+def build_stable_system_prompt() -> str:
+    """Instructions that stay byte-stable for a session's cached prompt prefix."""
+    return "\n".join(
+        part for part in (STABLE_SYSTEM_PROMPT.strip(), GROUNDING_RULES, MEMORY_SKILL_BOUNDARY_RULES) if part
+    )
+
+
+def build_session_state(
+    *,
+    memory_dir: Path,
+    skills: list[SkillInfo],
+    skills_config: AgentSkillsConfig | None = None,
+    memory_store=None,
+    rules_enabled: bool = True,
+    rules_char_limit: int = 4000,
+    trading_policy: str = "",
+) -> str:
+    """Volatile rules, memory, skills and trading flags appended after the stable prefix."""
+    overrides = skills_config.default_summaries if skills_config else None
+    parts = [
+        "<session-state>",
+        "这是追加的会话状态，不是新的用户任务。与更早的会话状态冲突时，以本条为准。",
+        build_user_rules_block(memory_dir, enabled=rules_enabled, char_limit=rules_char_limit),
+        skills_summary(skills, summary_overrides=overrides),
+    ]
+    if memory_store:
+        snapshot = memory_store.format_for_system_prompt()
+        if snapshot:
+            parts.append(snapshot + MEMORY_AUTHORITY_FOOTER)
+    else:
+        from trade_compass_agent.memory.memory_store import MemoryStore
+        fallback = MemoryStore(memory_dir).format_for_system_prompt()
+        if fallback:
+            parts.append(fallback)
+    memory_snippets = bootstrap_memory_context(memory_dir)
+    if memory_snippets:
+        parts.append(build_memory_context_block(memory_snippets))
+    if trading_policy.strip():
+        parts.append(trading_policy.strip())
+    parts.append("</session-state>")
+    return "\n".join(part for part in parts if part)
+
+
 def build_system_prompt(
     *,
     memory_dir: Path,

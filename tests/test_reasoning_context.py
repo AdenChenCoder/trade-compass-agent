@@ -1,4 +1,4 @@
-"""Keep Qwen3.8 tool-round reasoning transient, budgeted, and off the transcript."""
+"""Keep Qwen tool-round reasoning budgeted, off the public transcript, and stable across turns."""
 
 import json
 from types import SimpleNamespace
@@ -178,7 +178,7 @@ def test_factual_summary_input_excludes_transient_reasoning():
     assert "public conclusion" in prompt and "verified source fact" in prompt
 
 
-def test_tool_round_keeps_reasoning_but_history_and_next_turn_do_not(tmp_path, monkeypatch):
+def test_tool_round_reasoning_stays_on_the_next_turn_prefix(tmp_path, monkeypatch):
     from trade_compass_agent.runtime import loop
     from trade_compass_agent.runtime.tools.registry import ToolRegistry
 
@@ -196,7 +196,11 @@ def test_tool_round_keeps_reasoning_but_history_and_next_turn_do_not(tmp_path, m
             assistant = next(m for m in messages if m.tool_calls)
             assert assistant.reasoning_content == PRIVATE
             return ChatCompletion(content="当前没有持仓，本轮仅查询，没有成交。")
-        assert all(not m.reasoning_content for m in messages)
+        assistant = next(m for m in messages if m.tool_calls)
+        assert assistant.reasoning_content == PRIVATE
+        assert requests[0][0].content == messages[0].content
+        assert [m.role for m in requests[1]] == [m.role for m in messages[:len(requests[1])]]
+        assert [m.content for m in requests[1]] == [m.content for m in messages[:len(requests[1])]]
         return ChatCompletion(content="前轮仅查询，没有进行交易。")
 
     monkeypatch.setattr(
@@ -215,7 +219,9 @@ def test_tool_round_keeps_reasoning_but_history_and_next_turn_do_not(tmp_path, m
     )
     agent = loop.AgentLoop.from_config(config)
     assert "没有成交" in agent.run_turn("只查询持仓", session_id="reasoning-context").summary
-    for path in config.data_dir.rglob("*.jsonl"):
-        assert PRIVATE not in path.read_text()
+    public = config.data_dir / "agent_sessions" / "reasoning-context.jsonl"
+    checkpoint = config.data_dir / "agent_sessions" / "contexts" / "reasoning-context.jsonl"
+    assert PRIVATE not in public.read_text(encoding="utf-8")
+    assert PRIVATE in checkpoint.read_text(encoding="utf-8")
     assert "仅查询" in agent.run_turn("复述前轮结论", session_id="reasoning-context").summary
     assert len(requests) == 3
