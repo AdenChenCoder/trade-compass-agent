@@ -2,6 +2,19 @@
 
 This project follows [Semantic Versioning](https://semver.org/) and records user-visible changes here.
 
+## [0.5.13] - 2026-11-19
+
+- Keep local LM Studio and Ollama sessions on a stable prompt prefix so later
+  rounds reuse the cached prefix. Tool-round reasoning stays available on later
+  rounds, and the closing answer keeps the same tool definitions.
+- Run LM Studio and Ollama specialists one at a time, including debate research,
+  so a single loaded local model handles one generation at a time. Every
+  specialist still runs. Other providers keep parallel dispatch. Serial local
+  specialists take longer on the clock.
+- Research depth, conversation history, context budgets, summary and protection
+  thresholds, and the tool-round limit remain at their previous settings.
+  History and tool results keep their existing length.
+
 ## [0.5.12] - 2026-11-18
 
 - Preserve packet-filter rejection categories in private mobile diagnostics so
