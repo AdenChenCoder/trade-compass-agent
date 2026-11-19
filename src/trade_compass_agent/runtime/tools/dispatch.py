@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import copy_context
 
 from trade_compass_agent.config import AppConfig
-from trade_compass_agent.llm.providers import LLMExecutionCancelled, check_execution_active
+from trade_compass_agent.llm.providers import LLMExecutionCancelled, check_execution_active, is_local_model_provider
 from trade_compass_agent.runtime.exceptions import TurnInterruptedError
 from trade_compass_agent.runtime.types import TurnEvent
 from trade_compass_agent.runtime.tool_receipts import capture_receipts
@@ -31,7 +31,9 @@ def tool_dispatch_specialists(
     app_config = config or stack.config
     check_execution_active()
 
-    if len(tasks) <= 1:
+    # One local server serves a single loaded model. Parallel experts still all
+    # run; they take turns so each request can reuse the prompt cache.
+    if len(tasks) <= 1 or is_local_model_provider(app_config.llm.provider):
         raw = _run_sequential(stack, tasks, app_config=app_config, on_event=on_event)
     else:
         raw = _run_parallel(stack, tasks, app_config=app_config, on_event=on_event)

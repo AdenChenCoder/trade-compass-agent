@@ -295,11 +295,22 @@ through LM Studio's chat API. Knowledge reassessment, evidence validation, patte
 discovery, experience extraction, outcome attribution, and trading decisions keep
 normal reasoning through chat completions.
 
-LM Studio Qwen3.8 tool rounds return their reasoning as context for the next
-model call in the same turn. This transient context counts toward the input
-budget without spending the recent-source protection quota. It is excluded
-from saved conversation records and factual summary inputs; the model's default
-reasoning effort is retained.
+LM Studio Qwen3.6 and Qwen3.8 tool rounds return their reasoning as context for
+later model calls in that turn and on later turns of the same session. The
+model checkpoint stores it so the next prompt replays the same token prefix.
+The public transcript and factual summary inputs omit it. It counts toward the
+input budget without spending the recent-source protection quota. The model's
+default reasoning effort is retained.
+
+The session freezes its system instructions and tool definitions on first use.
+User rules, the skills catalog, memory and the simulated-trading flag are
+appended as later session-state messages when they change, so those updates do
+not rewrite the cached beginning. A new session picks up edits to that frozen
+prefix. The final tool round and the no-tool closing answer still send the same
+tool definitions, with tool choice set so the model must answer. Multiple
+specialists on LM Studio or Ollama run one after another; every specialist still
+runs. Other providers keep parallel dispatch. Serial local experts take longer
+on the clock and avoid concurrent prefills of one loaded model.
 
 Local HTTP LM Studio requests use the loaded model's native prompt template and
 tokenizer to measure input, including tool definitions and transient reasoning.

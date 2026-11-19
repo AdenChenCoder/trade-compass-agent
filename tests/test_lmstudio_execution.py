@@ -674,10 +674,14 @@ def test_reasoning_only_finish_uses_one_readonly_finalization_without_replaying_
     reply = ScheduledAgentSession(config, job_id="autonomous_trading").run("买入000001100股", timeout=5)
     assert len(orders) == 1 and "actual-receipt" in reply
     assert [r.url.path for r in requests] == ["/v1/chat/completions"] * 3
+    previous = json.loads(requests[1].content)
     finalization = json.loads(requests[2].content)
-    assert all("tools" not in json.loads(request.content) for request in requests[2:])
+    assert finalization["tools"] == previous["tools"]
+    assert finalization["tool_choice"] == "none"
+    assert finalization["messages"][:len(previous["messages"])] == previous["messages"]
+    assert all("tools" not in json.loads(request.content) for request in requests[3:])
     final_messages = json.dumps(finalization["messages"])
-    assert "tools" not in finalization and "actual-receipt" in final_messages
+    assert "actual-receipt" in final_messages
     assert "private reasoning" not in final_messages and "private" not in reply
     with sqlite3.connect(config.data_dir / "llm_usage.db") as connection:
         assert connection.execute("select max(sdk_attempts) from llm_usage_calls").fetchone() == (1,)

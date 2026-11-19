@@ -212,4 +212,11 @@ def test_live_turn_compacts_after_tools_without_replaying_order_or_losing_histor
     assert latest_persisted_summary(
         [m.to_chat_message() for m in agent.session_store.load_context(session)]
     )
-    assert all("SECRET_REASONING" not in p.read_text() for p in config.data_dir.rglob("*.jsonl"))
+    public = config.data_dir / "agent_sessions" / "scheduler-live-compaction.jsonl"
+    checkpoint = config.data_dir / "agent_sessions" / "contexts" / "scheduler-live-compaction.jsonl"
+    assert "SECRET_REASONING" not in public.read_text(encoding="utf-8")
+    assert "SECRET_REASONING" in checkpoint.read_text(encoding="utf-8")
+    assert all(
+        "SECRET_REASONING" not in (message.content or "")
+        for call in summaries for message in call
+    )

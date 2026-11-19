@@ -270,6 +270,24 @@ def is_lmstudio_qwen(provider: str, model: str) -> bool:
     )
 
 
+def is_local_model_provider(provider: str | None) -> bool:
+    """True for on-box OpenAI-compatible servers that share one loaded model."""
+    return provider in {"lmstudio", "ollama"}
+
+
+_tool_choice: ContextVar[str | None] = ContextVar("llm_tool_choice", default=None)
+
+
+@contextmanager
+def llm_tool_choice(choice: str | None):
+    """Select tool use without removing tool definitions from the prompt prefix."""
+    token = _tool_choice.set(choice)
+    try:
+        yield
+    finally:
+        _tool_choice.reset(token)
+
+
 _PROVIDER_BASE_URLS: dict[str, str] = {
     "deepseek": DEEPSEEK_BASE_URL,
     "openrouter": OPENROUTER_BASE_URL,
@@ -710,6 +728,9 @@ class OpenAIChatClient:
             kwargs["stream_options"] = {"include_usage": True}
         if tools:
             kwargs["tools"] = tools
+            choice = _tool_choice.get()
+            if choice:
+                kwargs["tool_choice"] = choice
         if self.name.startswith("lmstudio"):
             if self._preserve_reasoning_context:
                 kwargs["max_tokens"] = self.response_token_limit

@@ -3,9 +3,11 @@ from __future__ import annotations
 import logging
 
 from trade_compass_agent.llm.providers import ChatMessage
-from trade_compass_agent.runtime.bootstrap import build_system_prompt
+from trade_compass_agent.runtime.bootstrap import build_session_state, build_stable_system_prompt
 from trade_compass_agent.runtime.compression.trim import trim_tool_results
 from trade_compass_agent.runtime.skills import AgentSkillsConfig, SkillInfo
+
+SESSION_STATE_NAME = "session_state"
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +77,11 @@ def _estimate_tokens(text: str) -> int:
 
 
 class ContextBuilder:
-    """Builds and caches the system prompt for the session (frozen snapshot pattern).
+    """Builds a session-stable instruction prefix and append-only session state.
 
-    The system prompt is computed once at init and reused for all turns in the session.
-    This preserves the LLM prefix cache across turns.
+    The system message and tool list are snapshotted for the session. Memory,
+    user rules, the skills catalog and the trading flag are later messages, so
+    a change extends the cached prompt instead of rewriting its beginning.
     """
 
     def __init__(
@@ -92,19 +95,17 @@ class ContextBuilder:
         rules_char_limit: int = 4000,
         compression_config=None,
         trading_policy: str = "",
+        frozen_system: str | None = None,
     ) -> None:
         self.memory_dir = memory_dir
         self.skills = skills
+        self._skills_config = skills_config
+        self._memory_store = memory_store
+        self._rules_enabled = rules_enabled
+        self._rules_char_limit = rules_char_limit
+        self._trading_policy = trading_policy
         self._compression_config = compression_config
-        self._system = build_system_prompt(
-            memory_dir=memory_dir,
-            skills=skills,
-            skills_config=skills_config,
-            memory_store=memory_store,
-            rules_enabled=rules_enabled,
-            rules_char_limit=rules_char_limit,
-        )
-        self._system += trading_policy
+        self._system = frozen_system if frozen_system is not None else build_stable_system_prompt()
         self._system_tokens = _estimate_tokens(self._system)
 
     @property
@@ -116,10 +117,23 @@ class ContextBuilder:
     def system_prompt_tokens(self) -> int:
         return self._system_tokens
 
+    def current_session_state(self) -> str:
+        return build_session_state(
+            memory_dir=self.memory_dir,
+            skills=self.skills,
+            skills_config=self._skills_config,
+            memory_store=self._memory_store,
+            rules_enabled=self._rules_enabled,
+            rules_char_limit=self._rules_char_limit,
+            trading_policy=self._trading_policy,
+        )
+
     def build_messages(
         self,
         history: list[ChatMessage],
         user_message: str,
+        *,
+        session_state: str = "",
     ) -> list[ChatMessage]:
         messages = [ChatMessage(role="system", content=self._system)]
         sanitized = _sanitize_tool_calls(history)
@@ -135,5 +149,16 @@ class ContextBuilder:
             messages.extend(trimmed)
         else:
             messages.extend(sanitized)
+        if session_state and _latest_session_state(messages) != session_state:
+            messages.append(ChatMessage(
+                role="user", content=session_state, name=SESSION_STATE_NAME,
+            ))
         messages.append(ChatMessage(role="user", content=user_message))
         return messages
+
+
+def _latest_session_state(messages: list[ChatMessage]) -> str | None:
+    for message in reversed(messages):
+        if message.name == SESSION_STATE_NAME:
+            return message.content or ""
+    return None

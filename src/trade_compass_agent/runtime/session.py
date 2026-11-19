@@ -28,6 +28,7 @@ class SessionMessageRecord:
     autonomous_trading_enabled: bool = False
     image_paths: list[str] = field(default_factory=list)
     verification: dict | None = None
+    reasoning_content: str = field(default="", repr=False)
 
     def to_chat_message(self) -> ChatMessage:
         return ChatMessage(
@@ -37,6 +38,7 @@ class SessionMessageRecord:
             name=self.name,
             tool_calls=list(self.tool_calls),
             image_paths=list(self.image_paths),
+            reasoning_content=self.reasoning_content,
         )
 
 
@@ -102,8 +104,13 @@ class SessionStore:
     def _context_file(self, session_id: str) -> Path:
         return self.path / "contexts" / f"{session_id}.jsonl"
 
+    def _prefix_file(self, session_id: str) -> Path:
+        return self.path / "contexts" / f"{session_id}.prefix.json"
+
     @staticmethod
-    def _message_payload(message: SessionMessageRecord, timestamp: datetime) -> dict:
+    def _message_payload(
+        message: SessionMessageRecord, timestamp: datetime, *, include_reasoning: bool = False,
+    ) -> dict:
         record: dict = {
             "role": message.role,
             "content": message.content,
@@ -123,6 +130,8 @@ class SessionStore:
             record["image_paths"] = message.image_paths
         if message.verification:
             record["verification"] = message.verification
+        if include_reasoning and message.reasoning_content:
+            record["reasoning_content"] = message.reasoning_content
         return record
 
     def _write_records(
@@ -142,7 +151,7 @@ class SessionStore:
         lines = [json.dumps(meta, ensure_ascii=False)]
         lines.extend(
             json.dumps(
-                self._message_payload(message, message.timestamp or now),
+                self._message_payload(message, message.timestamp or now, include_reasoning=True),
                 ensure_ascii=False,
             )
             for message in messages
@@ -310,9 +319,24 @@ class SessionStore:
                     autonomous_trading_enabled=raw.get("autonomous_trading_enabled") is True,
                     image_paths=raw.get("image_paths") or [],
                     verification=raw.get("verification") if isinstance(raw.get("verification"), dict) else None,
+                    reasoning_content=str(raw.get("reasoning_content") or ""),
                 )
             )
         return messages
+
+    def frozen_prompt_prefix(self, session_id: str, *, system: str, tools: list) -> tuple[str, list]:
+        """Reuse the session's first system text and tool definitions."""
+        lock = self._get_session_lock(session_id)
+        path = self._prefix_file(session_id)
+        with lock:
+            if path.is_file():
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict) and isinstance(raw.get("system"), str) and isinstance(raw.get("tools"), list):
+                    return raw["system"], raw["tools"]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"system": system, "tools": tools}
+            path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            return system, tools
 
     def create(self) -> AgentSession:
         session_id = uuid4().hex
@@ -348,12 +372,13 @@ class SessionStore:
                 self._write_records(context_file, session, session.messages)
             session.messages.append(message)
             session.updated_at = max(session.updated_at, now)
-            record = self._message_payload(message, now)
+            public_record = self._message_payload(message, now)
             with self._file(session.session_id).open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                handle.write(json.dumps(public_record, ensure_ascii=False) + "\n")
             try:
+                context_record = self._message_payload(message, now, include_reasoning=True)
                 with context_file.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    handle.write(json.dumps(context_record, ensure_ascii=False) + "\n")
             except OSError:
                 # The transcript remains authoritative. Dropping a damaged
                 # checkpoint makes the next turn safely rebuild from it.
@@ -381,6 +406,29 @@ class SessionStore:
                 shutil.copy2(file_path, archived_path)
             self._write_records(file_path, session, messages)
         return archived_path
+
+    def append_model_context(self, session: AgentSession, message: SessionMessageRecord) -> None:
+        """Append a model-context message that is not part of the public transcript."""
+        self._ensure_dir()
+        lock = self._get_session_lock(session.session_id)
+        with lock:
+            now = message.timestamp or datetime.now()
+            context_file = self._context_file(session.session_id)
+            record = json.dumps(
+                self._message_payload(message, now, include_reasoning=True), ensure_ascii=False,
+            )
+            context_file.parent.mkdir(parents=True, exist_ok=True)
+            if not context_file.exists():
+                meta = {"type": "meta", "created_at": session.created_at.isoformat()}
+                if session.title:
+                    meta["title"] = session.title
+                context_file.write_text(
+                    json.dumps(meta, ensure_ascii=False) + "\n" + record + "\n",
+                    encoding="utf-8",
+                )
+                return
+            with context_file.open("a", encoding="utf-8") as handle:
+                handle.write(record + "\n")
 
     def _migrate_daily_channel_files(self, session_id: str) -> None:
         """Merge obsolete daily channel transcripts into their stable session once."""
@@ -490,6 +538,7 @@ class SessionStore:
             return False
         file_path.unlink()
         self._context_file(session_id).unlink(missing_ok=True)
+        self._prefix_file(session_id).unlink(missing_ok=True)
         return True
 
     def list_recent(self, limit: int = 20, *, exclude_prefix: str | None = None,
