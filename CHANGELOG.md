@@ -2,6 +2,13 @@
 
 This project follows [Semantic Versioning](https://semver.org/) and records user-visible changes here.
 
+## [0.5.14] - 2026-11-22
+
+- Update the mobile connection SDK to Tailscale 1.104.7, retaining Go 1.27.4.
+  Keep established encrypted sessions usable during discovery-key updates and
+  catch network availability changes during connection startup. Retain the
+  original public address, node identity, paired devices and application history.
+
 ## [0.5.13] - 2026-11-19
 
 - Keep local LM Studio and Ollama sessions on a stable prompt prefix so later
