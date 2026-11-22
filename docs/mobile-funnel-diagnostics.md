@@ -50,9 +50,9 @@
 
 ## 与上游实现的语义对应
 
-固定版本 [tsnet](https://github.com/tailscale/tailscale/blob/v1.102.4/tsnet/tsnet.go) 的 `ListenFunnel` 配置一个本节点入口；本项目对应的是电脑拥有的移动端入口，不是用户会话、任务或手机身份。
+固定版本 [tsnet](https://github.com/tailscale/tailscale/blob/v1.104.7/tsnet/tsnet.go) 的 `ListenFunnel` 配置一个本节点入口；本项目对应的是电脑拥有的移动端入口，不是用户会话、任务或手机身份。
 
-固定版本 [入站处理](https://github.com/tailscale/tailscale/blob/v1.102.4/ipn/ipnlocal/serve.go) 分别检查入站能力、ServeConfig 和目标。这里的固定日志类别用于定位哪一步拒绝，不能将其解释为允许程序修改供应商账号策略。
+固定版本 [入站处理](https://github.com/tailscale/tailscale/blob/v1.104.7/ipn/ipnlocal/serve.go) 分别检查入站能力、ServeConfig 和目标。这里的固定日志类别用于定位哪一步拒绝，不能将其解释为允许程序修改供应商账号策略。
 
 磁盘存在 `AllowFunnel` 而内存配置不可读、诊断没有拒绝事件但公网仍失败，都是反驳简单“配置丢失”解释的证据。此时应继续检查传输和实际请求，不复制上游问题报告中的重启方法作为根因修复。
 
