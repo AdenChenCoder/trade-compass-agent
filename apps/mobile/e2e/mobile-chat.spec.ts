@@ -80,7 +80,7 @@ test('phone acknowledges submission, preserves the next draft and keeps long rep
     await expect(phone.getByText('已在电脑上的同一个会话收到：接下来再核实数据', { exact: true })).toBeInViewport();
     await expect(composer).toHaveValue('');
     expect(new Set(submitted).size).toBe(2); expect(submitted).toHaveLength(2);
-    for (const [theme, label] of [['glacier', '冰川青'], ['berry', '莓果红'], ['volt', '电光蓝']] as const) {
+    for (const [theme, label] of [['glacier', '冰川青'], ['berry', '莓果红']] as const) {
       await phone.getByRole('button', { name: '设置', exact: true }).click();
       await phone.getByText(label, { exact: true }).click();
       await phone.getByRole('button', { name: '会话', exact: true }).click();

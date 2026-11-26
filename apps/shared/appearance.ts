@@ -4,15 +4,15 @@ export const appearances = [
   { id: "ember", name: "朱砂橙", palette: "暖白 × 朱砂橙", canvas: "#faf7f1" },
   { id: "glacier", name: "冰川青", palette: "深墨 × 冰川青", canvas: "#111f24" },
   { id: "berry", name: "莓果红", palette: "雾白 × 莓果红", canvas: "#faf3f5" },
-  { id: "volt", name: "电光蓝", palette: "银灰 × 电光蓝", canvas: "#f1f3f5" },
 ] as const;
 
-export type Appearance = "classic" | typeof appearances[number]["id"];
+export type Appearance = typeof appearances[number]["id"];
+export const DEFAULT_APPEARANCE: Appearance = "glacier";
 const listeners = new Set<() => void>();
-let current: Appearance = "classic";
+let current: Appearance = DEFAULT_APPEARANCE;
 
 export function parseAppearance(value: string | null): Appearance {
-  return appearances.some(theme => theme.id === value) ? value as Appearance : "classic";
+  return appearances.some(theme => theme.id === value) ? value as Appearance : DEFAULT_APPEARANCE;
 }
 
 export function getAppearance(): Appearance { return current; }
@@ -26,7 +26,7 @@ function applyAppearance(value: Appearance) {
   document.documentElement.dataset.theme = value;
   document.documentElement.classList.toggle("dark", value === "glacier");
   document.querySelector('meta[name="theme-color"]')?.setAttribute(
-    "content", appearances.find(theme => theme.id === value)?.canvas ?? "#f5f6fa",
+    "content", appearances.find(theme => theme.id === value)!.canvas,
   );
   listeners.forEach(listener => listener());
 }

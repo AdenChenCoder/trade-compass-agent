@@ -18,7 +18,7 @@ test('workbench themes, narrow navigation and failed route loads preserve user w
   const settings = await context.newPage();
   await settings.emulateMedia({ reducedMotion: 'reduce' });
   await settings.goto('/settings');
-  for (const [theme, label] of [['ember', '朱砂橙'], ['glacier', '冰川青'], ['berry', '莓果红'], ['volt', '电光蓝']]) {
+  for (const [theme, label] of [['ember', '朱砂橙'], ['glacier', '冰川青'], ['berry', '莓果红']]) {
     await settings.getByRole('radio', { name: new RegExp(label) }).check();
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
     await expect(page.getByRole('textbox', { name: '消息', exact: true })).toHaveValue('这段草稿和附件先保留，不要发送。');

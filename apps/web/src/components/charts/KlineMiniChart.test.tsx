@@ -146,6 +146,7 @@ describe("KlineMiniChart virtualized remount", () => {
       });
     };
 
+    await act(async () => { setAppearance("ember"); });
     await mountChart();
     expect(fetchBarsMock).toHaveBeenCalledTimes(1);
 
@@ -160,7 +161,7 @@ describe("KlineMiniChart virtualized remount", () => {
     expect(after.series).toEqual(before.series);
     expect(fetchBarsMock).toHaveBeenCalledTimes(1);
     style.mockRestore();
-    await act(async () => { setAppearance("classic"); });
+    await act(async () => { setAppearance("ember"); });
 
     await act(async () => root?.unmount());
     container?.remove();

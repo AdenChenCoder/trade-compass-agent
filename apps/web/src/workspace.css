@@ -175,7 +175,7 @@
 .audit-workspace .detail-title { margin-top: 16px; }
 @media (min-width: 768px) and (max-height: 850px) {
   .agent-welcome { margin-top: 12px; margin-bottom: 12px; }
-  html[data-theme]:not([data-theme="classic"]) .welcome-intro { padding: 24px 30px; }
+  html[data-theme] .welcome-intro { padding: 24px 30px; }
   .welcome-brand { margin-bottom: 16px; }
   .agent-welcome h1 { font-size: 34px; }
   .welcome-intro > p { margin-top: 12px; }
