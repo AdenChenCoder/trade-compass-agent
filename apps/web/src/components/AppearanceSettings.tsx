@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { Check } from "lucide-react";
-import { appearances, setAppearance, type Appearance } from "../../../shared/appearance";
+import { appearances, DEFAULT_APPEARANCE, setAppearance, type Appearance } from "../../../shared/appearance";
 import { useAppearance } from "@/lib/appearance";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,8 +36,8 @@ export function AppearanceSettings() {
           </div>
         </fieldset>
         <div className="appearance-footer">
-          <span role="status">当前：{appearances.find(theme => theme.id === selected)?.name ?? "默认配色"}</span>
-          <Button variant="ghost" size="sm" disabled={selected === "classic"} onClick={() => choose("classic")}>恢复默认</Button>
+          <span role="status">当前：{appearances.find(theme => theme.id === selected)!.name}</span>
+          <Button variant="ghost" size="sm" disabled={selected === DEFAULT_APPEARANCE} onClick={() => choose(DEFAULT_APPEARANCE)}>恢复默认</Button>
         </div>
         {saveFailed ? <p className="mt-2 text-sm text-destructive" role="alert">配色已应用，但无法保存。下次打开时可能恢复默认配色，请检查浏览器的存储设置。</p> : null}
       </CardContent>

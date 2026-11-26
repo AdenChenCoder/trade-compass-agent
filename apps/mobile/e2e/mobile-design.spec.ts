@@ -25,6 +25,9 @@ test('mobile layouts preserve drafts and connection across themes, narrow screen
     const invite = await (await page.request.post('/api/mobile/pairing/invitations')).json();
     await phone.goto(`https://localhost:19746/mobile/#pair=${encodeURIComponent(JSON.stringify(invite))}`);
     await expect(phone.getByLabel('手机名称')).toBeVisible();
+    await expect(phone.getByRole('radio')).toHaveCount(3);
+    await expect(phone.getByRole('radio', { name: '冰川青' })).toBeChecked();
+    await expect(phone.locator('html')).toHaveAttribute('data-theme', 'glacier');
     await phone.getByText('朱砂橙', { exact: true }).click();
     await phone.locator('main').evaluate(element => { element.scrollTop = 0; });
     await capture('onboarding.png');
@@ -52,7 +55,7 @@ test('mobile layouts preserve drafts and connection across themes, narrow screen
     await phone.getByRole('textbox', { name: '消息', exact: true }).fill('先核实证据，这段草稿暂不发送。');
     const savedConnection = await phone.evaluate(() => localStorage.getItem('compass.browser.connection.v1'));
     const writesBeforeThemes = writes.length;
-    for (const [theme, name] of [['ember', '朱砂橙'], ['glacier', '冰川青'], ['berry', '莓果红'], ['volt', '电光蓝']]) {
+    for (const [theme, name] of [['ember', '朱砂橙'], ['glacier', '冰川青'], ['berry', '莓果红']]) {
       await phone.getByRole('button', { name: '设置', exact: true }).click();
       await expect(phone.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
       await expect(phone.getByRole('button', { name: '连接', exact: true })).toHaveCount(0);
@@ -95,7 +98,7 @@ test('mobile layouts preserve drafts and connection across themes, narrow screen
       const nav = await phone.getByRole('navigation', { name: '主导航' }).boundingBox();
       expect(main!.y + main!.height).toBeLessThanOrEqual(nav!.y + 1);
       await phone.getByRole('button', { name: '设置', exact: true }).click();
-      await phone.getByRole('radio', { name: '电光蓝' }).scrollIntoViewIfNeeded();
+      await phone.getByRole('radio', { name: '莓果红' }).scrollIntoViewIfNeeded();
       expect(await phone.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await phone.getByRole('button', { name: '会话', exact: true }).click();
       await expect(phone.getByRole('button', { name: '会话', exact: true })).toHaveAttribute('aria-current', 'page');
@@ -115,9 +118,9 @@ test('mobile layouts preserve drafts and connection across themes, narrow screen
     expect(writes).toHaveLength(beforeSuggestion);
     await phone.setViewportSize({ width: 390, height: 844 });
     await phone.getByRole('button', { name: '设置', exact: true }).click();
-    await phone.getByRole('radio', { name: '电光蓝' }).focus();
+    await phone.getByRole('radio', { name: '莓果红' }).focus();
     await phone.keyboard.press('ArrowLeft');
-    await expect(phone.getByRole('radio', { name: '莓果红' })).toBeChecked();
+    await expect(phone.getByRole('radio', { name: '冰川青' })).toBeChecked();
     await phone.getByText('朱砂橙', { exact: true }).click();
     await phone.reload();
     await expect(phone.locator('html')).toHaveAttribute('data-theme', 'ember');

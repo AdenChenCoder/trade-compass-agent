@@ -9,20 +9,23 @@ import { APPEARANCE_KEY, initializeAppearance } from '../../shared/appearance';
 
 it('lets the phone choose and restore a locally saved palette without changing its connection', async () => {
   localStorage.setItem('compass.connection', 'existing-pairing');
+  localStorage.setItem(APPEARANCE_KEY, 'volt');
   const stop = initializeAppearance();
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
   try {
     await act(async () => root.render(<AppearanceSettings />));
-    for (const value of ['ember', 'glacier', 'berry', 'volt']) {
+    expect(container.querySelector<HTMLInputElement>('input[value="glacier"]')!.checked).toBe(true);
+    expect(Array.from(container.querySelectorAll<HTMLInputElement>('input[type="radio"]'), input => input.value)).toEqual(['ember', 'glacier', 'berry']);
+    for (const value of ['ember', 'glacier', 'berry']) {
       await act(async () => container.querySelector<HTMLInputElement>(`input[value="${value}"]`)!.click());
       expect(localStorage.getItem(APPEARANCE_KEY)).toBe(value);
       expect(document.documentElement.dataset.theme).toBe(value);
       expect(container.querySelector<HTMLInputElement>(`input[value="${value}"]`)!.checked).toBe(true);
     }
     await act(async () => container.querySelector<HTMLButtonElement>('button')!.click());
-    expect(localStorage.getItem(APPEARANCE_KEY)).toBe('classic');
+    expect(localStorage.getItem(APPEARANCE_KEY)).toBe('glacier');
     expect(localStorage.getItem('compass.connection')).toBe('existing-pairing');
   } finally {
     await act(async () => root.unmount());
@@ -40,8 +43,8 @@ it('reports an unsaved palette while keeping the current choice usable', async (
   const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('full', 'QuotaExceededError'); });
   try {
     await act(async () => root.render(<AppearanceSettings />));
-    await act(async () => container.querySelector<HTMLInputElement>('input[value="glacier"]')!.click());
-    expect(document.documentElement.dataset.theme).toBe('glacier');
+    await act(async () => container.querySelector<HTMLInputElement>('input[value="berry"]')!.click());
+    expect(document.documentElement.dataset.theme).toBe('berry');
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('无法保存');
     storage.mockRestore();
     await act(async () => container.querySelector<HTMLInputElement>('input[value="ember"]')!.click());

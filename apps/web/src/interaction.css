@@ -9,7 +9,7 @@
 .workspace-link > .navigation-selection { display: block; position: absolute; inset: 0; z-index: -1; border-radius: 11px; background: oklch(var(--nav-selected)); box-shadow: 0 5px 16px oklch(var(--nav-selected) / .12); pointer-events: none; }
 .ui-tabs { gap: 3px; padding: 5px; border: 0; border-radius: 14px; overflow: visible; }
 .ui-tab { position: relative; isolation: isolate; min-height: 40px; padding-inline: 20px; border-radius: 10px; }
-.ui-tab[aria-selected="true"], html[data-theme]:not([data-theme="classic"]) .ui-tab[aria-selected="true"] { background: transparent; box-shadow: none; color: oklch(var(--primary-foreground)); }
+.ui-tab[aria-selected="true"], html[data-theme] .ui-tab[aria-selected="true"] { background: transparent; box-shadow: none; color: oklch(var(--primary-foreground)); }
 .tab-selection { position: absolute; inset: 0; z-index: -1; background: oklch(var(--primary)); border-radius: 10px; box-shadow: 0 3px 9px oklch(var(--primary) / .15); }
 .tab-label { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .ui-tab-panel { animation: none; outline: none; }
@@ -84,7 +84,7 @@
 .detail-pane .empty-symbol { width: 64px; height: 64px; border-radius: 22px; transform: rotate(-8deg); }
 .detail-pane .empty-symbol svg { transform: rotate(8deg); }
 .agent-welcome { max-width: 760px; margin-top: 6px; }
-html[data-theme]:not([data-theme="classic"]) .welcome-intro, .welcome-intro { position: relative; display: grid; grid-template-columns: 1fr 200px; align-items: center; gap: 10px; min-height: 236px; padding: 24px 34px; border-radius: 22px; background: oklch(var(--hero-background)); color: oklch(var(--hero-foreground)); }
+html[data-theme] .welcome-intro, .welcome-intro { position: relative; display: grid; grid-template-columns: 1fr 200px; align-items: center; gap: 10px; min-height: 236px; padding: 24px 34px; border-radius: 22px; background: oklch(var(--hero-background)); color: oklch(var(--hero-foreground)); }
 .welcome-copy { position: relative; z-index: 1; }
 .welcome-brand { margin-bottom: 20px; }
 .agent-welcome h1 { font-size: 40px; letter-spacing: -.05em; }
@@ -160,7 +160,7 @@ html[data-theme]:not([data-theme="classic"]) .welcome-intro, .welcome-intro { po
 }
 @media (max-width: 1100px) {
   .welcome-compass { width: 170px; height: 170px; }
-  html[data-theme]:not([data-theme="classic"]) .welcome-intro, .welcome-intro { grid-template-columns: 1fr 170px; padding: 25px; }
+  html[data-theme] .welcome-intro, .welcome-intro { grid-template-columns: 1fr 170px; padding: 25px; }
   .agent-welcome h1 { font-size: 36px; }
   .welcome-prompts button { padding: 18px 14px; }
 }
@@ -207,7 +207,7 @@ html[data-theme]:not([data-theme="classic"]) .welcome-intro, .welcome-intro { po
   .settings-tabs .tab-label > svg { display: none; }
   .rules-tabs .rule-entry-list { grid-template-columns: 1fr; gap: 20px; }
   .agent-welcome { margin-top: 14px; }
-  html[data-theme]:not([data-theme="classic"]) .welcome-intro, .welcome-intro { grid-template-columns: 1fr 118px; min-height: 228px; padding: 22px; }
+  html[data-theme] .welcome-intro, .welcome-intro { grid-template-columns: 1fr 118px; min-height: 228px; padding: 22px; }
   .agent-welcome h1 { font-size: 30px; }
   .welcome-compass { width: 128px; height: 128px; }
   .compass-needle { inset: 10px 25px; }

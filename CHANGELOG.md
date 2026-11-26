@@ -2,6 +2,13 @@
 
 This project follows [Semantic Versioning](https://semver.org/) and records user-visible changes here.
 
+## [0.5.15] - 2026-11-26
+
+- Keep only vermilion, glacier cyan and berry palettes on desktop and mobile.
+  Use glacier for first use, Restore Default and retired palette preferences,
+  preserving existing supported choices, drafts and device pairings.
+- Align mobile palette previews in one row and use glacier for startup surfaces.
+
 ## [0.5.14] - 2026-11-22
 
 - Update the mobile connection SDK to Tailscale 1.104.7, retaining Go 1.27.4.

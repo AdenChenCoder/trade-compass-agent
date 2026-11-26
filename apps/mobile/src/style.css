@@ -421,7 +421,7 @@ footer { flex-shrink: 0; text-align: center; font-size: 9px; letter-spacing: .1e
 .appearance-heading h3 { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .appearance-reset { min-height: 44px; padding: 8px 0 8px 12px; border: 0; background: transparent; color: var(--muted-text); font-size: 12px; }
 .appearance-reset:disabled { opacity: 1; }
-.appearance-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 14px; border: 0; padding: 0; margin: 0; min-width: 0; }
+.appearance-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 14px; border: 0; padding: 0; margin: 0; min-width: 0; }
 .appearance-option { position: relative; margin: 0; cursor: pointer; font-size: 12px; color: var(--muted-text); }
 .appearance-preview { display: flex; flex-direction: column; align-items: flex-start; position: relative; height: 110px; padding: 12px 14px; margin-bottom: 9px; border: 1px solid oklch(var(--border)); border-radius: 17px; background: oklch(var(--background)); overflow: hidden; }
 .appearance-preview-logo { width: 15px; height: 15px; flex-shrink: 0; border-radius: 5px; background: oklch(var(--logo-background)); }

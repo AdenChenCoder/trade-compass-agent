@@ -8,10 +8,10 @@ trading workflows. The existing coin mark remains the identity.
 
 - Palette tokens live in `apps/shared/appearance.css`; Tailwind and the mobile
   companion consume the same OKLCH values. Layout styles stay in each app.
-- Settings → Appearance offers four palettes: warm white/vermilion (`ember`),
-  dark ink/glacier cyan (`glacier`), mist white/berry (`berry`), and silver/electric
-  blue (`volt`). The existing cobalt/ink appearance remains the default until
-  a choice is made. Restore Default returns to that appearance.
+- Settings → Appearance offers three palettes, in order: warm white/vermilion
+  (`ember`), dark ink/glacier cyan (`glacier`), and mist white/berry (`berry`).
+  Glacier is the default for first use and Restore Default, including startup
+  surfaces and the mobile PWA launch background.
 - Palette choice controls surfaces, navigation, actions, the welcome panel and
   logo tile/ink. The existing coin SVG geometry is rendered as a CSS mask.
   Glacier activates dark native controls, prose, notifications and chart chrome.
@@ -38,7 +38,7 @@ trading workflows. The existing coin mark remains the identity.
 
 ## Module patterns
 
-- Keep the four palettes independent of module layout. `workspace.css` owns the
+- Keep the three palettes independent of module layout. `workspace.css` owns the
   route-level patterns; `WorkspaceState` supplies empty/error feedback and
   in-page section links. Loading and failures must not masquerade as empty data.
 - Agent history has a clear title, search and new-conversation action. The composer
@@ -100,7 +100,7 @@ trading workflows. The existing coin mark remains the identity.
   unsaved drafts appear above the scrolling content so they remain visible while
   reading. Pairing, pending requests and offline caches keep their existing meaning.
 - Settings foreground the paired computer and phone in a single connection surface,
-  then show four labelled color previews in a two-column radio group. Restore Default
+  then show three labelled color previews in a three-column radio group. Restore Default
   stays available. Task failure and incomplete-result colors adapt to dark mode without changing their labels.
 - Press, selection, disclosure and detail transitions use 150–250 ms transforms
   or opacity. No animation delays access to content. Respect reduced motion.
@@ -132,7 +132,7 @@ trading workflows. The existing coin mark remains the identity.
   `data-theme` and `dark` class are derived state; other tabs follow storage events.
   Switching does not reload a page, clear drafts or change chart data. Mobile
   offers the same choices in Settings; devices are not synchronized.
-- Unknown or missing values fall back to the original appearance. Storage errors
+- Retired, unknown or missing values fall back to glacier without rewriting storage. Storage errors
   still allow the current page to change and visibly report that saving failed.
   Restoring the default is reversible; existing user records are untouched.
 
