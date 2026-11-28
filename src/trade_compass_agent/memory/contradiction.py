@@ -151,7 +151,14 @@ def judge_at_promotion(
     )
 
     try:
-        raw = llm_call("你是交易知识审判官。只返回合法 JSON。", prompt).strip()
+        import re
+
+        raw = re.sub(
+            r"<think>.*?(?:</think>|$)",
+            "",
+            llm_call("你是交易知识审判官。只返回合法 JSON。", prompt),
+            flags=re.DOTALL,
+        ).strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         data = json.loads(raw)
@@ -203,7 +210,14 @@ def scan_active_conflicts(
     try:
         request = prompt
         for attempt in range(2):
-            raw = llm_call("你是 KNOWLEDGE 策展人。只返回合法 JSON 数组。", request).strip()
+            import re
+
+            raw = re.sub(
+                r"<think>.*?(?:</think>|$)",
+                "",
+                llm_call("你是 KNOWLEDGE 策展人。只返回合法 JSON 数组。", request),
+                flags=re.DOTALL,
+            ).strip()
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
             try:

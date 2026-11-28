@@ -92,8 +92,12 @@ async def scan_portfolio_exits(ctx: StepContext) -> StepOutput:
     for p in positions:
         pnl_pct = _position_pnl_pct(p)
         positions_detail.append({
-            "symbol": p.symbol, "quantity": p.quantity,
-            "avg_cost": p.avg_cost, "last_price": p.last_price,
+            "symbol": p.symbol,
+            "account": p.account.value if hasattr(p.account, "value") else str(p.account),
+            "quantity": p.quantity,
+            "avg_cost": p.avg_cost,
+            "last_price": p.last_price,
+            "price_is_fresh": p.price_is_fresh,
             "pnl_pct": round(pnl_pct, 2),
         })
 
@@ -225,6 +229,8 @@ async def check_global_markets(ctx: StepContext) -> StepOutput:
         "若需要收盘价，请用新闻或交易所资料交叉核实；不能核实则明确写收盘数据缺口，"
         "可另列带时间的最新报价。prev_close 是快照对应的前一交易日收盘，不能当作本日收盘。"
         "逐项保留 errors 中的数据缺口，不用零值或其他市场替代。"
+        "注意：sina_realtime_quote 仅支持 A 股 6 位代码及 gb_dji、gb_ixic、gb_inx（上方已提供），"
+        "不支持港股恒指、汇率或大宗商品代码；第 2-4 项请通过 search_market_flash、eastmoney_news 或 web_search 查询，未取得则记录为数据缺口。"
     )
     output = await run_agent_step(
         ctx, prompt, "premarket", step_id="global_market",
@@ -430,6 +436,8 @@ async def run_l5_screener(ctx: StepContext) -> StepOutput:
                 },
             )
 
+        from trade_compass_agent.runtime.tools.signals import _record_audit
+
         tracker = SignalTracker(ctx.config.data_dir)
         signals_path = ctx.config.data_dir / "signals.jsonl"
         signals_path.parent.mkdir(parents=True, exist_ok=True)
@@ -437,7 +445,8 @@ async def run_l5_screener(ctx: StepContext) -> StepOutput:
         for signal in signals:
             with signals_path.open("a", encoding="utf-8") as f:
                 f.write(signal.model_dump_json() + "\n")
-            tracker.track_signal(signal.model_dump())
+            _record_audit(ctx.config.data_dir, signal)
+            tracker.track_signal(signal.model_dump(mode="json"))
 
         return StepOutput(
             message=f"L5 审判产出 {len(signals)} 条信号",
@@ -530,7 +539,9 @@ async def check_positions(ctx: StepContext) -> StepOutput:
     detail = []
     for p in positions:
         detail.append({
-            "symbol": p.symbol, "quantity": p.quantity,
+            "symbol": p.symbol,
+            "account": p.account.value if hasattr(p.account, "value") else str(p.account),
+            "quantity": p.quantity,
             "avg_cost": p.avg_cost, "last_price": p.last_price,
             "price_source": p.price_source,
             "price_is_fresh": p.price_is_fresh,
@@ -815,7 +826,9 @@ async def refresh_market_prices(ctx: StepContext) -> StepOutput:
     for p in positions:
         pnl_pct = (p.last_price / p.avg_cost - 1) * 100 if p.avg_cost > 0 else 0
         detail.append({
-            "symbol": p.symbol, "quantity": p.quantity,
+            "symbol": p.symbol,
+            "account": p.account.value if hasattr(p.account, "value") else str(p.account),
+            "quantity": p.quantity,
             "avg_cost": p.avg_cost, "last_price": p.last_price,
             "price_source": p.price_source, "price_is_fresh": p.price_is_fresh,
             "market_value": round(p.market_value, 2),
@@ -899,7 +912,16 @@ async def review_pnl(ctx: StepContext) -> StepOutput:
     detail = []
     for p in positions:
         pnl_pct = _position_pnl_pct(p)
-        detail.append({"symbol": p.symbol, "pnl_pct": round(pnl_pct, 2), "unrealized": round(p.unrealized_pnl, 2)})
+        detail.append({
+            "symbol": p.symbol,
+            "account": p.account.value if hasattr(p.account, "value") else str(p.account),
+            "quantity": p.quantity,
+            "avg_cost": p.avg_cost,
+            "last_price": p.last_price,
+            "price_is_fresh": p.price_is_fresh,
+            "pnl_pct": round(pnl_pct, 2),
+            "unrealized": round(p.unrealized_pnl, 2),
+        })
         lot_alert = format_pnl_alert(p.symbol, p.quantity, pnl_pct)
         if lot_alert:
             alerts.append(lot_alert)
@@ -918,6 +940,7 @@ async def update_signal_tracker(ctx: StepContext) -> StepOutput:
     tracker = SignalTracker(ctx.config.data_dir)
     from trade_compass_agent.evaluation.signal_execution import reconcile_signal_executions
     reconcile_signal_executions(ctx.config.data_dir, portfolio)
+    expired = tracker.expire_pending(as_of=ctx.date)
     position_map = {(p.symbol, p.account.value): p for p in positions}
     updated = 0
     from trade_compass_agent.concurrency import file_transaction
@@ -935,8 +958,8 @@ async def update_signal_tracker(ctx: StepContext) -> StepOutput:
             tracker._save_all(records)
 
     return StepOutput(
-        message=f"信号追踪: {len(active)}条活跃, {updated}条已更新",
-        data={"active_count": len(active), "updated": updated},
+        message=f"信号追踪: {len(active)}条活跃, {updated}条已更新, {expired}条过期收敛",
+        data={"active_count": len(active), "updated": updated, "expired": expired},
     )
 
 
@@ -1107,20 +1130,26 @@ async def write_audit_summary(ctx: StepContext) -> StepOutput:
     else:
         lines.append("- (no agent turns today)")
 
+    from trade_compass_agent.evaluation.follow_through import select_signal_audit_events
+
     lines.extend(["", "## Recommendations"])
-    recs = [e for e in audit.events if e.event_type == "recommendation"]
-    for event in recs[-15:]:
+    all_signals = select_signal_audit_events(audit.events, limit=500)
+    today_signals = [e for e in all_signals if e.timestamp.date() == today]
+    for event in today_signals[-15:]:
         lines.append(f"- {event.timestamp.date()} {event.summary}")
-    if not recs:
-        lines.append("- (none)")
+    if not today_signals:
+        if all_signals:
+            lines.append(f"- (no signals emitted on {today.isoformat()}; {len(all_signals)} historical signals in audit)")
+        else:
+            lines.append("- (none)")
 
     path = vault.root / "daily_reviews" / f"{today.isoformat()}-audit.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     return StepOutput(
-        message=f"审计摘要: {len(today_turns)} 次 Agent 对话",
-        data={"agent_turns": len(today_turns), "artifact": str(path)},
+        message=f"审计摘要: {len(today_turns)} 次 Agent 对话, {len(today_signals)} 条今日信号",
+        data={"agent_turns": len(today_turns), "signals_today": len(today_signals), "artifact": str(path)},
     )
 
 
@@ -1225,7 +1254,7 @@ async def resolve_reflections(ctx: StepContext) -> StepOutput:
     """Resolve pending reflections from all built-in jobs."""
     from trade_compass_agent.ops.reflection_resolver import resolve_all_job_reflections
 
-    results = resolve_all_job_reflections(ctx.config.memory_dir, ctx.config)
+    results = resolve_all_job_reflections(ctx.config.memory_dir, ctx.config, as_of=ctx.date)
     total = sum(len(v) for v in results.values())
     if total:
         lessons = [r.lesson for resolved in results.values() for r in resolved]
@@ -1376,7 +1405,10 @@ async def write_weekly_summary(ctx: StepContext) -> StepOutput:
         for sym in event.payload.get("symbols", []):
             symbols.add(sym)
 
-    recs = [e for e in audit.events if e.event_type == "recommendation"]
+    from trade_compass_agent.evaluation.follow_through import select_signal_audit_events
+
+    all_signals = select_signal_audit_events(audit.events, limit=500)
+    week_signals = [e for e in all_signals if 0 <= (ctx.date - e.timestamp.date()).days < 7]
 
     lines = [
         f"# Weekly Summary {ctx.date.isoformat()}", "",
@@ -1389,10 +1421,13 @@ async def write_weekly_summary(ctx: StepContext) -> StepOutput:
     else:
         lines.append("- (no agent turns this week)")
     lines.extend(["", "## Recommendations"])
-    for event in recs[-20:]:
+    for event in week_signals[-20:]:
         lines.append(f"- {event.timestamp.date()} {event.summary}")
-    if not recs:
-        lines.append("- (none)")
+    if not week_signals:
+        if all_signals:
+            lines.append(f"- (no signals emitted this week; {len(all_signals)} historical signals in audit)")
+        else:
+            lines.append("- (none)")
 
     path = vault.root / "weekly_summaries" / f"{ctx.date.isoformat()}.md"
     path.parent.mkdir(parents=True, exist_ok=True)

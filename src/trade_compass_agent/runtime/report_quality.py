@@ -89,7 +89,7 @@ def review_report_evidence(text, task, tool_results, llm_call) -> list[str]:
                "verified_account_facts": report_portfolio_facts(tool_results),
                "verified_fifo_settlements": report_settlement_facts(tool_results), "tool_results": list(tool_results)}
     for attempt in range(2):
-        raw = llm_call(system, json.dumps(payload, ensure_ascii=False)).strip()
+        raw = re.sub(r"<think>.*?(?:</think>|$)", "", llm_call(system, json.dumps(payload, ensure_ascii=False)), flags=re.DOTALL).strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
         try:
@@ -150,14 +150,25 @@ def _quality_queries(name, data):
         yield (name, scope, timeframe), data
 
 
-def assess_data_quality(tool_results, *, planning_reference_date: str | None = None) -> DataQuality:
+def assess_data_quality(
+    tool_results,
+    *,
+    planning_reference_date: str | None = None,
+    auxiliary_memory_scopes: set[str] | frozenset[str] = frozenset(),
+) -> DataQuality:
     """Keep per-query failures; a later successful retry can resolve that query."""
     latest = {}
     result = DataQuality()
     for name, data in payloads(tool_results):
-        if name == "place_paper_trade" and data.get("trade_rejected") is True and data.get("error"):
-            result.execution_warnings.append(str(data["error"]))
-            continue
+        if name == "place_paper_trade":
+            if data.get("trade_rejected") is True and data.get("error"):
+                result.execution_warnings.append(str(data["error"]))
+                continue
+            if data.get("execution_unconfirmed") is True:
+                result.execution_warnings.append(
+                    str(data.get("error") or "操作结果尚未确认，请核对记录后再决定是否重试。")
+                )
+                continue
         if (name == "write_memory" and data.get("path") and data.get("content_hash")
                 and not any(data.get(key) for key in ("error", "fact_check_failed", "execution_unconfirmed"))):
             # An invalid bucket has no persisted target. Correcting it resolves
@@ -172,7 +183,8 @@ def assess_data_quality(tool_results, *, planning_reference_date: str | None = N
         label = _LABELS.get(name, name)
         if name == "write_memory" and data.get("fact_check_failed"):
             result.warnings.append(f"记忆未保存（{scope}）：{'；'.join(data.get('issues', []))}")
-            result.reject("memory_validation_failed", result.warnings[-1], name, scope)
+            if scope not in auxiliary_memory_scopes:
+                result.reject("memory_validation_failed", result.warnings[-1], name, scope)
             continue
         if data.get("error") or data.get("unavailable") is True:
             if name == "write_memory":

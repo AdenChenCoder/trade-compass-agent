@@ -1063,6 +1063,8 @@ class ToolRegistry:
         self._completed_user_orders: list[dict] = []
         self._trade_authorization: dict | None = None
         self._trade_context_evidence: dict = {}
+        self._loaded_skills: list[str] = []
+        self._last_trade_id: str | None = None
         self.trade_execution_guard = None
         self.planning_reference_date = None
 
@@ -1070,7 +1072,33 @@ class ToolRegistry:
         self._trade_user_message = message if self._memory_actor == "agent" else ""
         self._completed_user_orders = []
         self._trade_authorization = None
+        self._loaded_skills = []
+        self._last_trade_id = None
         self._trade_context_evidence = {"attachments": attachments, "previous_reply": previous_reply, "tool_results": []}
+
+    def reconcile_interrupted_trade(self) -> str | None:
+        from trade_compass_agent.runtime.tool_receipts import record_receipt
+        from trade_compass_agent.runtime.tools.portfolio import revoke_and_reconcile_paper_trade
+
+        trade_id = self._last_trade_id
+        self._last_trade_id = None
+        reconciled = revoke_and_reconcile_paper_trade(
+            self.stack.config.data_dir,
+            self.stack.config.trading_costs,
+            trade_id,
+            memory_dir=self.stack.config.memory_dir,
+        )
+        if reconciled is None:
+            return None
+        if self._trade_authorization:
+            payload = json.loads(reconciled)
+            if payload.get("status") == "executed":
+                self._completed_user_orders.append(
+                    {k: payload[k] for k in ("symbol", "side", "quantity", "price", "account") if k in payload}
+                )
+            payload["user_authorization"] = self._trade_authorization
+            reconciled = json.dumps(payload, ensure_ascii=False)
+        return record_receipt("place_paper_trade", reconciled)
 
     def _is_autonomous_trade(self, args: dict, *, importing: bool = False) -> bool:
         from trade_compass_agent.portfolio.trading_policy import AutonomousTradingStore, TradeRejected
@@ -1202,6 +1230,8 @@ class ToolRegistry:
             reference = args.get("reference") or None
             result = tool_load_skill(memory_dir=memory_dir, name=skill_name, reference=reference)
             if not result.lstrip().startswith("{"):
+                if skill_name and skill_name not in self._loaded_skills:
+                    self._loaded_skills.append(skill_name)
                 from trade_compass_agent.memory.skill_store import SkillStore
                 SkillStore(memory_dir / "skills").record_use(skill_name)
                 if self.on_event:
@@ -1433,31 +1463,46 @@ class ToolRegistry:
         if name == "place_paper_trade":
             if self.trade_execution_guard is not None:
                 self.trade_execution_guard()
+            from uuid import uuid4
+
             quantity = int(args.get("quantity") or 0)
             autonomous = self._is_autonomous_trade(args)
             if autonomous and args.get("price_source", "market_quote") != "market_quote":
                 from trade_compass_agent.portfolio.trading_policy import TradeRejected
                 raise TradeRejected("自主模拟交易必须使用市场成交价", "market_quote_required")
-            return tool_place_paper_trade(
-                self.stack,
-                symbol=args.get("symbol"),
-                side=args.get("side"),
-                quantity=quantity,
-                _autonomous=autonomous,
-                _execution_guard=self.trade_execution_guard,
-                _user_authorization_guard=self._authorize_user_order if not autonomous else None,
-                price=args.get("price"),
-                price_source=args.get("price_source", "market_quote"),
-                record_decision=args.get("record_decision", True),
-                signal_id=args.get("signal_id"),
-                reason=args.get("reason", ""),
-                account=args.get("account", "short_stock"),
-                previous_close=args.get("previous_close"),
-                is_st=args.get("is_st", False),
-                suspended=args.get("suspended", False),
-                is_t0=args.get("is_t0"),
-                price_limit_pct=args.get("price_limit_pct"),
-            )
+            trade_id = str(args.get("trade_id") or uuid4().hex[:16])
+            self._last_trade_id = trade_id
+            try:
+                result = tool_place_paper_trade(
+                    self.stack,
+                    symbol=args.get("symbol"),
+                    side=args.get("side"),
+                    quantity=quantity,
+                    trade_id=trade_id,
+                    _autonomous=autonomous,
+                    _loaded_skills=list(self._loaded_skills),
+                    _execution_guard=self.trade_execution_guard,
+                    _user_authorization_guard=self._authorize_user_order if not autonomous else None,
+                    price=args.get("price"),
+                    price_source=args.get("price_source", "market_quote"),
+                    record_decision=args.get("record_decision", True),
+                    signal_id=args.get("signal_id"),
+                    reason=args.get("reason", ""),
+                    account=args.get("account", "short_stock"),
+                    previous_close=args.get("previous_close"),
+                    is_st=args.get("is_st", False),
+                    suspended=args.get("suspended", False),
+                    is_t0=args.get("is_t0"),
+                    price_limit_pct=args.get("price_limit_pct"),
+                )
+            except BaseException as exc:
+                from trade_compass_agent.llm.providers import LLMExecutionCancelled
+
+                if not isinstance(exc, (TimeoutError, LLMExecutionCancelled)):
+                    self._last_trade_id = None
+                raise
+            self._last_trade_id = None
+            return result
         if name == "batch_paper_trades":
             self._is_autonomous_trade(args, importing=True)
             from trade_compass_agent.runtime.tools.portfolio import tool_batch_paper_trades

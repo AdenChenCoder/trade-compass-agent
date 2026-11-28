@@ -143,11 +143,19 @@ def _passes_gate(
 ) -> bool:
     """Hard gate conditions — must all pass before scoring.
 
-    When *bootstrap* is True, uses relaxed thresholds for cold-start:
-    - MIN_TOTAL_SIGNAL → BOOTSTRAP_MIN_SIGNAL (1)
-    - Skips consolidated and recall_days checks (impossible to satisfy pre-dreaming)
+    Raw observations legitimately carry dates, prices, and structured signal JSON;
+    durable wording checks (``quality_check``) run after Gate 3 LLM refinement.
     """
+    del skill_store
     if obs.promoted_at is not None:
+        return False
+    from trade_compass_agent.memory.write_gate import MIN_ENTRY_LENGTH
+    import re
+
+    text = (obs.summary or "").strip()
+    if len(text) < MIN_ENTRY_LENGTH:
+        return False
+    if re.search(r"^\[[\w_]+\]\s+\w+=.+;\s+\w+=", text):
         return False
     if bootstrap:
         if obs.total_signal < BOOTSTRAP_MIN_SIGNAL:
@@ -159,11 +167,6 @@ def _passes_gate(
             return False
         if not obs.consolidated:
             return False
-    from trade_compass_agent.memory.write_gate import quality_check
-    ok, _reason = quality_check(obs.summary, skill_store=skill_store)
-    if not ok:
-        logger.debug("Promotion quality gate rejected %s: %s", obs.id, _reason)
-        return False
     return True
 
 
@@ -291,6 +294,12 @@ def _cluster_by_concepts(
 # Gate 3 + 4: LLM refine + judge
 # ------------------------------------------------------------------
 
+def _strip_reasoning_tags(text: str) -> str:
+    import re
+
+    return re.sub(r"<think>.*?(?:</think>|$)", "", text, flags=re.DOTALL).strip()
+
+
 def _llm_refine(
     cluster: list[PromotionCandidate],
     llm_call: LLM_CALL,
@@ -301,7 +310,9 @@ def _llm_refine(
     )
     prompt = PROMOTION_REFINE_PROMPT.format(observations=obs_text)
     try:
-        result = llm_call("你是一个交易记忆提炼引擎。只返回归纳出的规律文本或 SKIP。", prompt).strip()
+        result = _strip_reasoning_tags(
+            llm_call("你是一个交易记忆提炼引擎。只返回归纳出的规律文本或 SKIP。", prompt)
+        )
         if result.upper() == "SKIP" or not result:
             return None
         return result[:120]
@@ -331,7 +342,7 @@ def _llm_judge(
     obs_ids = [c.observation.id for c in cluster]
 
     try:
-        raw = llm_call("你是交易知识审判官。只返回合法 JSON。", prompt).strip()
+        raw = _strip_reasoning_tags(llm_call("你是交易知识审判官。只返回合法 JSON。", prompt))
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         data = json.loads(raw)
@@ -413,18 +424,26 @@ def apply_promotions(
             skills_summary = "\n".join(f"- {s.name}: {s.description or ''}" for s in skills[:20])
 
     results: list[PromotionResult] = []
+    promoted_count = 0
 
     for cluster in clusters:
-        if len(results) >= max_promote:
+        if promoted_count >= max_promote:
             break
 
         existing_active = mem_store.list_active("memory", min_confidence=gov.min_inject_confidence)
         existing_knowledge = "\n".join(m.text for m in existing_active) if existing_active else "（暂无）"
 
-        # Gate 3: LLM refine
+        # Gate 3: LLM refine + durable quality gate on refined output
         refined = _llm_refine(cluster, llm_call)
         if refined is None:
             logger.debug("Gate 3 SKIP: cluster with %d obs could not be refined", len(cluster))
+            continue
+
+        from trade_compass_agent.memory.write_gate import quality_check
+
+        ok_refined, q_reason = quality_check(refined, skill_store=skill_store)
+        if not ok_refined:
+            logger.debug("Post-Gate-3 quality check rejected refined rule (%s): %s", q_reason, refined)
             continue
 
         # Gate 4: LLM judge (with GROUNDING + SUPERSEDE)
@@ -436,6 +455,11 @@ def apply_promotions(
             llm_call,
             include_grounding=promo_cfg.grounding_in_judge,
         )
+        if result.verdict in {"KNOWLEDGE", "USER", "SUPERSEDE"}:
+            ok_final, final_reason = quality_check(result.refined_text, skill_store=skill_store)
+            if not ok_final:
+                result.verdict = "REJECT"
+                result.reason = f"{result.reason}; 终稿未通过持久性检查: {final_reason}".strip("; ")
         logger.info(
             "Promotion verdict=%s for %d obs: %s (reason: %s)",
             result.verdict, len(cluster), result.refined_text[:50], result.reason,
@@ -469,6 +493,7 @@ def apply_promotions(
             )
             if replace_result.get("ok") and replace_result.get("accepted", True):
                 obs_store.mark_promoted(result.source_obs_ids)
+                promoted_count += 1
                 results.append(result)
             else:
                 result.verdict = "REJECT"
@@ -486,6 +511,7 @@ def apply_promotions(
             )
             if write_result.get("ok") and write_result.get("accepted", True):
                 obs_store.mark_promoted(result.source_obs_ids)
+                promoted_count += 1
                 results.append(result)
             else:
                 logger.debug("MemoryStore rejected KNOWLEDGE write: %s", write_result.get("error"))
@@ -503,6 +529,7 @@ def apply_promotions(
             )
             if write_result.get("ok") and write_result.get("accepted", True):
                 obs_store.mark_promoted(result.source_obs_ids)
+                promoted_count += 1
                 results.append(result)
             else:
                 logger.debug("MemoryStore rejected USER write: %s", write_result.get("error"))
@@ -523,10 +550,15 @@ def _apply_legacy(
     max_promote: int,
 ) -> list[PromotionResult]:
     """Legacy direct-write fallback when LLM is unavailable."""
+    from trade_compass_agent.memory.write_gate import quality_check
+
     results: list[PromotionResult] = []
     for c in candidates:
         if len(results) >= max_promote:
             break
+        ok, _ = quality_check(c.observation.summary)
+        if not ok:
+            continue
         write_result = mem_store.add(c.observation.summary, target="memory", source="promotion", confidence=0.85)
         if write_result.get("ok") and write_result.get("accepted", True):
             obs_store.mark_promoted([c.observation.id])

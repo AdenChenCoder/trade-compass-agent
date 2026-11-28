@@ -14,12 +14,14 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from trade_compass_agent.concurrency import file_transaction
 
 logger = logging.getLogger(__name__)
+
+ENTRY_SIGNAL_RATINGS = frozenset({"buy", "strong_buy"})
 
 
 @dataclass
@@ -67,19 +69,30 @@ class SignalTracker:
         self._lock = get_path_lock(self.path)
 
     def track_signal(self, signal_data: dict[str, Any]) -> TrackedSignal:
-        """Start tracking a new signal (deduplicated by signal_id)."""
+        """Start tracking a new signal (deduplicated by signal_id).
+
+        Actionable buy signals start as 'pending' awaiting entry execution;
+        non-entry ratings (hold/sell/strong_sell) are recorded as 'observed'
+        so they retain skill/strategy lineage without bloating pending entries.
+        """
         signal_id = signal_data.get("signal_id", "")
+        raw_rating = signal_data.get("rating", "")
+        rating = raw_rating.value if hasattr(raw_rating, "value") else str(raw_rating or "")
+        raw_account = signal_data.get("account")
+        account = raw_account.value if hasattr(raw_account, "value") else raw_account
+        initial_status = "pending" if rating.lower() in ENTRY_SIGNAL_RATINGS else "observed"
         tracked = TrackedSignal(
             signal_id=signal_id,
             symbol=signal_data.get("symbol", ""),
-            rating=signal_data.get("rating", ""),
+            rating=rating,
             confidence=signal_data.get("confidence", 0.5),
             entry_price=signal_data.get("entry_price"),
             stop_loss=signal_data.get("stop_loss"),
             target_price=signal_data.get("target_price"),
             emitted_at=signal_data.get("timestamp", datetime.now().isoformat()),
+            status=initial_status,
             source_skills=list(signal_data.get("source_skills") or []),
-            account=signal_data.get("account"),
+            account=account,
             strategy_id=signal_data.get("strategy_id"),
             strategy_version=signal_data.get("strategy_version"),
             research_run_id=signal_data.get("research_run_id"),
@@ -90,6 +103,50 @@ class SignalTracker:
                 return tracked
             self._append(tracked)
         return tracked
+
+    def expire_pending(self, *, as_of: date | None = None, max_trading_days: int = 5) -> int:
+        """Mark stale unexecuted pending entry signals as expired."""
+        from zoneinfo import ZoneInfo
+        from trade_compass_agent.ops.trading_calendar import is_trading_day
+
+        cst = ZoneInfo("Asia/Shanghai")
+        target_day = as_of or datetime.now(cst).date()
+        expired = 0
+        changed = False
+        with file_transaction(self.path.with_suffix(".lock")), self._lock:
+            records = self._load_all()
+            for r in records:
+                if r.status != "pending" or r.entry_trade_ids:
+                    continue
+                if r.rating.lower() not in ENTRY_SIGNAL_RATINGS:
+                    r.status = "observed"
+                    changed = True
+                    continue
+                try:
+                    parsed = datetime.fromisoformat(r.emitted_at.replace("Z", "+00:00"))
+                    emitted_day = (parsed.astimezone(cst) if parsed.tzinfo else parsed).date()
+                except (ValueError, TypeError, AttributeError):
+                    continue
+                if emitted_day >= target_day:
+                    continue
+                if (target_day - emitted_day).days > max_trading_days * 3:
+                    elapsed_trading = max_trading_days + 1
+                else:
+                    elapsed_trading = 0
+                    cursor = emitted_day + timedelta(days=1)
+                    while cursor <= target_day:
+                        if is_trading_day(cursor):
+                            elapsed_trading += 1
+                        cursor += timedelta(days=1)
+                if elapsed_trading > max_trading_days:
+                    r.status = "expired"
+                    r.outcome = "expired"
+                    r.closed_at = target_day.isoformat()
+                    expired += 1
+                    changed = True
+            if changed:
+                self._save_all(records)
+        return expired
 
     def update_entry(self, signal_id: str, actual_entry: float) -> None:
         """Record that a position was opened."""

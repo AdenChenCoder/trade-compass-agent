@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from trade_compass_agent.domain.signals import SignalRating, TradingSignal
 from trade_compass_agent.evaluation.signal_tracker import SignalTracker
@@ -66,6 +68,8 @@ def tool_emit_signal(stack: MarketStack, **kwargs: object) -> str:
     if entry_f and stop_f and target_f and entry_f != stop_f:
         rr_ratio = round((target_f - entry_f) / (entry_f - stop_f), 2)
 
+    from trade_compass_agent.runtime.tools.portfolio import _market_now
+
     signal = TradingSignal(
         account=kwargs.get("account"),
         strategy_id=kwargs.get("strategy_id"),
@@ -82,6 +86,7 @@ def tool_emit_signal(stack: MarketStack, **kwargs: object) -> str:
         source_specialist=source_specialist,
         source_tools=source_tools,
         source_skills=source_skills,
+        timestamp=_market_now().isoformat(timespec="seconds"),
     )
 
     from trade_compass_agent.evaluation.signal_execution import validate_research_reference
@@ -117,15 +122,28 @@ def _persist_signal(data_dir: Path, signal: TradingSignal) -> None:
 
 def _record_audit(data_dir: Path, signal: TradingSignal) -> None:
     """Mirror signal to the audit log."""
+    from trade_compass_agent.runtime.tools.portfolio import _market_now
+
+    audit_ts: datetime | None = None
+    if isinstance(signal.timestamp, datetime):
+        audit_ts = signal.timestamp
+    elif isinstance(signal.timestamp, str) and signal.timestamp.strip():
+        try:
+            audit_ts = datetime.fromisoformat(signal.timestamp.strip().replace("Z", "+00:00"))
+        except ValueError:
+            audit_ts = None
+    if audit_ts is not None and audit_ts.tzinfo is not None:
+        audit_ts = audit_ts.astimezone(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
     audit = JsonAuditLog(data_dir / "audit.jsonl")
     audit.record(
         event_type="trading_signal",
         summary=f"{signal.symbol} {signal.rating.value} (conf={signal.confidence:.0%})",
-        payload=signal.model_dump(),
+        payload=signal.model_dump(mode="json"),
+        timestamp=audit_ts or _market_now(),
     )
 
 
 def _track_signal(data_dir: Path, signal: TradingSignal) -> None:
     """Register signal in the tracking system for lifecycle monitoring."""
     tracker = SignalTracker(data_dir)
-    tracker.track_signal(signal.model_dump())
+    tracker.track_signal(signal.model_dump(mode="json"))

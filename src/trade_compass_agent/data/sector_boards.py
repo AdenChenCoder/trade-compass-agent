@@ -6,9 +6,21 @@ import math
 from .network import rate_limit_domain
 
 _EM_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.eastmoney.com"}
-_EM_BOARD_SPECS: dict[str, tuple[str, str]] = {
-    "concept": ("https://79.push2.eastmoney.com/api/qt/clist/get", "m:90 t:3 f:!50"),
-    "industry": ("https://17.push2.eastmoney.com/api/qt/clist/get", "m:90 t:2 f:!50"),
+_EM_BOARD_SPECS: dict[str, tuple[tuple[str, ...], str]] = {
+    "concept": (
+        (
+            "https://79.push2.eastmoney.com/api/qt/clist/get",
+            "https://push2.eastmoney.com/api/qt/clist/get",
+        ),
+        "m:90 t:3 f:!50",
+    ),
+    "industry": (
+        (
+            "https://17.push2.eastmoney.com/api/qt/clist/get",
+            "https://push2.eastmoney.com/api/qt/clist/get",
+        ),
+        "m:90 t:2 f:!50",
+    ),
 }
 
 _SINA_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://vip.stock.finance.sina.com.cn"}
@@ -25,7 +37,7 @@ def _safe_float(value, default=0.0):
 def fetch_eastmoney_board_rows(*, board_type: str, limit: int) -> list[dict]:
     import requests
 
-    url, fs = _EM_BOARD_SPECS[board_type]
+    urls, fs = _EM_BOARD_SPECS[board_type]
     params = {
         "pn": "1",
         "pz": str(max(1, min(limit, 100))),
@@ -38,12 +50,27 @@ def fetch_eastmoney_board_rows(*, board_type: str, limit: int) -> list[dict]:
         "fs": fs,
         "fields": "f2,f3,f8,f12,f14,f104,f105,f128,f136",
     }
-    rate_limit_domain(url)
-    resp = requests.get(url, params=params, headers=_EM_HEADERS, timeout=(1.0, 1.5))
-    resp.raise_for_status()
-    diff = (resp.json().get("data") or {}).get("diff") or []
-    return [row for row in diff if isinstance(row, dict) and isinstance(row.get("f14"), str)
-            and row["f14"].strip() and _safe_float(row.get("f3"), None) is not None] if isinstance(diff, list) else []
+    last_exc: Exception | None = None
+    rate_limit_domain(urls[0])
+    for idx, url in enumerate(urls):
+        try:
+            resp = requests.get(url, params=params, headers=_EM_HEADERS, timeout=(0.8, 1.0) if idx else (1.0, 1.5))
+            resp.raise_for_status()
+            diff = (resp.json().get("data") or {}).get("diff") or []
+            rows = [
+                row for row in diff
+                if isinstance(row, dict)
+                and isinstance(row.get("f14"), str)
+                and row["f14"].strip()
+                and _safe_float(row.get("f3"), None) is not None
+            ] if isinstance(diff, list) else []
+            if rows:
+                return rows
+        except Exception as exc:
+            last_exc = exc
+    if last_exc is not None:
+        raise last_exc
+    return []
 
 
 def fetch_sina_board_rows(*, board_type: str, limit: int) -> list[dict]:

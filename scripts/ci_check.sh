@@ -113,6 +113,8 @@ fi
   src/trade_compass_agent/runtime/tools/artifact_tracking.py \
   src/trade_compass_agent/runtime/tools/builtin_operations.py \
   src/trade_compass_agent/ops/job_definition.py \
+  src/trade_compass_agent/evaluation/signal_migration.py \
   src/trade_compass_agent/evaluation/workflow_artifacts.py \
-  src/trade_compass_agent/web/api.py
+  src/trade_compass_agent/web/api.py \
+  tests/test_closed_loop_recovery.py
 MPLBACKEND=Agg "$PYTHON" -m pytest -q

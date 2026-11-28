@@ -170,6 +170,13 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(("audit", "show"), "Show one audit event.", "evaluation"),
     CommandSpec(("evaluate",), "Evaluate 1/3/5-day signal follow-through.", "evaluation"),
     CommandSpec(
+        ("signals", "reconcile"),
+        "Preview or apply historical signal-ledger reconciliation and pending cleanup.",
+        "evaluation",
+        mutates_state=True,
+        supports_json=True,
+    ),
+    CommandSpec(
         ("backup", "create"),
         "Create a local recovery archive.",
         "recovery",

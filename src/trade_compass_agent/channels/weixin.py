@@ -216,9 +216,14 @@ class WeixinBotAdapter(ChannelAdapter):
                     break
             except asyncio.CancelledError:
                 break
+            except httpx.ReadTimeout:
+                backoff_idx = 0
+                logger.debug("WeChat long-poll idle timeout, re-polling")
+                continue
             except Exception as exc:
                 delay = backoff_steps[min(backoff_idx, len(backoff_steps) - 1)]
-                logger.warning("WeChat poll error: %s, retry in %ds", exc, delay)
+                detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+                logger.warning("WeChat poll error: %s, retry in %ds", detail, delay)
                 backoff_idx += 1
                 await asyncio.sleep(delay)
 

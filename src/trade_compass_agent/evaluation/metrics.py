@@ -20,15 +20,21 @@ class MetricsEngine:
 
     def follow_through_metrics(self, results: list[SignalFollowThrough]) -> list[EvaluationMetric]:
         completed = [item for item in results if item.status == "complete"]
-        returns_1d = [item.return_1d for item in completed if item.return_1d is not None]
-        returns_3d = [item.return_3d for item in completed if item.return_3d is not None]
-        returns_5d = [item.return_5d for item in completed if item.return_5d is not None]
-        runups = [item.max_runup for item in completed if item.max_runup is not None]
-        drawdowns = [item.max_drawdown for item in completed if item.max_drawdown is not None]
+        from trade_compass_agent.evaluation.follow_through import NEUTRAL_SIGNAL_ACTIONS
+
+        directional = [item for item in completed if item.action.lower() not in NEUTRAL_SIGNAL_ACTIONS]
+        hold_count = len(completed) - len(directional)
+        returns_1d = [item.return_1d for item in directional if item.return_1d is not None]
+        returns_3d = [item.return_3d for item in directional if item.return_3d is not None]
+        returns_5d = [item.return_5d for item in directional if item.return_5d is not None]
+        runups = [item.max_runup for item in directional if item.max_runup is not None]
+        drawdowns = [item.max_drawdown for item in directional if item.max_drawdown is not None]
 
         metrics = [
             EvaluationMetric(name="sample_count", value=len(results), unit="signals"),
             EvaluationMetric(name="completed_count", value=len(completed), unit="signals"),
+            EvaluationMetric(name="directional_count", value=len(directional), unit="signals"),
+            EvaluationMetric(name="hold_count", value=hold_count, unit="signals"),
         ]
         metrics.extend(_return_metrics("return_1d", returns_1d))
         metrics.extend(_return_metrics("return_3d", returns_3d))
