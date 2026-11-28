@@ -688,10 +688,18 @@ class LocalBarCacheProvider:
     _write_lock = threading.Lock()
     supported_timeframes = ALL_TIMEFRAMES
 
-    def __init__(self, root: Path, *, closed_daily_only: bool = False, required_source: str | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        closed_daily_only: bool = False,
+        required_source: str | None = None,
+        allow_historical: bool = False,
+    ) -> None:
         self.root = root
         self.closed_daily_only = closed_daily_only
         self.required_source = required_source
+        self.allow_historical = allow_historical
         self.root.mkdir(parents=True, exist_ok=True)
 
     def get_instrument(self, symbol: str) -> Instrument:
@@ -735,12 +743,13 @@ class LocalBarCacheProvider:
             raise ProviderError(f"empty cache for {symbol} {timeframe}")
         if self.required_source is not None and any(bar.source != self.required_source for bar in bars):
             raise ProviderError(f"cache is not from preferred source {self.required_source}")
-        if not self._is_fresh(bars, timeframe, path):
-            raise ProviderError(f"stale cache for {symbol} {timeframe}")
-        if len(bars) < limit and requested_limit < limit:
-            raise ProviderError(
-                f"cache has {len(bars)} bars for {symbol} {timeframe}, need {limit}"
-            )
+        if not self.allow_historical:
+            if not self._is_fresh(bars, timeframe, path):
+                raise ProviderError(f"stale cache for {symbol} {timeframe}")
+            if len(bars) < limit and requested_limit < limit:
+                raise ProviderError(
+                    f"cache has {len(bars)} bars for {symbol} {timeframe}, need {limit}"
+                )
         return bars[-limit:]
 
     def _is_fresh(self, bars: list[Bar], timeframe: str = "1d", path: Path | None = None) -> bool:
@@ -976,13 +985,15 @@ class ChainProvider:
                     raise ProviderError("data provider timeout budget exhausted")
                 if not bars:
                     raise ProviderError("empty bars response")
-                if timeframe == "1d":
-                    now = _market_now()
-                    expected = _prev_trading_date(now.date(), now.hour)
-                    if bars[-1].timestamp.date() < expected:
-                        raise ProviderError(f"stale daily bars: latest={bars[-1].timestamp.date()}, required={expected}")
-                if timeframe in MINUTE_TIMEFRAMES and not _bars_are_fresh(bars, timeframe):
-                    raise ProviderError(f"stale minute bars: latest={bars[-1].timestamp}")
+                allow_historical = bool(getattr(provider, "allow_historical", False))
+                if not allow_historical:
+                    if timeframe == "1d":
+                        now = _market_now()
+                        expected = _prev_trading_date(now.date(), now.hour)
+                        if bars[-1].timestamp.date() < expected:
+                            raise ProviderError(f"stale daily bars: latest={bars[-1].timestamp.date()}, required={expected}")
+                    if timeframe in MINUTE_TIMEFRAMES and not _bars_are_fresh(bars, timeframe):
+                        raise ProviderError(f"stale minute bars: latest={bars[-1].timestamp}")
                 self.last_resolved_provider = provider.name
                 if provider.name != "cache":
                     bars = [replace(bar, source=provider.name) if bar.source is None else bar for bar in bars]

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import OrderedDict
 from datetime import date, datetime, time
 import math
 from pathlib import Path
+import threading
 from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -37,6 +39,108 @@ _EXECUTION_PRICE_SOURCES = {
     "provided_execution",
     "external_import",
 }
+_REVOKED_LOCK = threading.Lock()
+_REVOKED_TRADE_IDS: OrderedDict[str, None] = OrderedDict()
+_MAX_REVOKED_IDS = 1024
+
+
+def _mark_trade_revoked(trade_id: str) -> None:
+    with _REVOKED_LOCK:
+        _REVOKED_TRADE_IDS[trade_id] = None
+        while len(_REVOKED_TRADE_IDS) > _MAX_REVOKED_IDS:
+            _REVOKED_TRADE_IDS.popitem(last=False)
+
+
+def _is_trade_revoked(trade_id: str) -> bool:
+    with _REVOKED_LOCK:
+        return trade_id in _REVOKED_TRADE_IDS
+
+
+def _invalid_order_response(message: str) -> str:
+    return json.dumps(
+        {
+            "error": message,
+            "trade_rejected": True,
+            "error_type": "invalid_arguments",
+            "execution_started": False,
+        },
+        ensure_ascii=False,
+    )
+
+
+def revoke_and_reconcile_paper_trade(
+    data_dir: Path,
+    costs: Any,
+    trade_id: str | None,
+    *,
+    memory_dir: Path | None = None,
+) -> str | None:
+    """Atomically revoke an interrupted order's commit permit and check the ledger."""
+    if not trade_id:
+        return None
+    from trade_compass_agent.portfolio.trading_policy import portfolio_transaction
+
+    ledger_path = data_dir / "paper_trades.jsonl"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with portfolio_transaction(ledger_path):
+            _mark_trade_revoked(trade_id)
+            portfolio = JsonPaperPortfolio(ledger_path, costs=costs)
+            matched = next((t for t in portfolio.trades if t.trade_id == trade_id), None)
+            if matched is None:
+                return None
+            acct_str = matched.account.value if hasattr(matched.account, "value") else str(matched.account)
+            held = next((p for p in portfolio.positions() if p.symbol == matched.symbol and p.account == acct_str), None)
+            if matched.side == "sell":
+                position_after = {"quantity": held.quantity if held else 0, "closed": held is None}
+            else:
+                position_after = {
+                    "quantity": held.quantity if held else 0,
+                    "avg_cost": round(held.avg_cost, 3) if held else 0,
+                }
+            settlement = {}
+            if matched.side == "sell":
+                closed = [row for row in portfolio.realized_trades() if row.exit_trade_id == trade_id]
+                settlement = {
+                    "realized_pnl": round(sum(row.pnl for row in closed), 2),
+                    "realized_pnl_basis": "fifo_after_entry_and_exit_fees",
+                }
+            signal_fields = {"signal_id": matched.signal_id} if matched.signal_id else {}
+            receipt = json.dumps(
+                {
+                    "status": "executed",
+                    "symbol": matched.symbol,
+                    "side": matched.side,
+                    "quantity": matched.quantity,
+                    "price": matched.price,
+                    "fee": portfolio.estimate_fee(matched),
+                    "account": acct_str,
+                    "reason": matched.reason,
+                    "trade_id": matched.trade_id,
+                    "decision_id": matched.decision_id,
+                    **signal_fields,
+                    "timestamp": matched.timestamp.isoformat(),
+                    "price_source": matched.price_source,
+                    "price_as_of": matched.price_as_of.isoformat() if matched.price_as_of else None,
+                    "requested_price": matched.requested_price,
+                    "position_after": position_after,
+                    **settlement,
+                },
+                ensure_ascii=False,
+            )
+        try:
+            _update_signal_tracker(data_dir, portfolio)
+        except Exception:
+            pass
+        if memory_dir is not None:
+            try:
+                _sync_decision_journal(data_dir, memory_dir, costs, matched)
+            except Exception:
+                pass
+        return receipt
+    except Exception as exc:
+        logger.warning("Could not reconcile interrupted paper trade %s: %s", trade_id, exc)
+        return None
 
 
 def _get_portfolio(stack: MarketStack) -> JsonPaperPortfolio:
@@ -282,10 +386,10 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
     autonomous = bool(kwargs.get("_autonomous", False))
 
     if price_source not in _EXECUTION_PRICE_SOURCES:
-        return json.dumps({"error": f"无效价格来源: {price_source}"}, ensure_ascii=False)
+        return _invalid_order_response(f"无效价格来源: {price_source}")
 
     if not symbol or not side or quantity <= 0:
-        return json.dumps({"error": "缺少必要参数: symbol, side, quantity, price"}, ensure_ascii=False)
+        return _invalid_order_response("缺少必要参数: symbol, side, quantity, price")
 
     price_as_of = None
     price = requested_price
@@ -300,17 +404,16 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
                 ensure_ascii=False,
             )
     elif price <= 0:
-        return json.dumps({"error": "缺少必要参数: price"}, ensure_ascii=False)
+        return _invalid_order_response("缺少必要参数: price")
 
     if side not in ("buy", "sell"):
-        return json.dumps({"error": "side 必须为 'buy' 或 'sell'"}, ensure_ascii=False)
+        return _invalid_order_response("side 必须为 'buy' 或 'sell'")
 
     try:
         acct = AccountKind(account)
     except ValueError:
-        return json.dumps(
-            {"error": f"无效账户类型: {account}, 可选: {[a.value for a in AccountKind]}"},
-            ensure_ascii=False,
+        return _invalid_order_response(
+            f"无效账户类型: {account}, 可选: {[a.value for a in AccountKind]}"
         )
 
     rules = infer_market_rules(symbol)
@@ -330,6 +433,31 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
     except ValueError as exc:
         return json.dumps({"error": str(exc), "trade_rejected": True}, ensure_ascii=False)
 
+    auto_signal = None
+    trade_ts = _market_now() if price_source == "market_quote" else datetime.now()
+    if side == "buy" and autonomous and record_decision and not signal_ref:
+        from trade_compass_agent.domain.signals import SignalRating, TradingSignal
+
+        raw_skills = [str(s) for s in (kwargs.get("_loaded_skills") or []) if str(s).strip()]
+        analytical_skills = [s for s in raw_skills if s != "autonomous-paper-trading"]
+        effective_skills = analytical_skills or raw_skills
+        auto_signal = TradingSignal(
+            account=acct,
+            symbol=symbol,
+            rating=SignalRating.BUY,
+            confidence=0.7,
+            entry_price=price,
+            reasoning=reason or f"{symbol} 自主模拟买入 {quantity}股",
+            source_specialist="autonomous_paper_trade",
+            source_tools=["place_paper_trade"],
+            source_skills=effective_skills,
+            timestamp=trade_ts.isoformat(timespec="seconds"),
+        )
+        signal_ref = {
+            "signal_id": auto_signal.signal_id,
+            "source_skills": tuple(auto_signal.source_skills),
+        }
+
     trade = PaperTrade(
         **signal_ref,
         symbol=symbol,
@@ -337,7 +465,7 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
         side=side,
         quantity=quantity,
         price=price,
-        timestamp=_market_now() if price_source == "market_quote" else datetime.now(),
+        timestamp=trade_ts,
         reason=reason,
         trade_id=trade_id,
         decision_id=decision_id,
@@ -363,6 +491,8 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
                             "price": price, "price_source": price_source, "account": acct.value})
     fee = portfolio.estimate_fee(trade)
     def validate_execution(current_portfolio):
+        if _is_trade_revoked(trade_id):
+            raise TradeRejected("工具执行已超时中止，本次订单未提交", "execution_timed_out_before_commit")
         execution_guard = kwargs.get("_execution_guard")
         if execution_guard is not None:
             execution_guard()
@@ -371,24 +501,33 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
         require_single_account(stack.config.data_dir, acct)
         if autonomous and not AutonomousTradingStore(stack.config.data_dir).read():
             raise TradeRejected("自主交易已关闭，本次交易未成交", "autonomous_trading_disabled")
-        if price_source != "market_quote":
-            return
-        _validate_quote_time(price_as_of, _market_now())
-        if side == "buy":
-            if quantity < rules.min_lot or (
-                rules.board not in ("科创板", "北交所") and quantity % rules.min_lot
-            ):
-                raise TradeRejected("买入数量不符合该标的最小交易单位", "invalid_lot_size")
-            available = buying_power(current_portfolio, stack.config.data_dir, acct)
-            required = round(price * quantity + fee, 4)
-            if required > available + 0.000001:
-                raise TradeRejected(
-                    f"可用资金不足：需要 {required:.2f}，可用 {available:.2f}",
-                    "insufficient_funds", available_cash=available, required_cash=required,
-                )
-        elif rules.board not in ("科创板", "北交所") and quantity % rules.min_lot:
-            if quantity != current_portfolio._position_qty(symbol, acct):
-                raise TradeRejected("零股卖出须一次性卖出该标的剩余持仓", "invalid_lot_size")
+        if price_source == "market_quote":
+            _validate_quote_time(price_as_of, _market_now())
+            if side == "buy":
+                if quantity < rules.min_lot or (
+                    rules.board not in ("科创板", "北交所") and quantity % rules.min_lot
+                ):
+                    raise TradeRejected("买入数量不符合该标的最小交易单位", "invalid_lot_size")
+                available = buying_power(current_portfolio, stack.config.data_dir, acct)
+                required = round(price * quantity + fee, 4)
+                if required > available + 0.000001:
+                    raise TradeRejected(
+                        f"可用资金不足：需要 {required:.2f}，可用 {available:.2f}",
+                        "insufficient_funds", available_cash=available, required_cash=required,
+                    )
+            elif rules.board not in ("科创板", "北交所") and quantity % rules.min_lot:
+                if quantity != current_portfolio._position_qty(symbol, acct):
+                    raise TradeRejected("零股卖出须一次性卖出该标的剩余持仓", "invalid_lot_size")
+        if auto_signal is not None:
+            from trade_compass_agent.runtime.tools.signals import (
+                _persist_signal,
+                _record_audit,
+                _track_signal,
+            )
+
+            _persist_signal(stack.config.data_dir, auto_signal)
+            _record_audit(stack.config.data_dir, auto_signal)
+            _track_signal(stack.config.data_dir, auto_signal)
 
     try:
         portfolio.record(trade, before_record=validate_execution)
@@ -397,20 +536,25 @@ def tool_place_paper_trade(stack: MarketStack, **kwargs: Any) -> str:
     except ValueError as exc:
         return json.dumps({"error": str(exc), "trade_rejected": True}, ensure_ascii=False)
 
+    # Once portfolio.record succeeds, the fill and any auto_signal are authoritative on disk.
     try:
         _update_signal_tracker(stack.config.data_dir, portfolio)
-    except Exception as exc:
-        # The authoritative fill already exists; reporting a failed order here
-        # could make the agent retry a trade that has actually executed.
+    except BaseException as exc:
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
         logger.warning("Trade %s executed but signal synchronization failed: %s", trade_id, exc)
 
-    # Decision Journal + Instrument Page integration
-    _sync_decision_journal(
-        stack.config.data_dir,
-        stack.config.memory_dir,
-        stack.config.trading_costs,
-        trade,
-    )
+    try:
+        _sync_decision_journal(
+            stack.config.data_dir,
+            stack.config.memory_dir,
+            stack.config.trading_costs,
+            trade,
+        )
+    except BaseException as exc:
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
+        logger.warning("Trade %s executed but decision journal sync failed: %s", trade_id, exc)
 
     held = next((p for p in portfolio.positions() if p.symbol == symbol and p.account == account), None)
     if side == "sell":

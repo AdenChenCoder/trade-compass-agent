@@ -2,6 +2,31 @@
 
 This project follows [Semantic Versioning](https://semver.org/) and records user-visible changes here.
 
+## [0.5.16] - 2026-11-28
+
+- Evaluate emitted `trading_signal` audit records alongside legacy
+  `recommendation` events across `trade-compass evaluate`, rule attribution and
+  daily/weekly post-market summaries. Validate historical bar-cache date
+  coverage so missing early bars remain explicit gaps instead of shifting entry
+  dates, and align signal audit timestamps to the `Asia/Shanghai` market clock.
+- Link autonomous paper buys to tracked `TradingSignal` records atomically
+  under the portfolio transaction lock when no prior `signal_id` is supplied,
+  reclassify non-entry (`hold`/`sell`) signals as `observed`, and add preview-first
+  `trade-compass signals reconcile [--apply]` to archive stale pending entries
+  and link unambiguous historical fills with a recovery backup.
+- Preserve `trade_rejected` on pre-flight paper-trade validation errors so
+  rejected calls are not reported as unavailable tools, and reconcile
+  interrupted `place_paper_trade` calls against the ledger without replaying
+  orders.
+- Verify scheduled `trade-log` and `market-notes` writes against full turn
+  receipts while keeping planned stop-loss/target levels intact, and isolate
+  daily-note validation failures, EastMoney sector-board failover to Sina, and
+  channel delivery retries from marking completed scheduled runs as degraded.
+- Filter recall echoes and raw tool key-value summaries before Dreaming
+  promotion, judge knowledge candidates on refined rules, resolve deferred
+  post-market reflections against held or closed positions, and silence normal
+  WeChat long-poll idle timeouts.
+
 ## [0.5.15] - 2026-11-26
 
 - Keep only vermilion, glacier cyan and berry palettes on desktop and mobile.

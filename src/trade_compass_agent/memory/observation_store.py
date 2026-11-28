@@ -313,17 +313,34 @@ class ObservationStore:
         )
         conn.commit()
 
+    _RECALLED_ECHO_TOOLS = (
+        "search_memory",
+        "load_skill",
+        "recall_timeline",
+        "recall_instrument",
+        "session_search",
+        "write_memory",
+        "write_knowledge",
+        "skill_manage",
+        "update_instrument_page",
+    )
+
     def promotion_candidates(
         self, min_signal: int = 3, limit: int = 50, *, require_consolidated: bool = True,
     ) -> list[Observation]:
         """Get observations eligible for promotion scoring.
 
         Uses total_signal (recall + daily + grounded) instead of recall_count
-        alone; multiple independent signals are required.
+        alone; multiple independent signals are required. Read-only memory/skill
+        recall echoes are excluded so they cannot crowd out real market observations.
         Set *require_consolidated* to False for cold-start bootstrap.
         """
         conn = self._get_conn()
-        where = "WHERE promoted_at IS NULL "
+        placeholders = ", ".join("?" for _ in self._RECALLED_ECHO_TOOLS)
+        where = (
+            f"WHERE promoted_at IS NULL AND tool_name NOT IN ({placeholders}) "
+            "AND NOT (summary GLOB '[[]*]*=*; *=*') "
+        )
         if require_consolidated:
             where += "AND consolidated = 1 "
         where += "AND (recall_count + daily_count + grounded_count) >= ? "
@@ -331,7 +348,7 @@ class ObservationStore:
             f"SELECT {self._SELECT_COLS} FROM observations "
             f"{where}"
             "ORDER BY (recall_count + daily_count + grounded_count) DESC, importance DESC LIMIT ?",
-            (min_signal, limit),
+            (*self._RECALLED_ECHO_TOOLS, min_signal, limit),
         ).fetchall()
         return [self._row_to_obs(r) for r in rows]
 

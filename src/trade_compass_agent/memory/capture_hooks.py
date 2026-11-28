@@ -23,13 +23,19 @@ ALWAYS_CAPTURE_TOOLS = frozenset({
     "chart_pattern",
 })
 
-# Tools whose results are NEVER captured (noise / too frequent)
+# Tools whose results are NEVER captured (noise / internal recall echo)
 NEVER_CAPTURE_TOOLS = frozenset({
     "get_bars",
     "calculate_indicators",
     "session_search",
+    "search_memory",
+    "load_skill",
+    "recall_timeline",
+    "recall_instrument",
+    "write_memory",
     "write_knowledge",
     "skill_manage",
+    "update_instrument_page",
 })
 
 # Patterns in tool results that trigger capture
@@ -93,6 +99,22 @@ def extract_summary(tool_name: str, result: str) -> str:
                     query = data.get("query", "")
                     prefix = f"{query}: " if query else ""
                     return f"[{tool_name}] {prefix}{_truncate(data[key], 450)}"
+            for list_key in ("news", "items", "sectors", "results"):
+                rows = data.get(list_key)
+                if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+                    snippets = []
+                    for r in rows[:3]:
+                        label = str(r.get("title") or r.get("content") or r.get("name") or "").strip()
+                        if not label:
+                            continue
+                        if list_key == "sectors" and isinstance(r.get("change_pct"), (int, float)):
+                            label = f"{label}({r['change_pct']:+.2f}%)"
+                        snippets.append(label)
+                    if snippets:
+                        sym = f"{data['symbol']} " if data.get("symbol") else ""
+                        lu = data.get("limit_up")
+                        lu_tag = f"涨停{lu['count']}家 " if isinstance(lu, dict) and isinstance(lu.get("count"), int) else ""
+                        return f"[{tool_name}] {sym}{lu_tag}" + " | ".join(snippets)[:420]
             parts = []
             for k, v in list(data.items())[:5]:
                 if isinstance(v, (str, int, float)):

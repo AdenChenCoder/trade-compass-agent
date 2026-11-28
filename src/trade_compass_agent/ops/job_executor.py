@@ -219,7 +219,13 @@ class JobExecutor:
             else:
                 self.run_store.complete_run(run, message=message, artifact=artifact)
             if job.agent_session and not output.get("degraded"):
-                self.reflection.store_pending(job.id, run.id, predictions={"workflow": output}, summary=run.message)
+                self.reflection.store_pending(
+                    job.id,
+                    run.id,
+                    predictions={"workflow": output},
+                    summary=run.message,
+                    run_date=ctx.date,
+                )
         except asyncio.TimeoutError:
             cancel_event.set()
             try:

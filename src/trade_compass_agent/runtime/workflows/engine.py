@@ -546,9 +546,18 @@ def _compose_workflow_output(
     degraded = bool(primary.get("error") or primary.get("degraded") or incomplete(verification))
     degraded_steps = []
     degradation_errors = []
+    step_snapshots: dict[str, dict[str, Any]] = {}
     for result in outputs.values():
         step_output = _output_as_dict(result.output)
         data = step_output.get("data") if isinstance(step_output.get("data"), dict) else step_output
+        if result.step_id in {"mark_to_market", "pnl_review", "portfolio_scan", "portfolio_check", "exit_check"}:
+            snapshot_fields = {
+                k: data[k]
+                for k in ("positions", "alerts", "alert_records")
+                if isinstance(data, dict) and k in data
+            }
+            if snapshot_fields:
+                step_snapshots[result.step_id] = snapshot_fields
         if data.get("degraded") or data.get("error") or step_output.get("degraded") or step_output.get("error"):
             degraded = True
             degraded_steps.append(result.step_id)
@@ -563,6 +572,7 @@ def _compose_workflow_output(
         "as_of": str(primary.get("as_of") or inputs.get("as_of") or ""),
         "primary_step_id": primary_step_id,
         "warnings": list(dict.fromkeys(merged_warnings)),
+        **({"step_snapshots": step_snapshots} if step_snapshots else {}),
         **({"verification": verification} if verification else {}),
         "no_trade_disclaimer": not manifest.risk_policy.get("executes_paper_trades", False),
         **({"degraded": True, "degraded_steps": degraded_steps,

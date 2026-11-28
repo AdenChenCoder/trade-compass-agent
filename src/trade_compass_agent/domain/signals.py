@@ -115,7 +115,7 @@ def render_trading_signal(signal: TradingSignal) -> str:
     if signal.risk_reward_ratio is not None:
         parts.append(f"**风险收益比**: {signal.risk_reward_ratio:.2f}")
     parts.append(f"**理由**: {signal.reasoning}")
-    parts.append(f"**来源**: {signal.source_specialist} | ID: {signal.signal_id[:8]}")
+    parts.append(f"**来源**: {signal.source_specialist} | ID: {signal.signal_id}")
     return "\n".join(parts)
 
 

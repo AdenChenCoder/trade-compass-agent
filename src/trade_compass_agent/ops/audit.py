@@ -12,10 +12,17 @@ class AuditLog:
     def __init__(self) -> None:
         self.events: list[AuditEvent] = []
 
-    def record(self, event_type: str, summary: str, payload: dict | None = None) -> AuditEvent:
+    def record(
+        self,
+        event_type: str,
+        summary: str,
+        payload: dict | None = None,
+        *,
+        timestamp: datetime | None = None,
+    ) -> AuditEvent:
         event = AuditEvent(
             id=str(uuid4()),
-            timestamp=datetime.now(),
+            timestamp=timestamp or datetime.now(),
             event_type=event_type,
             summary=summary,
             payload=payload or {},
@@ -62,8 +69,15 @@ class JsonAuditLog(AuditLog):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.events = self._load()
 
-    def record(self, event_type: str, summary: str, payload: dict | None = None) -> AuditEvent:
-        event = super().record(event_type, summary, payload)
+    def record(
+        self,
+        event_type: str,
+        summary: str,
+        payload: dict | None = None,
+        *,
+        timestamp: datetime | None = None,
+    ) -> AuditEvent:
+        event = super().record(event_type, summary, payload, timestamp=timestamp)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(self._serialize(event) + "\n")
         return event
@@ -83,6 +97,20 @@ class JsonAuditLog(AuditLog):
 
     def trading_signals(self, limit: int = 50) -> list[AuditEvent]:
         events = [event for event in self.events if event.event_type == "trading_signal"]
+        return list(reversed(events[-limit:]))
+
+    def signal_events(self, limit: int = 50) -> list[AuditEvent]:
+        seen_ids: set[str] = set()
+        events: list[AuditEvent] = []
+        for event in self.events:
+            if event.event_type not in {"recommendation", "trading_signal"}:
+                continue
+            sig_id = str(event.payload.get("signal_id") or "")
+            if sig_id:
+                if sig_id in seen_ids:
+                    continue
+                seen_ids.add(sig_id)
+            events.append(event)
         return list(reversed(events[-limit:]))
 
     def _load(self) -> list[AuditEvent]:

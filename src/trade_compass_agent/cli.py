@@ -416,7 +416,9 @@ def run_rules_remove(entry_id: str) -> None:
 def run_evaluate(limit: int = 100) -> None:
     config = load_app_config()
     audit = JsonAuditLog(config.data_dir / "audit.jsonl")
-    provider = ChainProvider([LocalBarCacheProvider(config.data_dir / "market_cache")])
+    provider = ChainProvider(
+        [LocalBarCacheProvider(config.data_dir / "market_cache", allow_historical=True)]
+    )
     report = FollowThroughEvaluator(provider).evaluate(audit.events, limit=limit)
     print("Follow-through metrics:")
     for metric in report.metrics:
@@ -432,6 +434,36 @@ def run_evaluate(limit: int = 100) -> None:
         print("Warnings:")
         for warning in report.warnings[:10]:
             print(f"  - {warning}")
+
+
+def run_signals_reconcile(*, apply: bool = False, window_days: int = 5, as_json: bool = False) -> None:
+    from trade_compass_agent.evaluation.signal_migration import reconcile_historical_signals
+
+    config = load_app_config()
+    result = reconcile_historical_signals(
+        config.data_dir,
+        costs=config.trading_costs,
+        apply=apply,
+        window_days=window_days,
+    )
+    if as_json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    print(f"Signal reconciliation ({result['mode']}):")
+    print(f"  - total_tracking_records: {result['total_tracking_records']}")
+    print(f"  - total_unlinked_buys: {result['total_unlinked_buys']}")
+    print(f"  - non_entry_pending_to_observed: {result['non_entry_pending_to_observed']}")
+    print(f"  - unambiguous_matches_count: {result['unambiguous_matches_count']}")
+    print(f"  - ambiguous_skipped_count: {result['ambiguous_skipped_count']}")
+    expired_val = result.get("expired_applied", result["stale_buy_pending_to_expired"])
+    print(f"  - stale_buy_pending_to_expired: {expired_val}")
+    if result.get("backup_dir"):
+        print(f"  - backup_dir: {result['backup_dir']}")
+    for pair in result["unambiguous_matches"][:20]:
+        print(
+            f"  * match {pair['symbol']} [{pair['account']}] "
+            f"trade={pair['trade_id']} ({pair['trade_timestamp']}) <- signal={pair['signal_id']}"
+        )
 
 
 def run_memory_bootstrap(dry_run: bool = False, max_promote: int = 5) -> None:
@@ -1165,6 +1197,30 @@ def main() -> None:
     p_eval = sub.add_parser("evaluate", help="Evaluate 1/3/5 day signal follow-through")
     p_eval.add_argument("--limit", type=int, default=100)
 
+    p_signals = sub.add_parser("signals", help="Inspect or reconcile tracked trading signals")
+    p_signals_sub = p_signals.add_subparsers(dest="signals_command", required=True)
+    p_sig_rec = p_signals_sub.add_parser(
+        "reconcile",
+        help=command_help("signals", "reconcile"),
+    )
+    p_sig_rec.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply unambiguous 1-to-1 historical links and cleanup after backing up files (default: preview)",
+    )
+    p_sig_rec.add_argument(
+        "--window-days",
+        type=int,
+        default=5,
+        help="Maximum calendar days between signal emission and unlinked buy fill (default: 5)",
+    )
+    p_sig_rec.add_argument(
+        "--json",
+        dest="command_json",
+        action="store_true",
+        help="Emit machine-readable JSON",
+    )
+
     p_audit = sub.add_parser("audit", help="Inspect audit replay records")
     p_audit_sub = p_audit.add_subparsers(dest="audit_command")
     p_audit_recent = p_audit_sub.add_parser("recent")
@@ -1386,6 +1442,13 @@ def main() -> None:
             run_rules_list()
     elif args.command == "evaluate":
         run_evaluate(limit=args.limit)
+    elif args.command == "signals":
+        if args.signals_command == "reconcile":
+            run_signals_reconcile(
+                apply=args.apply,
+                window_days=args.window_days,
+                as_json=bool(getattr(args, "command_json", False)),
+            )
     elif args.command == "audit":
         if args.audit_command == "show":
             run_audit_show(args.event_id)

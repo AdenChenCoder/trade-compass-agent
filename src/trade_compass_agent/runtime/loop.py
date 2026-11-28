@@ -166,7 +166,12 @@ def _execute_tool_calls(
                 arguments = {}
             if isinstance(arguments.get("content"), str) and arguments["content"].strip():
                 evidence = [*prior_tool_results, *((call.name, results[call.id]) for call in tool_calls if call.id in results)]
-                publication = memory_report(arguments["content"], evidence)
+                if getattr(memory_report, "_accepts_scope", False):
+                    publication = memory_report(
+                        arguments["content"], evidence, scope=str(arguments.get("scope", ""))
+                    )
+                else:
+                    publication = memory_report(arguments["content"], evidence)
                 memory_verification = publication.verification
                 if memory_verification["status"] != "complete":
                     results[tc.id] = json.dumps({"error": "记忆尚未通过核验，未保存", "fact_check_failed": True,
@@ -690,23 +695,76 @@ class AgentLoop:
                     on_delta=lambda _chunk: None, is_cancelled=is_cancelled)
             return reviewed.content or ""
 
-        def validate_durable_memory(content, evidence):
-            from trade_compass_agent.llm.providers import check_execution_active
-            from trade_compass_agent.runtime.report_publication import review_durable_content, persist_publication
+        def validate_durable_memory(content, evidence, *, scope=""):
+            from trade_compass_agent.llm.providers import check_execution_active, create_local_report_fact_check
+            from trade_compass_agent.runtime.report_contract import Finding, verification_result
+            from trade_compass_agent.runtime.report_publication import (
+                Publication,
+                persist_publication,
+                review_durable_content,
+            )
+            from trade_compass_agent.runtime.report_quality import report_issues, review_report_evidence
+            from trade_compass_agent.runtime.verifier import unverified_execution_claim
+
             def active():
                 _check_cancelled()
                 check_execution_active()
-            from trade_compass_agent.llm.providers import create_local_report_fact_check
-            factual_report_call = create_local_report_fact_check(self.config, is_cancelled=is_cancelled)
-            publication = review_durable_content(task="仅保留拟保存记忆的含义和必要依据，不扩展结论范围：\n" + content,
-                draft=content, tool_results=evidence, current_tool_results=[],
-                reader_prose=False,
-                run_scope=f"{session.session_id}:memory:{uuid4().hex}", run_id=report_run_id,
-                call=read_only_report_call, check_active=active, fact_review_call=factual_report_call,
-                reference_date=self.report_date, reference_timezone=self.config.scheduler.timezone)
+
+            initial_pf = (
+                [("analyze_portfolio", json.dumps(self.initial_portfolio, ensure_ascii=False))]
+                if self.initial_portfolio is not None
+                else []
+            )
+            full_evidence = [*self.initial_evidence, *initial_pf, *evidence]
+            normalized_scope = scope.strip().lower().replace(" ", "_")
+            if normalized_scope not in {"trade-log", "market-notes"}:
+                factual_report_call = create_local_report_fact_check(self.config, is_cancelled=is_cancelled)
+                publication = review_durable_content(
+                    task="仅保留拟保存记忆的含义和必要依据，不扩展结论范围：\n" + content,
+                    draft=content,
+                    tool_results=full_evidence,
+                    current_tool_results=[],
+                    reader_prose=False,
+                    run_scope=f"{session.session_id}:memory:{uuid4().hex}",
+                    run_id=report_run_id,
+                    call=read_only_report_call,
+                    check_active=active,
+                    fact_review_call=factual_report_call,
+                    reference_date=self.report_date,
+                    reference_timezone=self.config.scheduler.timezone,
+                )
+                publication.verification.update(
+                    persist_publication(self.config.data_dir, publication, check_active=active)
+                )
+                return publication
+
+            issues = list(report_issues(content, full_evidence, reference_date=self.report_date))
+            if unverified_execution_claim(content, full_evidence):
+                issues.append("包含未经本轮成交流水核实的成交声明")
+            if not issues and self.config.llm.provider != "disabled":
+                review_task = (
+                    f"核对定时任务拟归档笔记（基准日：{self.report_date or '未指定'}）中的客观事实是否与本轮回执一致；"
+                    "计划止损价、目标价与观察条件允许保留，但现状行情数值、比较方向、均线排列、快照时点、主体行为与成交结果必须与回执一致。"
+                )
+                issues.extend(review_report_evidence(content, review_task, full_evidence, read_only_report_call))
+            issues = list(dict.fromkeys(issues))
+            findings = [Finding("memory", "insufficient_support", item) for item in issues]
+            verification = verification_result(findings)
+            publication = Publication(
+                content,
+                verification,
+                {
+                    "schema_version": 1,
+                    "run_id": report_run_id,
+                    "reader_body": content,
+                    "published_text": content,
+                    "verification": verification,
+                },
+            )
             publication.verification.update(persist_publication(self.config.data_dir, publication, check_active=active))
             return publication
 
+        validate_durable_memory._accepts_scope = True  # type: ignore[attr-defined]
         memory_report = validate_durable_memory if self.memory_actor == "scheduler" else None
 
         def native_tool_result(tc, result):
@@ -728,7 +786,15 @@ class AgentLoop:
                 role="assistant", content="", timestamp=datetime.now(), tool_calls=assistant.tool_calls))
             self._emit("tool_start", build_tool_start_payload(tc.name, tc.arguments))
             native_tool_started[tc.id] = time.monotonic()
-            result = _execute_tool_calls([tc], self._tools, is_cancelled, tool_calls_log, self.report_date, memory_report)[tc.id]
+            try:
+                result = _execute_tool_calls([tc], self._tools, is_cancelled, tool_calls_log, self.report_date, memory_report)[tc.id]
+            except (TimeoutError, LLMExecutionCancelled):
+                if tc.name == "place_paper_trade" and not (is_cancelled and is_cancelled()):
+                    reconciled = self._tools.reconcile_interrupted_trade()
+                    if reconciled is not None:
+                        native_tool_result(tc, reconciled)
+                        return reconciled
+                raise
             native_tool_result(tc, result)
             return result
 
@@ -973,7 +1039,16 @@ class AgentLoop:
             initial_data = ([("analyze_portfolio", json.dumps(self.initial_portfolio))]
                             if self.initial_portfolio is not None else [])
             data_tool_calls = tool_calls_log
-            quality = assess_data_quality([*initial_data, *data_tool_calls], planning_reference_date=self.planning_reference_date)
+            aux_scopes = (
+                frozenset({"trade-log", "market-notes"})
+                if self.memory_actor == "scheduler" and not session.session_id.startswith("scheduler-prompt-")
+                else frozenset()
+            )
+            quality = assess_data_quality(
+                [*initial_data, *data_tool_calls],
+                planning_reference_date=self.planning_reference_date,
+                auxiliary_memory_scopes=aux_scopes,
+            )
             data_warnings = list(quality.warnings)
             if publication is not None:
                 from trade_compass_agent.runtime.report_contract import Finding, incomplete, verification_result

@@ -91,7 +91,8 @@ def reconcile_signal_executions(data_dir: Path, portfolio) -> int:
             record.closed_at = max(fill.closed_at for fill in fills).isoformat() if record.status == "closed" else None
             if record.closed_at:
                 record.days_held = (max(fill.closed_at for fill in fills).date() - min(trade.timestamp for trade in buys).date()).days
-            record.attribution_status = "explicit_ledger"
+            if record.attribution_status != "migrated_historical":
+                record.attribution_status = "explicit_ledger"
             record.outcome_basis = "execution_net_pnl"
             changed += 1
         if changed:
